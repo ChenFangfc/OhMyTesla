@@ -135,6 +135,29 @@ cmd_backup() {
   fi
 }
 
+# Grafana 只在数据卷首次初始化时读 GF_SECURITY_ADMIN_PASSWORD，之后密码存在它自己
+# 的库里。所以对已经跑起来的装机，改 .env 是没用的，必须走 grafana-cli 重置。
+cmd_grafana_password() {
+  pw="${1:-}"
+  # 不要用 `tr </dev/urandom | head -c N`：head 提前关管道会让 tr 收到 SIGPIPE，
+  # 在 `set -o pipefail` 下整个脚本会静默退出。openssl 会自己跑完，不会被截断。
+  [ -n "$pw" ] || pw=$(openssl rand -base64 32 | tr -d '/+=' | cut -c1-24)
+  # 同理，grep -q 命中即退也会 SIGPIPE 上游，所以先落到变量再匹配。
+  running=$(docker compose ps --status running --services 2>/dev/null || true)
+  case "$running" in
+    *grafana*) : ;;
+    *) die "Grafana isn't running. Run ./omt up first." ;;
+  esac
+  # 新镜像是 `grafana cli`，老镜像是 `grafana-cli`，两个都试
+  if docker compose exec -T grafana grafana cli admin reset-admin-password "$pw" >/dev/null 2>&1 \
+     || docker compose exec -T grafana grafana-cli admin reset-admin-password "$pw" >/dev/null 2>&1; then
+    echo "${GREEN}Done.${OFF} Grafana login is now  ${BOLD}admin${OFF} / ${BOLD}${pw}${OFF}"
+    echo "${DIM}Also put GF_SECURITY_ADMIN_PASSWORD=${pw} in .env so a fresh install matches.${OFF}"
+  else
+    die "Could not reset the Grafana password."
+  fi
+}
+
 cmd_menu() {
   echo
   echo "  ${BOLD}OhmyTesla${OFF}"
@@ -148,6 +171,8 @@ cmd_menu() {
   printf "    %-10s %s\n" update  "rebuild after changing the code"
   printf "    %-10s %s\n" backup  "dump the database to backups/"
   echo
+  printf "    %-16s %s\n" grafana-password "set the Grafana admin password"
+  echo
 }
 
 case "${1:-menu}" in
@@ -158,6 +183,7 @@ case "${1:-menu}" in
   logs|log)    cmd_logs "${2:-ohmytesla}" ;;
   update|build|rebuild) cmd_update ;;
   backup)      cmd_backup ;;
+  grafana-password) cmd_grafana_password "${2:-}" ;;
   menu|help|-h|--help) cmd_menu ;;
   *) echo "${RED}Unknown command: $1${OFF}"; cmd_menu; exit 1 ;;
 esac

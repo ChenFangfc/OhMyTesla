@@ -14,9 +14,16 @@
 | Phase 3 生态与长尾 | ⬜ 未开始 | 自动化引擎、电池健康 v2、社区统计、证据包导出等 |
 
 **已知与计划不符的地方**：
-- Phase 0 的「authed MQTT / oauth2-proxy 认证前置 / CHECK_ORIGIN」列为 P0，
-  实际 `docker-compose.yml` 仍是 `mosquitto-no-auth.conf`、Grafana 仍是 admin/admin。
-  目前的缓解是「默认只适合内网 + 可选 `OHMYTESLA_PASSWORD`」，不等于做完了。
+- Phase 0 的「authed MQTT / oauth2-proxy 认证前置 / CHECK_ORIGIN」列为 P0，**仍未做完**。
+  已经补上的：`MQTT_USERNAME/PASSWORD` 现在能透过 compose 传进去了；
+  `GF_SECURITY_ADMIN_PASSWORD` 已接到 grafana 服务上，并新增 `./omt grafana-password`
+  给已有装机重置（Grafana 只在数据卷首次初始化时读那个环境变量）。
+  还欠的：mosquitto 仍是 `mosquitto-no-auth.conf`（但它没映射到宿主机，只有容器网络内可达）；
+  8800/3001/4000 仍绑 `0.0.0.0`，整个局域网可达；没有 oauth2-proxy 前置，
+  也没有 Origin/Host 校验。TeslaMate 4.0.1 自身不提供任何 HTTP 认证选项，
+  `:4000` 只能靠反代或不映射端口来保护。
+  目前的缓解是「默认只适合内网 + `OHMYTESLA_PASSWORD` 全站 Basic 认证（除 `/healthz`）」，
+  不等于做完了。
 - Phase 2 说要 **bundle TeslaMateAgile**，实际是 `tariff/calc.py` 从零重写的
   分时电价引擎（支持跨时段按时间占比切分，TeslaMateAgile 没有这个）。
 - Grafana 社区面板包的 provisioning 挂载没做，只挂了数据卷。

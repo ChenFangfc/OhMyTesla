@@ -40,6 +40,9 @@ services:
       - DATABASE_PASS=${TM_DB_PASS}
       - DATABASE_NAME=${TM_DB_NAME}
       - DATABASE_HOST=database
+      # 不设就是镜像默认的 admin/admin。只在 grafana 数据卷首次初始化时生效；
+      # 已经跑过的装机改这个没用，得用 ./omt grafana-password
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:-admin}
     ports:
       - "${GRAFANA_PORT:-3000}:3000"
     volumes:
