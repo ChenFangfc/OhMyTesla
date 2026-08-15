@@ -39,6 +39,17 @@ const cmdk = (() => {
     { id: "frunk",        key: "cmd.frunk",        ico: "box", words: "frunk front trunk 前备箱", risky: true },
     { id: "trunk",        key: "cmd.trunk",        ico: "box", words: "trunk rear boot 后备箱", risky: true },
     { id: "vent_windows", key: "cmd.vent_windows", ico: "window", words: "vent windows air 通风 车窗", risky: true },
+    { id: "close_windows", key: "cmd.close_windows", ico: "window", words: "close windows shut 关车窗" },
+    { id: "charge_port_close", key: "cmd.charge_port_close", ico: "plug", words: "charge port close 关充电口" },
+    // 带参指令：服务端 catalog 里一直有，但过去没有任何界面能传值，
+    // 选中就只能收到一个 502。数字直接打在命令行里，例如 "limit 80"、"temp 22"。
+    { id: "set_charge_limit", key: "cmd.set_charge_limit", ico: "bolt",
+      words: "charge limit percent soc 充电上限 百分比", param: "percent", unit: "%" },
+    // 单位跟用户偏好走；后端一律收摄氏，华氏在发送前换算（见 send()）
+    { id: "set_temps", key: "cmd.set_temps", ico: "climate",
+      words: "temp temperature climate set 空调温度 设定温度", param: "driver_temp",
+      get unit() { return typeof U !== "undefined" && U.tempLabel ? U.tempLabel() : "°C"; },
+      fahrenheit: true },
   ];
 
   /* Questions we can answer exactly, from data already on the client. */
@@ -147,9 +158,23 @@ const cmdk = (() => {
       const s = Math.max(score(q, t(a.key)), score(q, a.words));
       if (!q || s >= 0) push("cmdk.g_ask", { label: t(a.key), ico: "spark", run: a.run }, s);
     }
+    // 带参指令直接从输入里取数字："limit 80" / "温度 22"
+    const typed = (q.match(/\d+(?:\.\d+)?/) || [])[0];
     for (const c of CMD) {
-      const s = Math.max(score(q, t(c.key)), score(q, c.words));
-      if (!q || s >= 0) push("cmdk.g_control", { label: t(c.key), ico: c.ico, cmd: c }, s);
+      // 数字本身不该参与匹配打分，否则 "limit 80" 会被 80 拖低分
+      const qWords = c.param ? q.replace(/\d+(?:\.\d+)?/g, " ").trim() : q;
+      const s = Math.max(score(qWords, t(c.key)), score(qWords, c.words));
+      if (!(!q || s >= 0)) continue;
+      if (!c.param) {
+        push("cmdk.g_control", { label: t(c.key), ico: c.ico, cmd: c }, s);
+        continue;
+      }
+      const has = typed !== undefined;
+      push("cmdk.g_control", {
+        label: t(c.key) + (has ? ` → ${typed}${c.unit}` : ` … ${c.unit}`),
+        ico: c.ico,
+        cmd: has ? { ...c, value: +typed } : c,
+      }, s);
     }
     for (const n of NAV) {
       const s = Math.max(score(q, t(n.key)), score(q, n.words));
@@ -209,9 +234,11 @@ const cmdk = (() => {
     if (it.cmd) await send(it.cmd);
   }
 
-  async function send(c) {
+  async function send(c, forceConfirm) {
     // Risky commands confirm in place — no separate dialog to dismiss.
-    if (c.risky && !c._confirmed) {
+    // forceConfirm: 服务端回了 428，说明它认为这条比客户端列表更危险 ——
+    // 以服务端为准补一次确认，而不是把 428 当错误甩给用户。
+    if ((c.risky || forceConfirm) && !c._confirmed) {
       list.innerHTML = "";
       const d = document.createElement("div");
       d.className = "cmdk-answer";
@@ -229,13 +256,32 @@ const cmdk = (() => {
       d.querySelector("#ck-yes").focus();
       return;
     }
+    // 带参指令没给数字就别发出去——服务端会拒，用户只会看到一句报错
+    if (c.param && c.value == null) {
+      list.innerHTML = "";
+      list.appendChild(msg(t("cmdk.needs_value", { unit: c.unit })));
+      return;
+    }
     list.innerHTML = `<div class="cmdk-empty">${esc(t("cmdk.sending"))}</div>`;
     try {
-      await apiPost("/api/tesla/command", { car_id: ctx.car_id || 1, command: c.id, confirm: true });
+      // 只有真的走过确认框才带 confirm。以前无条件传 true，服务端那道
+      // 428「危险操作需二次确认」的闸门就永远触发不了 —— 等于把解锁车门、
+      // 开后备箱、关哨兵的最后一道保险交给了前端一个布尔量。
+      // 也因此，服务端和客户端对 risky 的判断谁更严都不再要紧：以服务端为准。
+      await apiPost("/api/tesla/command", {
+        car_id: ctx.car_id || 1, command: c.id, confirm: !!c._confirmed,
+        ...(c.param ? { params: { [c.param]:
+            // 车接受的是摄氏。用户界面显示华氏时，这里换算回去 ——
+            // 不换的话输入 72 会被当成 72°C 发出去。
+            (c.fahrenheit && typeof U !== "undefined" && U.tempLabel && U.tempLabel() === "°F")
+              ? Math.round((c.value - 32) * 5 / 9 * 10) / 10
+              : c.value } } : {}),
+      });
       list.innerHTML = "";
       list.appendChild(msg(t("cmdk.sent", { command: t(c.key) })));
       setTimeout(close, 1400);
     } catch (e) {
+      if (e.status === 428 && !c._confirmed) return send(c, true);
       list.innerHTML = "";
       list.appendChild(msg(e.message));
     }

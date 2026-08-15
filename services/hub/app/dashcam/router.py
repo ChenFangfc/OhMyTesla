@@ -1,6 +1,7 @@
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 import asyncio
@@ -149,7 +150,9 @@ async def list_events(type: str | None = None, limit: int = 200, force: bool = F
     if type:
         events = [e for e in events if e.type == type]
     events.sort(key=lambda e: e.timestamp, reverse=True)
-    return [e.to_dict() for e in events[: min(limit, 1000)]]
+    # 只夹上界的话 limit=-5 会变成"除最后 5 条以外全给"，limit=0 又和
+    # "一条录像都没有"长得一模一样。两头都夹住。
+    return [e.to_dict() for e in events[: max(1, min(limit, 1000))]]
 
 
 @router.get("/event")
@@ -201,6 +204,110 @@ async def get_telemetry(
         "car_id": car_id, "start": start, "step": step,
         "clock_offset": offset, "samples": samples,
     }
+
+
+@router.get("/telemetry.csv")
+async def telemetry_csv(
+    start: str,
+    end: str,
+    car_id: int | None = None,
+    step: float = 1.0,
+    clip: str | None = None,
+):
+    """把某段时间的遥测导成 CSV —— 双源融合的结果，一行一秒。
+
+    SEI 给的是档位/方向盘/踏板/AP/GPS（30-36Hz，但只在行驶时有、且要求
+    固件 2025.44.25+），TeslaMate 给的是电量/功率/海拔/温度（~1Hz）。
+    传了 clip 就把两者按时间对齐后合并 —— 这个融合正是本项目的核心，
+    导出来才好拿去做视频叠加、事故分析或者自己画图。
+    """
+    import csv as _csv
+    import io as _io
+    from datetime import timedelta
+
+    try:
+        t0_local = datetime.fromisoformat(start)
+        t1_local = datetime.fromisoformat(end)
+    except ValueError as e:
+        raise HTTPException(400, f"bad time format: {e}") from e
+    if (t1_local - t0_local).total_seconds() > 16200:
+        raise HTTPException(400, "time range too long (max 4.5h)")
+
+    if car_id is None:
+        try:
+            row = await db.fetchrow("SELECT id FROM cars ORDER BY id LIMIT 1")
+        except db.DbUnavailable as e:
+            raise HTTPException(503, f"TeslaMate database unavailable: {e}") from e
+        if row is None:
+            raise HTTPException(404, "no car in TeslaMate yet")
+        car_id = row["id"]
+
+    step = max(float(step), 0.2)
+    offset = await telemetry.clock_offset(car_id)
+    t0 = telemetry.local_naive_to_utc(t0_local) + timedelta(seconds=offset)
+    t1 = telemetry.local_naive_to_utc(t1_local) + timedelta(seconds=offset)
+    try:
+        positions = await telemetry.fetch_positions(car_id, t0, t1)
+    except db.DbUnavailable as e:
+        raise HTTPException(503, f"TeslaMate database unavailable: {e}") from e
+    samples = telemetry.resample(positions, t0.timestamp(), t1.timestamp(), step=step)
+
+    # SEI（可选）。注意 SEI 的 t 是**相对片段起点**的秒数，而下面的桶号是
+    # 相对**请求区间起点**的。两者起点不同就会整体错位 —— 片段起点从文件名
+    # 解析出来（TeslaCam 命名是 YYYY-MM-DD_HH-MM-SS-camera.mp4，车机本地时间），
+    # 换算成同一条时间轴再落桶。
+    sei_by_bucket: dict[int, dict] = {}
+    if clip:
+        base = scanner.base_path()
+        if base is not None:
+            target = (base / clip).resolve()
+            if target.is_relative_to(base.resolve()) and target.is_file():
+                shift = 0.0
+                m = re.search(r"(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})", target.name)
+                if m:
+                    clip_start = datetime.fromisoformat(
+                        f"{m.group(1)}T{m.group(2)}:{m.group(3)}:{m.group(4)}")
+                    # 片段起点比请求起点晚多少秒
+                    shift = (clip_start - t0_local).total_seconds()
+                for s in sei.extract(target, step=step):
+                    idx = int(round((s["t"] + shift) / step))
+                    if idx >= 0:
+                        sei_by_bucket[idx] = s
+
+    def num(v, digits=2):
+        return "" if v is None else round(float(v), digits)
+
+    cols = ["t", "timestamp_utc", "speed_kmh", "power_kw", "soc", "usable_soc",
+            "range_km", "elevation_m", "odometer_km", "outside_temp_c", "inside_temp_c",
+            "lat", "lon",
+            "sei_gear", "sei_speed_kmh", "sei_steering", "sei_accel_pedal",
+            "sei_brake", "sei_autopilot", "sei_lat", "sei_lon"]
+    buf = _io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow(cols)
+    base_ts = t0.timestamp()
+    for i, s in enumerate(samples):
+        e = sei_by_bucket.get(i, {})
+        # s["t"] 是相对片段起点的秒数；换算回绝对 UTC 时刻方便和别的数据对齐
+        rel = s.get("t", i * step)
+        w.writerow([
+            round(rel, 2),
+            datetime.fromtimestamp(base_ts + rel, tz=timezone.utc).isoformat(),
+            num(s.get("speed"), 1), num(s.get("power"), 2),
+            num(s.get("battery_level"), 1), num(s.get("usable_battery_level"), 1),
+            num(s.get("rated_battery_range_km"), 2), num(s.get("elevation"), 1),
+            num(s.get("odometer"), 2), num(s.get("outside_temp"), 1),
+            num(s.get("inside_temp"), 1),
+            num(s.get("latitude"), 6), num(s.get("longitude"), 6),
+            e.get("gear", ""), e.get("speed_kmh", ""), e.get("steering_angle", ""),
+            e.get("accel_pedal", ""), e.get("brake", ""), e.get("ap", ""),
+            e.get("lat", ""), e.get("lon", ""),
+        ])
+    return Response(
+        buf.getvalue(),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="ohmytesla-telemetry.csv"'},
+    )
 
 
 @router.get("/sei")

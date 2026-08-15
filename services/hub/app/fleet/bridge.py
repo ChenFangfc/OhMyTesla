@@ -205,14 +205,17 @@ class VinBridge:
                     await self._run_sse()
                 else:
                     await self._run_ws()
-                if time.time() - healthy_at > 60:
-                    attempt = 0   # 稳定跑过一分钟才重置退避，避免连上就断的热循环
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
                 msg = str(e)[:200]
                 self.last_error = msg
                 fatal_auth = "401" in msg or "403" in msg
+                # 长连接断开的常态就是抛异常（读超时、连接被重置）。退避重置原本
+                # 写在 try 里、调用之后，这条路径根本走不到 —— 于是 attempt 只增
+                # 不减，一台每天断一次的桥接会一路退到 10 分钟才肯重连。
+                if not fatal_auth and time.time() - healthy_at > 60:
+                    attempt = 0
                 if fatal_auth:
                     log.error("fleet bridge auth failed for VIN…%s: %s", self.vin[-6:], msg)
                     attempt = 99  # 直接退到最大间隔，不要反复拿坏 token 去撞
@@ -270,10 +273,15 @@ class VinBridge:
         url = self._url()
         headers = self._headers()
         headers.pop("Accept", None)
-        async with websockets.connect(
-            url, additional_headers=headers or None,
-            ping_interval=20, close_timeout=5,
-        ) as ws:
+        # 传自定义头的参数名在 websockets 14 改了：14+ 叫 additional_headers，
+        # 之前叫 extra_headers。写死一个会在另一个大版本上抛 TypeError，
+        # 而那个 TypeError 又会被外层 except Exception 吃掉 —— 表现成
+        # 永远重连不上、last_error 还看不懂。
+        kw = dict(ping_interval=20, close_timeout=5)
+        if headers:
+            major = int((getattr(websockets, "__version__", "0") or "0").split(".")[0] or 0)
+            kw["additional_headers" if major >= 14 else "extra_headers"] = headers
+        async with websockets.connect(url, **kw) as ws:
             sub = self.cfg.get("subscribe") or settings.fleet_bridge_subscribe
             if sub:
                 await ws.send(

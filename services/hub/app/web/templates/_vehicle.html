@@ -10,11 +10,12 @@
    lamps actually are, and guessing would put a glowing dot on a door panel. #}
 <div class="veh" id="veh">
   <div class="veh-ambient"></div>
-  <img class="veh-img" id="veh-img" src="/static/vehicle/cybertruck.png"
-       alt="{{ t('vehicle.alt', 'Your vehicle') }}" decoding="async" fetchpriority="high">
+  {# src 由 JS 按车填（/api/vehicle/render?car_id=…）。写死一张图的话，
+     每一辆 Model 3/Y/S/X 也都会被画成 Cybertruck。 #}
+  <img class="veh-img" id="veh-img"
+       alt="{{ t('vehicle.alt', 'Your vehicle') }}" decoding="async" fetchpriority="high" hidden>
+  {# 兜底自绘图。状态类由 JS 挂在 #veh 上: is-charging · is-sentry · is-climate #}
   <div class="veh-svg" id="veh-svg" hidden>
-      <svg id="veh">, set by JS:
-      is-charging · is-sentry · is-climate · is-driving · is-open #}
       <svg viewBox="0 0 1260 440" fill="none" xmlns="http://www.w3.org/2000/svg"
       aria-hidden="true">
       <defs>

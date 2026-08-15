@@ -73,20 +73,29 @@ let snap = null, busy = new Set();
 
 /* ------------------------------------------------------------ rendering -- */
 
-/* 图片拿不到就落回自绘 SVG —— hero 是这一页的全部，绝不能空着 */
-(function () {
+/* 车图按车取：/api/vehicle/render 内部依次尝试官方 compositor 和自带素材，
+   都没有就 404，这里落回自绘 SVG —— hero 是这一页的全部，绝不能空着。
+   以前 src 写死一张 cybertruck.png，Model 3/Y/S/X 全被画成 Cybertruck。 */
+let vehImgFor = null;
+function paintVehicleImage(carId) {
   const img = document.getElementById("veh-img");
-  if (!img) return;
-  const fallback = () => {
-    img.hidden = true;
-    const svg = document.getElementById("veh-svg");
-    if (svg) svg.hidden = false;
+  const svg = document.getElementById("veh-svg");
+  if (!img || carId == null || vehImgFor === carId) return;
+  vehImgFor = carId;
+
+  const useDrawn = () => { img.hidden = true; if (svg) svg.hidden = false; };
+  img.onerror = useDrawn;
+  img.onload = () => {
+    // 0 宽度意味着拿到的不是一张能画的图
+    if (img.naturalWidth === 0) return useDrawn();
+    if (svg) svg.hidden = true;
+    img.hidden = false;
   };
-  img.addEventListener("error", fallback);
-  if (img.complete && img.naturalWidth === 0) fallback();
-})();
+  img.src = `/api/vehicle/render?car_id=${encodeURIComponent(carId)}`;
+}
 
 function paintHero(d) {
+  paintVehicleImage(d.car_id);
   const veh = document.getElementById("veh");
   veh.classList.toggle("is-charging", d.state === "charging");
   veh.classList.toggle("is-driving",  d.state === "driving");
@@ -106,6 +115,7 @@ function paintHero(d) {
 
   document.getElementById("hero-range").textContent =
     d.range_km != null ? `${U.dist(d.range_km, 0)} ${U.distLabel()}` : "";
+  paintRealRange(d.car_id);
 
   /* Status reads like a person wrote it (§13): "Parked · Home · 2 min ago" */
   const bits = [];
@@ -120,6 +130,31 @@ function paintHero(d) {
   if (d.stale_seconds) bits.push(fmt.ago(d.stale_seconds));
   document.getElementById("hero-status").innerHTML =
     bits.map(esc).join('<span class="sep">·</span>');
+}
+
+/* 车机给的续航是按标称能耗算的。你自己最近几百公里的真实能耗才是
+   "还能开多远"的答案 —— 差别在冬天和高速上尤其大。
+   只在两者差 5% 以上时才显示，否则是在给一个没有信息量的第二个数字。 */
+let realRangeCache = { carId: null, at: 0, data: null };
+async function paintRealRange(carId) {
+  const el = document.getElementById("hero-range");
+  if (!el || carId == null) return;
+  try {
+    // paintHero 每 20 秒会把 #hero-range 重写一遍，所以这里必须每次都重画；
+    // 但接口本身要缓存 —— 它跑好几条 SQL，20 秒一次太浪费。
+    const fresh = realRangeCache.carId === carId && Date.now() - realRangeCache.at < 300000;
+    const r = fresh ? realRangeCache.data
+                    : await apiGet(`/api/insights/real-range?car_id=${carId}`);
+    realRangeCache = { carId, at: fresh ? realRangeCache.at : Date.now(), data: r };
+    if (r.range_km == null || snap?.range_km == null) return;
+    const diff = Math.abs(r.range_km - snap.range_km) / snap.range_km;
+    if (diff < 0.05) return;
+    el.innerHTML = `${esc(U.dist(snap.range_km, 0) + " " + U.distLabel())}
+      <span class="sep">·</span><span class="tertiary">${esc(
+        t("overview.real_range", {
+          value: U.dist(r.range_km, 0) + " " + U.distLabel(),
+          cons: U.cons(r.wh_per_km) + " " + U.consLabel() }))}</span>`;
+  } catch (e) { /* 没有足够行程就不显示 */ }
 }
 
 function readyAt(minutes) {
@@ -164,13 +199,30 @@ function paintControls(d) {
 }
 
 async function run(id, risky, label) {
-  if (risky && !confirm(t("overview.confirm", { command: label }))) return;
+  let confirmed = false;
+  if (risky) {
+    if (!confirm(t("overview.confirm", { command: label }))) return;
+    confirmed = true;
+  }
   busy.add(id);
   paintControls(snap);
   try {
-    await apiPost("/api/tesla/command", { car_id: snap.car_id, command: id, confirm: true });
+    // 只有确认过才带 confirm。写死 true 的话服务端那道 428 闸门永远不触发，
+    // 解锁/开备箱/关哨兵的最后一道保险就只剩前端这一层了。
+    await apiPost("/api/tesla/command",
+      { car_id: snap.car_id, command: id, confirm: confirmed });
   } catch (e) {
-    alert(e.message);
+    // 服务端认为这条需要确认而前端没问：以服务端为准补问一次
+    if (e.status === 428 && !confirmed) {
+      if (confirm(t("overview.confirm", { command: label }))) {
+        try {
+          await apiPost("/api/tesla/command",
+            { car_id: snap.car_id, command: id, confirm: true });
+        } catch (e2) { alert(e2.message); }
+      }
+    } else {
+      alert(e.message);
+    }
   } finally {
     busy.delete(id);
     setTimeout(load, 1200);

@@ -16,6 +16,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 from .alerts.engine import engine
+from .alerts.janitor import janitor
+from .alerts.maintenance import watcher as maintenance_watcher
 from .alerts.router import router as alerts_router
 from .alerts.sentry import tracker as sentry_tracker
 from .alerts.store import store
@@ -26,13 +28,19 @@ from .dashcam.router import router as dashcam_router
 from .dashcam.scanner import scanner
 from .dashcam.watcher import watcher
 from .fleet.bridge import manager as fleet_bridge
+from .integrations.abrp import relay as abrp_relay
+from .integrations.hass import discovery as hass_discovery
 from .i18n.router import router as prefs_router
+from .health.export import router as export_router
+from .health.router import router as health_router
 from .insights.router import router as insights_router
+from .mcp.router import router as mcp_router
 from .setup.router import router as setup_router
 from .overview.router import router as overview_router
 from .vehicle.router import router as vehicle_router
 from .livestate import live
 from .tariff.router import router as tariff_router
+from .trips.router import router as trips_router
 from .tesla.router import router as tesla_router
 from . import db
 
@@ -58,8 +66,17 @@ async def lifespan(app: FastAPI):
     fleet_bridge.start()
     jobs.start()
     watcher.start()
+    janitor.start()
+    abrp_relay.start()
+    maintenance_watcher.bind(engine.fire_custom)
+    maintenance_watcher.start()
+    hass_discovery.start()
     log.info("OhmyTesla hub started")
     yield
+    await hass_discovery.stop()
+    await maintenance_watcher.stop()
+    await abrp_relay.stop()
+    await janitor.stop()
     await fleet_bridge.stop()
     await watchdog.stop()
     await sentry_tracker.stop()
@@ -118,6 +135,10 @@ app.include_router(alerts_router)
 app.include_router(dashcam_router)
 app.include_router(insights_router)
 app.include_router(tariff_router)
+app.include_router(trips_router)
+app.include_router(mcp_router)
+app.include_router(health_router)
+app.include_router(export_router)
 app.include_router(tesla_router)
 app.include_router(prefs_router)
 app.include_router(setup_router)
@@ -164,6 +185,12 @@ async def fleet_bridge_status():
 async def fleet_bridge_enable_sentry():
     """请求中转商开始推送 SentryMode 字段（用户显式触发）。"""
     return await fleet_bridge.enable_sentry_field()
+
+
+@app.get("/api/integrations/abrp/status")
+async def abrp_status():
+    """中继挂掉的表现是"ABRP 里的数据不动了"，本地必须看得见。"""
+    return abrp_relay.status()
 
 
 @app.get("/api/health/detail")

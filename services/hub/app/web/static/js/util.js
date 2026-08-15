@@ -4,7 +4,9 @@ async function apiGet(url) {
   if (!r.ok) {
     let msg = r.statusText;
     try { msg = (await r.json()).detail || msg; } catch (e) { /* ignore */ }
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.status = r.status;      // 调用方需要区分 428(待确认) / 429(太快) / 503
+    throw err;
   }
   return r.json();
 }
@@ -17,7 +19,9 @@ async function apiPost(url, body, method = "POST") {
   if (!r.ok) {
     let msg = r.statusText;
     try { msg = (await r.json()).detail || msg; } catch (e) { /* ignore */ }
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.status = r.status;      // 调用方需要区分 428(待确认) / 429(太快) / 503
+    throw err;
   }
   return r.json();
 }
@@ -128,6 +132,10 @@ async function initCarPicker(sel, onChange) {
   const el = document.querySelector(sel);
   if (!el) return cars[0] ? cars[0].id : 1;
   if (cars.length <= 1) { el.style.display = "none"; return cars[0] ? cars[0].id : 1; }
+  // energy/trips 的 <select> 标签上写了 hidden，只改 style.display 是盖不住
+  // 浏览器默认的 [hidden]{display:none} 的 —— 多车账号会一个选择器都看不见。
+  el.removeAttribute("hidden");
+  el.style.display = "";
   el.innerHTML = cars.map((c) => `<option value="${c.id}">${esc(c.name || c.model || "Car " + c.id)}</option>`).join("");
   el.addEventListener("change", () => onChange(Number(el.value)));
   return Number(el.value);

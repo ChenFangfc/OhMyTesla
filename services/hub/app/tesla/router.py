@@ -4,6 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from .. import db
+from ..alerts.store import store
 from ..config import settings
 from . import commands, tokens
 
@@ -67,9 +68,25 @@ async def send_command(body: CommandBody):
     _prune_cooldown(now)
     _last_cmd[key] = now
 
+    # 每一条指令都留痕：这个接口能解锁车、开备箱、关哨兵，
+    # 出了事必须能回溯"什么时候谁下了什么、成没成"。
+    started = time.time()
     try:
-        return await commands.send(body.car_id, body.command, body.params)
+        result = await commands.send(body.car_id, body.command, body.params)
     except commands.CommandError as e:
+        await store.log_command(str(body.car_id), body.command, body.params,
+                                "api", False, str(e), int((time.time() - started) * 1000))
         raise HTTPException(502, str(e)) from e
     except db.DbUnavailable as e:
+        await store.log_command(str(body.car_id), body.command, body.params,
+                                "api", False, str(e), int((time.time() - started) * 1000))
         raise HTTPException(503, f"TeslaMate 数据库不可用: {e}") from e
+    await store.log_command(str(body.car_id), body.command, body.params,
+                            "api", True, "", int((time.time() - started) * 1000))
+    return result
+
+
+@router.get("/commands/log")
+async def command_log(limit: int = 100):
+    """指令流水。下发失败的原因也在里面 —— 排查"我点了没反应"时唯一有用的东西。"""
+    return {"commands": await store.recent_commands(max(1, min(limit, 500)))}

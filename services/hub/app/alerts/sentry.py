@@ -51,6 +51,9 @@ class Session:
     soc: str = ""
     db_id: int | None = None
     extras: list[str] = field(default_factory=list)
+    # 上一次因"入侵"推送的时刻（仅内存，不落库）。用来把同一批并发到达的
+    # 解锁/开门/开后备箱收敛成一条，见 note_intrusion。
+    last_intrusion_notify: float = 0.0
 
     @property
     def duration(self) -> float:
@@ -167,15 +170,44 @@ class SentryTracker:
     async def note_intrusion(self, car_id: str, car_name: str, what: str,
                              geofence: str = "", soc: str = "") -> None:
         """开门/解锁等强信号：并入当前会话（如果有），并强制严重级。"""
+        now = time.time()
         sess = self._sessions.get(car_id)
+
         if sess is None:
-            await self.observe(car_id, car_name, "state", "panic", geofence, soc, what)
-            return
-        sess.peak_state = "panic"
-        sess.last_seen = time.time()
-        if what not in sess.extras:
+            # 以前这里走 observe(...)，那条路**不带 force**，于是设成「只记录」
+            # 的地点会把入侵告警一并吞掉 —— 而入侵是全系统最强的信号。
+            # 现在两条路径一致：入侵永远推。
+            sess = Session(
+                car_id=car_id, car_name=car_name, source="state",
+                started=now, last_seen=now, geofence=geofence, soc=soc,
+                peak_state="panic",
+            )
             sess.extras.append(what)
+            self._sessions[car_id] = sess
+            sess.db_id = await self._persist(sess, closed=False)
+            sess.last_intrusion_notify = now
+            await self._notify(sess, escalated=True, reason=what, force=True)
+            return
+
+        sess.peak_state = "panic"
+        sess.last_seen = now
+        is_new = what not in sess.extras
+        if is_new:
+            sess.extras.append(what)
+        if geofence:
+            sess.geofence = geofence
+        if soc:
+            sess.soc = soc
         await self._persist(sess, closed=False)
+
+        # TeslaMate 把同一批 Summary 的各键并发发出来，车被撬开时
+        # 「解锁」「开门」「开后备箱」会在同一秒内接连到达。每个都推一条的话，
+        # 手机上就是几条一模一样的"车辆被闯入"（库里 130/131 两条相隔 158ms
+        # 就是这么来的）。首条已经把事说清楚了，后续原因并进会话记录，
+        # 界面和后续升级推送里都看得到。
+        if not is_new or now - sess.last_intrusion_notify < settings.sentry_dedup_seconds:
+            return
+        sess.last_intrusion_notify = now
         await self._notify(sess, escalated=True, reason=what, force=True)
 
     # ---------- 推送 ----------
@@ -187,8 +219,6 @@ class SentryTracker:
 
     async def _notify(self, sess: Session, escalated: bool, reason: str = "",
                       reason_vars: dict | None = None, force: bool = False) -> None:
-        if escalated:
-            sess.escalated = True
         level = self._level(sess, escalated)
 
         policy = await self._policy_for(sess.geofence)
@@ -217,9 +247,23 @@ class SentryTracker:
         for x in sess.extras:
             lines.append(t(x, loc) if _KEYISH.match(x) else x)
 
-        if self._fire is not None:
-            await self._fire(sess.car_id, level, title, "\n".join(lines),
-                             rule="sentry_activity")
+        if self._fire is None:
+            return
+        # 入库统一记 sentry_activity（历史与界面分组按它），但开关按当次的
+        # 严重程度分别查：警报拉响走 sentry_panic，普通活动走 sentry_aware。
+        delivered = await self._fire(
+            sess.car_id, level, title, "\n".join(lines),
+            rule="sentry_activity",
+            gate="sentry_panic" if sess.peak_state == "panic" else "sentry_aware",
+        )
+
+        # **只有真的推出去了才算"已升级"。** 这个闩之前是在调 _fire 之前就置上的，
+        # 而 _fire 里还有三道闸门（规则开关 / 静默时段 / 临时静音）能把消息丢掉。
+        # 后果很具体：用户按了「静音 2 小时（不含入侵）」，一次 Aware 被静音丢弃，
+        # 却把会话标记成已升级；接下来真的 Panic 时，observe() 里的
+        # `not sess.escalated` 直接挡掉 —— 承诺过"入侵仍然会推"，结果没推。
+        if escalated and delivered:
+            sess.escalated = True
 
     # ---------- 落库与收尾 ----------
 

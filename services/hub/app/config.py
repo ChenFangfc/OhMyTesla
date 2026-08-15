@@ -90,11 +90,34 @@ class Settings(BaseSettings):
     # 充电成本：把算出的费用回写 TeslaMate（Grafana 面板也能看到）
     cost_write_back: bool = False
 
+    # ABRP（A Better Routeplanner）实时遥测中继：把真实电量/车速/位置喂给它，
+    # 路线规划就按你这台车的实际状态算，而不是车型平均模型。
+    abrp_enabled: bool = False
+    abrp_token: str = ""          # ABRP 里「Live Data」生成的 user token
+    abrp_api_key: str = "32b2162f-9599-4647-8139-66e9f9528370"  # 社区通用 key
+    abrp_skip_location: bool = False   # 只发电量不发经纬度
+    # 数据多旧就不再往 ABRP 发（秒）。live.cars 是"最后已知状态"，
+    # 采集停了它也不会变——照发等于给 ABRP 一个盖着当前时间戳的陈旧位置。
+    abrp_max_age_seconds: int = 900
+
+    # Home Assistant MQTT 自动发现。只发 OhmyTesla 自己算出来的实体
+    # （哨兵会话、采集中断、停放耗电、待办保养）——车辆本身的那些
+    # TeslaMate v4.1.0 已经自带发现，重复发会在 HA 里出现两套实体。
+    hass_discovery: bool = False
+
     # 哨兵活动会话：连续活动合并窗口 / 升级阈值（秒）
     sentry_dedup_seconds: int = 15
     sentry_escalate_seconds: int = 90
     # 轮询层（center_display_state=7）总开关；有 Fleet 实时流时自动让位
     sentry_polled_alerts: bool = True
+    # 保留期（天）：告警历史 / 哨兵会话 / 合成任务超过这个天数就清掉。
+    # 0 = 永久保留。这三张表原本只增不删，而它们和电价、token 共用同一个
+    # SQLite 文件，写入还是串行的 —— 跑上几年会拖慢每一次写。
+    history_retention_days: int = 180
+    # 导出成品 / 转码预览 / 缩略图缓存的保留期（天）。0 = 不清理。
+    # 一个 6 机位事件合出来几百 MB，不清会把磁盘吃光。
+    media_retention_days: int = 30
+
     # 多久收不到车辆数据就判定"采集中断"并严重告警（秒）。
     # TeslaMate 停车+哨兵时 30 秒一轮，休眠时最长十几分钟一次，故默认 30 分钟。
     data_stale_seconds: int = 1800

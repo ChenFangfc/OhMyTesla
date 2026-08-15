@@ -118,6 +118,12 @@ async def detect() -> dict:
         market = "CN"
         signals.append("Tesla account is registered in the China region")
     elif region_code:
+        # 以前这里只记一条 signal 却不赋值 market，于是 JWT 明明说了 NA / EU
+        # 也等于没读到。后果很具体：一个美国账号，只要 TeslaMate 还没反查出
+        # 地址（刚装上、或 Nominatim 超时），market 就是空 → apply_market 整个
+        # 跳过 → 用户停在 _DEFAULT 的「中文 + 公里 + 摄氏度 + bar」上。
+        # 下面按国家细分的信号会覆盖这里，所以先认大区不会挡住 US/CA/GB 的区分。
+        market = region_code           # NA / EU
         signals.append(f"Tesla account region: {region_code}")
 
     if market is None and from_api_host(settings.tesla_api_host) == "CN":
@@ -164,5 +170,7 @@ async def detect() -> dict:
         "signals": signals,
         "plant": plant_desc,
         "account_locale": acct_locale,
-        "confident": bool(region_code),
+        # 有 JWT 大区，或者按地址国家定下了具体国家，都算判得准。
+        # 只看 region_code 的话，纯靠地址判出来的结果会被谎报成"不确定"。
+        "confident": bool(region_code) or market in ("US", "CA", "GB", "CN"),
     }

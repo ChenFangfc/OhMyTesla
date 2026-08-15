@@ -9,16 +9,30 @@ RED=$'\033[31m'; CYAN=$'\033[36m'; OFF=$'\033[0m'
 
 port() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2 | tr -d ' ' | cut -d'#' -f1; }
 OHMYTESLA_PORT=$(port OHMYTESLA_PORT); OHMYTESLA_PORT=${OHMYTESLA_PORT:-8800}
-GRAFANA_PORT=$(port GRAFANA_PORT);     GRAFANA_PORT=${GRAFANA_PORT:-3001}
+GRAFANA_PORT=$(port GRAFANA_PORT);     GRAFANA_PORT=${GRAFANA_PORT:-3000}
 TESLAMATE_PORT=$(port TESLAMATE_PORT); TESLAMATE_PORT=${TESLAMATE_PORT:-4000}
 
 die() { echo "${RED}$1${OFF}" >&2; exit 1; }
+
+# 设了门户密码之后，除 /healthz 外所有接口都要 Basic 认证。不带凭据的话
+# status/up 会拿到 401，然后一律报「还没连接」「应用没响应」——健康的安装
+# 也是这个显示。用户名在 main.py 里固定为 ohmytesla。
+# （bash 3.2 下空数组配 set -u 会报错，所以用 ${arr[@]+...} 这种写法。）
+CURL_AUTH=()
+_omt_pw=$(port OHMYTESLA_PASSWORD || true)
+[ -n "${_omt_pw:-}" ] && CURL_AUTH=(--user "ohmytesla:${_omt_pw}")
+auth() { printf '%s\n' "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}"; }
 
 preflight() {
   command -v docker >/dev/null || die "Docker isn't installed. Get Docker Desktop from docker.com."
   docker info >/dev/null 2>&1 || die "Docker isn't running. Open Docker Desktop and wait for the whale icon to settle."
   [ -f .env ] || die ".env is missing. Copy it from the template:  cp .env.example .env"
   grep -q '^TM_ENCRYPTION_KEY=.\+' .env || die "TM_ENCRYPTION_KEY is empty in .env. Generate one:  openssl rand -base64 32"
+  # 只查"非空"的话，.env.example 里的占位串照样过关——而这个键正是加密
+  # Tesla token 用的，用占位值等于没加密。
+  grep -q '^TM_ENCRYPTION_KEY=change-me' .env && die "TM_ENCRYPTION_KEY is still the placeholder. Generate a real one:  openssl rand -base64 32"
+  grep -q '^TM_DB_PASS=change-me' .env && die "TM_DB_PASS is still the placeholder. Generate one:  openssl rand -base64 18 | tr -d '/+='"
+  return 0
 }
 
 # Poll until the hub answers, so `up` doesn't return before the app is usable.
@@ -35,7 +49,8 @@ wait_ready() {
 }
 
 signed_in() {
-  curl -fs --max-time 5 "http://localhost:${OHMYTESLA_PORT}/api/setup/status" 2>/dev/null \
+  curl -fs --max-time 5 "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" \
+    "http://localhost:${OHMYTESLA_PORT}/api/setup/status" 2>/dev/null \
     | grep -q '"signed_in": *true'
 }
 
@@ -77,8 +92,10 @@ cmd_restart() {
 cmd_status() {
   docker compose ps --format "table {{.Service}}\t{{.Status}}\t{{.Ports}}"
   echo
-  if curl -fs --max-time 5 "http://localhost:${OHMYTESLA_PORT}/api/health/detail" >/dev/null 2>&1; then
-    curl -s "http://localhost:${OHMYTESLA_PORT}/api/health/detail" | python3 -m json.tool 2>/dev/null || true
+  if curl -fs --max-time 5 "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" \
+       "http://localhost:${OHMYTESLA_PORT}/api/health/detail" >/dev/null 2>&1; then
+    curl -s "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}" \
+      "http://localhost:${OHMYTESLA_PORT}/api/health/detail" | python3 -m json.tool 2>/dev/null || true
   else
     echo "${YELLOW}The app isn't answering on :${OHMYTESLA_PORT}.${OFF}  Try:  ./omt logs"
   fi
@@ -97,10 +114,25 @@ cmd_update() {
 
 cmd_backup() {
   local out="backups/ohmytesla-$(date +%Y%m%d-%H%M%S).sql.gz"
+  local tmp="${out}.partial"
   mkdir -p backups
   echo "Backing up the database to ${out}…"
-  docker compose exec -T database pg_dump -U "$(port TM_DB_USER)" "$(port TM_DB_NAME)" | gzip > "$out"
-  echo "${GREEN}Done.${OFF} $(du -h "$out" | cut -f1)"
+  # 直接 `pg_dump | gzip > "$out"` 会先把目标文件建好再跑 pg_dump，
+  # dump 失败时留下的半截 .sql.gz 看起来和正常备份一模一样 ——
+  # 备份最不能有的就是这种"看着成功了"。先写临时文件，成了才改名。
+  if docker compose exec -T database pg_dump -U "$(port TM_DB_USER)" "$(port TM_DB_NAME)" | gzip > "$tmp"; then
+    mv "$tmp" "$out"
+    echo "${GREEN}Done.${OFF} $(du -h "$out" | cut -f1)"
+    # hub 自己的库（告警历史、哨兵会话、电价方案、token 覆盖）不在 Postgres 里，
+    # 只备份 Postgres 等于丢掉这一半。
+    if [ -f data/hub/hub.db ]; then
+      cp data/hub/hub.db "backups/hub-$(date +%Y%m%d-%H%M%S).db"
+      echo "${GREEN}Done.${OFF} hub.db copied too"
+    fi
+  else
+    rm -f "$tmp"
+    die "Backup failed — nothing was written."
+  fi
 }
 
 cmd_menu() {

@@ -24,6 +24,10 @@ from .config import settings
 log = logging.getLogger(__name__)
 
 _SENTRY_STATE_RE = re.compile(r"(Off|Idle|Armed|Aware|Panic|Quiet)")
+# Fleet Telemetry 的 DisplayState 枚举（与 Owner API 的 center_display_state
+# 不同编号，见 alerts/engine.py 里的说明）。只关心 Lock —— 有人碰了锁着的车。
+_DISPLAY_STATE_RE = re.compile(
+    r"(Off|Dim|Accessory|Driving|Charging|Lock|Sentry|Dog|Entertainment|On)")
 
 TransitionHook = Callable[[str, str, str | None, str], Awaitable[None]]
 # (car_id, key, old_value, new_value)
@@ -36,7 +40,7 @@ class LiveState:
         self._hooks: list[TransitionHook] = []
         self._subscribers: set[asyncio.Queue] = set()
         self._task: asyncio.Task | None = None
-        self._outbox: asyncio.Queue[tuple[str, str]] = asyncio.Queue(maxsize=200)
+        self._outbox: asyncio.Queue[tuple[str, str, bool]] = asyncio.Queue(maxsize=200)
         self._vin_map: dict[str, str] = {}
         self._vin_map_at: float = 0.0
         self._fleet_reconnect: dict[str, float] = {}
@@ -44,10 +48,16 @@ class LiveState:
         self._seeded: set[str] = set()
         self.seeded_at: dict[str, float] = {}
 
-    def publish(self, topic: str, payload: str) -> None:
-        """向 MQTT 发布消息（如哨兵事件回发，供 HomeAssistant/Node-RED 联动）。"""
+    def publish(self, topic: str, payload: str, retain: bool = False) -> None:
+        """向 MQTT 发布消息（如哨兵事件回发，供 HomeAssistant/Node-RED 联动）。
+
+        retain=True 用于 Home Assistant 的自动发现与状态主题：不 retain 的话，
+        HA 只有在我们**恰好发的那一刻**连着才看得到，重启一次实体就全没了。
+        事件类消息（sentry_event）则必须不 retain —— 那是"刚刚发生了什么"，
+        retain 会让新订阅者一连上就收到一条陈年旧事当成新告警。
+        """
         try:
-            self._outbox.put_nowait((topic, payload))
+            self._outbox.put_nowait((topic, payload, retain))
         except asyncio.QueueFull:
             log.warning("MQTT outbox full, dropping %s", topic)
 
@@ -227,13 +237,13 @@ class LiveState:
 
                     async def send_outbox():
                         while True:
-                            topic, payload = await self._outbox.get()
+                            topic, payload, retain = await self._outbox.get()
                             try:
-                                await client.publish(topic, payload, qos=1)
+                                await client.publish(topic, payload, qos=1, retain=retain)
                             except Exception:
                                 # 发布失败（断线瞬间）：塞回队列等重连后重发
                                 with contextlib.suppress(asyncio.QueueFull):
-                                    self._outbox.put_nowait((topic, payload))
+                                    self._outbox.put_nowait((topic, payload, retain))
                                 raise
 
                     sender = asyncio.create_task(send_outbox())
@@ -243,8 +253,18 @@ class LiveState:
                             await self._handle_fleet(message)
                         else:
                             await self._handle(prefix, message)
+            except asyncio.CancelledError:
+                raise
             except (aiomqtt.MqttError, OSError) as e:
                 log.warning("MQTT connection lost (%s); retrying in 5s", e)
+                await asyncio.sleep(5)
+            except Exception:  # noqa: BLE001
+                # 只接 MqttError/OSError 的话，_handle 里冒出来的任何别的异常
+                # （载荷形状意外、某个 hook 抛错）都会把这个任务永久杀死：
+                # 没人守护它、没人重启它，而 /healthz 照样返回 200 ——
+                # 正是看门狗注释里说的那种"安静地不工作"。
+                # 而且此时 last_update 也不再前进，连看门狗自己都失灵了。
+                log.exception("MQTT listener crashed; restarting in 5s")
                 await asyncio.sleep(5)
             finally:
                 if sender:
@@ -311,12 +331,29 @@ class LiveState:
                 log.info("fleet telemetry connected: VIN…%s (replay gate armed)", vin[-6:])
             return
 
-        if kind != "v" or field != "SentryMode":
+        if kind != "v":
+            return
+        # 只关心这两个会产生告警的字段
+        if field not in ("SentryMode", "CenterDisplay", "DisplayState"):
             return
 
+        # 重放门必须盖住**所有会触发告警的字段**。车辆断线重连后会把缓冲的
+        # 几千条消息一次性重放，而 MQTT 派发器丢掉了 created_at/is_resend，
+        # 分不出新旧。之前这道门只挡 SentryMode，CenterDisplay 的分支又写在
+        # 它前面 —— 一次断网重连就会连发一串"有人碰了你锁着的车"。
         gate = self._fleet_reconnect.get(vin, 0)
         if time.time() - gate < settings.fleet_replay_gate_seconds:
-            log.info("suppressed SentryMode during replay window for VIN…%s", vin[-6:])
+            log.info("suppressed %s during replay window for VIN…%s", field, vin[-6:])
+            return
+
+        # CenterDisplay = Lock 表示"有人碰了锁着的车"。哨兵没开时，这是唯一
+        # 能察觉有人在动车的信号。注意它的枚举和 Owner API 的
+        # center_display_state **不是一套编号**（那边 7=哨兵，这边 7=Lock），
+        # 所以走单独的键名，绝不能混进同一个判断里。
+        if field in ("CenterDisplay", "DisplayState"):
+            m = _DISPLAY_STATE_RE.search(self._unwrap(text))
+            if m:
+                await self._ingest_fleet_field(vin, "fleet_display_state", m.group(1))
             return
 
         try:
@@ -331,20 +368,40 @@ class LiveState:
 
         await self.ingest_fleet_sentry(vin, state)
 
-    async def ingest_fleet_sentry(self, vin: str, state: str) -> None:
-        """把一条哨兵状态喂进引擎。MQTT 直连和托管中转桥接都走这里。"""
+    @staticmethod
+    def _unwrap(text: str) -> str:
+        """字段载荷是裸 JSON 字符串（带引号），也可能是对象。取出里面的值。"""
+        try:
+            value = json.loads(text)
+        except ValueError:
+            return text
+        if isinstance(value, str):
+            return value
+        if isinstance(value, dict):
+            for k in ("stringValue", "value", "state"):
+                v = value.get(k)
+                if isinstance(v, str):
+                    return v
+        return str(value)
+
+    async def _ingest_fleet_field(self, vin: str, key: str, state: str) -> None:
+        """把一条遥测字段喂进引擎。MQTT 直连和托管中转桥接都走这里。"""
         car_key = await self._car_key_for_vin(vin)
         car = self.cars.setdefault(car_key, {"display_name": f"VIN…{vin[-6:]}"})
-        old = car.get("fleet_sentry_state")
+        old = car.get(key)
         if old == state:
             return
-        car["fleet_sentry_state"] = state
+        car[key] = state
         self.last_update[car_key] = time.time()
         for hook in self._hooks:
             try:
-                await hook(car_key, "fleet_sentry_state", old, state)
+                await hook(car_key, key, old, state)
             except Exception:  # noqa: BLE001
                 log.exception("fleet transition hook failed for %s", vin)
+
+    async def ingest_fleet_sentry(self, vin: str, state: str) -> None:
+        """哨兵状态入口。名字保留 —— fleet/bridge.py 也调它。"""
+        await self._ingest_fleet_field(vin, "fleet_sentry_state", state)
 
     async def vins(self) -> list[str]:
         """TeslaMate 里已知的 VIN 列表（桥接器用来决定订阅哪些车）。"""
@@ -372,6 +429,13 @@ class LiveState:
         was_seeded = marker in self._seeded
         self._seeded.discard(marker)
 
+        # 心跳必须记在"消息到达"上，不能记在"值变了"上。TeslaMate 把 healthy
+        # 放在 @do_not_retain 里，每个轮询周期无条件发一条（值恒为 true），
+        # 这就是它给出的存活信号。写在下面的 old==value 之后的话，这条心跳
+        # 会被整条丢掉，看门狗量到的就成了"值有没有变"——车醒着但状态不变
+        # 超过阈值就会误报"采集中断、哨兵告警已失效"。
+        self.last_update[car_id] = time.time()
+
         old = car.get(key)
         if old == value:
             return
@@ -380,7 +444,6 @@ class LiveState:
         if was_seeded:
             old = None
         car[key] = value
-        self.last_update[car_id] = time.time()
 
         for hook in self._hooks:
             try:

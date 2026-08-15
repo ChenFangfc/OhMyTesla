@@ -1,11 +1,13 @@
 {
   "name": "OhmyTesla",
   "short_name": "OhmyTesla",
-  "description": "特斯拉大一统自托管套件",
+  "description": "Self-hosted Tesla companion — dashcam studio, sentry alerts, energy and cost, vehicle control.",
   "start_url": "/",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#0d0d0d",
-  "theme_color": "#2a78d6",
+  "orientation": "any",
+  "background_color": "#0F0F10",
+  "theme_color": "#0F0F10",
   "icons": [
     { "src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]

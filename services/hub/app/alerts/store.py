@@ -1,11 +1,14 @@
 """Hub 自有的 SQLite 存储：告警历史、规则开关、合成任务。"""
 
 import json
+import logging
 import time
 
 import aiosqlite
 
 from ..config import settings
+
+log = logging.getLogger(__name__)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS alerts (
@@ -21,6 +24,21 @@ CREATE TABLE IF NOT EXISTS alerts (
     channels TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_alerts_ts ON alerts (ts DESC);
+
+-- 车辆指令流水。这个页面能解锁你的车，"谁在什么时候下了什么、成没成"
+-- 必须留痕：出了事要能回溯，平时也要能看出是不是有人在乱点。
+CREATE TABLE IF NOT EXISTS command_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts REAL NOT NULL,
+    car_id TEXT,
+    command TEXT NOT NULL,
+    params TEXT,
+    source TEXT,
+    ok INTEGER DEFAULT 0,
+    error TEXT,
+    ms INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_cmdlog_ts ON command_log (ts DESC);
 
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -64,8 +82,41 @@ class Store:
     async def open(self) -> None:
         self._db = await aiosqlite.connect(settings.sqlite_path)
         self._db.row_factory = aiosqlite.Row
+        # 全应用（告警、哨兵会话、电价、token、合成任务、偏好）共用这一条连接，
+        # 每一次写都排在同一条队里。WAL 让读不再被写挡住，busy_timeout 让偶发的
+        # 锁竞争等一会儿而不是直接抛 "database is locked"。
+        await self._db.execute("PRAGMA journal_mode=WAL")
+        await self._db.execute("PRAGMA busy_timeout=5000")
+        await self._db.execute("PRAGMA synchronous=NORMAL")
         await self._db.executescript(_SCHEMA)
         await self._db.commit()
+
+    async def prune(self, keep_days: int) -> dict[str, int]:
+        """按保留期清掉旧记录。
+
+        这三张表原本只增不删：一台跑上几年的机器，告警和哨兵会话会一直堆下去，
+        而它们全在同一个 SQLite 文件里，写入又是串行的。保留期到了就删，
+        免得体积拖慢每一次写。
+        """
+        if keep_days <= 0:
+            return {}
+        cutoff = time.time() - keep_days * 86400
+        removed: dict[str, int] = {}
+        for table, col in (("alerts", "ts"),
+                           ("sentry_sessions", "started"),
+                           ("compose_jobs", "created"),
+                           ("command_log", "ts")):
+            try:
+                cur = await self.db.execute(
+                    f"DELETE FROM {table} WHERE {col} < ?", (cutoff,))  # noqa: S608
+                if cur.rowcount and cur.rowcount > 0:
+                    removed[table] = cur.rowcount
+            except Exception:  # noqa: BLE001 - 某张表还没建就跳过
+                log.debug("prune skipped for %s", table, exc_info=True)
+        if removed:
+            await self.db.commit()
+            log.info("pruned old rows: %s", removed)
+        return removed
 
     async def close(self) -> None:
         if self._db:
@@ -103,6 +154,28 @@ class Store:
         )
         await self.db.commit()
         return cur.lastrowid
+
+    # ---------- 指令流水 ----------
+
+    async def log_command(self, car_id: str, command: str, params: dict | None,
+                          source: str, ok: bool, error: str, ms: int) -> None:
+        try:
+            await self.db.execute(
+                "INSERT INTO command_log (ts, car_id, command, params, source, ok, error, ms)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (time.time(), str(car_id), command,
+                 json.dumps(params, ensure_ascii=False) if params else None,
+                 source, 1 if ok else 0, error[:300] if error else None, ms),
+            )
+            await self.db.commit()
+        except Exception:  # noqa: BLE001 - 记流水失败绝不能让指令本身失败
+            log.exception("failed to log command")
+
+    async def recent_commands(self, limit: int = 100) -> list[dict]:
+        rows = await self.db.execute_fetchall(
+            "SELECT * FROM command_log ORDER BY ts DESC LIMIT ?", (limit,)
+        )
+        return [dict(r) for r in rows]
 
     async def recent_alerts(self, limit: int = 100) -> list[dict]:
         rows = await self.db.execute_fetchall(

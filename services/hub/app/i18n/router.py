@@ -27,6 +27,7 @@ class PrefsBody(BaseModel):
     temp: str | None = None
     pressure: str | None = None
     auto: bool | None = None
+    currency: str | None = None
 
 
 @router.post("")

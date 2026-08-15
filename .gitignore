@@ -2,6 +2,12 @@
 data/
 config/fleet-telemetry.json
 config/certs/
+# `./omt backup` 的产物：整库 dump + hub.db 副本，里面有位置历史和加密 token
+backups/
+# 签名指令代理的私钥与证书（--profile commands）。这把私钥等于你车的钥匙。
+config/tesla-proxy/
+*.pem
+*.key
 __pycache__/
 *.pyc
 .DS_Store

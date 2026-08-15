@@ -24,12 +24,34 @@
 
       <div id="trip-detail" class="mt2" style="display:none">
         <div class="metrics" id="trip-metrics" style="gap:40px"></div>
+
+        {# 给行程归类 + 导出。报销/报税要的就是这两件事，而这正是自托管
+           最该擅长的场景——数据本来就在你自己机器上。 #}
+        <div class="row mt2" style="gap:10px;flex-wrap:wrap;align-items:center">
+          <span class="eyebrow" data-i18n="trips.category">Category</span>
+          <div class="segmented" id="tag-pick"></div>
+          <span class="spacer"></span>
+          <a class="btn ghost" id="dl-gpx" download><span data-i18n="trips.export_gpx">GPX</span></a>
+        </div>
+
         <details class="disclose mt2" id="d-clips" style="display:none">
           <summary><span data-i18n="trips.clips_title">Dashcam clips from this trip</span><span class="value" id="v-clips"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
           </summary>
           <div class="body"><div id="clip-list" class="grid cols-3" style="gap:12px"></div></div>
         </details>
       </div>
+
+      {# 按分类汇总里程，并导出成能报销/报税的表 #}
+      <details class="disclose mt2" id="d-mileage">
+        <summary><span data-i18n="trips.mileage_title">Mileage by category</span><span class="value" id="v-mileage"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+        </summary>
+        <div class="body">
+          <table class="data" id="t-mileage"><tbody></tbody></table>
+          <div class="row mt2" style="gap:10px">
+            <a class="btn" id="dl-csv" download data-i18n="trips.export_csv">Export CSV</a>
+          </div>
+        </div>
+      </details>
     </div>
 
     <div>
@@ -55,6 +77,7 @@
 <script src="/static/js/geo.js"></script>
 <script>
 let map, trackLayer, marker, datum = "wgs84", drives = [], ghosts = null, curId = null;
+let curCarId = null;
 
 async function initMap() {
   const cfg = await apiGet("/api/config");
@@ -72,6 +95,9 @@ function metric(label, value, unit) {
 }
 
 async function loadTrips(carId) {
+  curCarId = carId;
+  await loadTags();
+  loadMileage();
   const tb = document.querySelector("#trip-list tbody");
   try {
     drives = await apiGet(`/api/drives?car_id=${carId}&limit=100`);
@@ -132,7 +158,6 @@ async function drawGhosts(carId) {
     ghosts.addLayer(line);
   });
   ghosts.addTo(map);
-  const b = ghosts.getBounds ? null : null;
   const group = L.featureGroup(ghosts.getLayers());
   if (group.getBounds().isValid()) map.fitBounds(group.getBounds(), { padding: [30, 30] });
   paintGhosts();
@@ -144,11 +169,54 @@ function paintGhosts() {
     l.setStyle({ opacity: l._driveId === curId ? 0 : .34 }));   // 选中的那条由高亮层画
 }
 
+/* ------------------------------------------------ 标记与导出 -- */
+const TRIP_CATS = ["business", "personal", "commute", "other"];
+let tripTags = {};
+
+async function loadTags() {
+  try { tripTags = await apiGet("/api/trips/tags"); } catch (e) { tripTags = {}; }
+}
+
+function paintTagPicker(driveId) {
+  const box = document.getElementById("tag-pick");
+  const cur = (tripTags[String(driveId)] || {}).category || "";
+  box.innerHTML = TRIP_CATS.map((c) =>
+    `<button data-cat="${c}" class="${c === cur ? "active" : ""}">${esc(t("trips.cat_" + c))}</button>`
+  ).join("");
+  box.querySelectorAll("[data-cat]").forEach((b) => b.addEventListener("click", async () => {
+    // 再点一次已选中的 = 取消标记
+    const next = b.dataset.cat === cur ? "" : b.dataset.cat;
+    try {
+      await apiPost(`/api/trips/tags/${driveId}`, { category: next });
+      if (next) tripTags[String(driveId)] = { category: next };
+      else delete tripTags[String(driveId)];
+      paintTagPicker(driveId);
+      loadMileage();
+    } catch (e) { alert(e.message); }
+  }));
+  document.getElementById("dl-gpx").href = `/api/trips/${driveId}/export.gpx`;
+}
+
+async function loadMileage() {
+  if (!curCarId) return;
+  document.getElementById("dl-csv").href = `/api/trips/export.csv?car_id=${curCarId}`;
+  let s;
+  try { s = await apiGet(`/api/trips/summary?car_id=${curCarId}`); } catch (e) { return; }
+  document.getElementById("v-mileage").textContent =
+    s.untagged ? t("trips.n_untagged", { n: s.untagged }) : t("trips.all_tagged");
+  document.querySelector("#t-mileage tbody").innerHTML = s.categories.map((c) => `<tr>
+    <td>${esc(c.category === "untagged" ? t("trips.untagged") : t("trips.cat_" + c.category))}</td>
+    <td class="num">${c.drives}</td>
+    <td class="num">${U.dist(c.km, 0)} ${esc(U.distLabel())}</td>
+    <td class="num">${fmt.num(c.kwh, 1)} kWh</td></tr>`).join("");
+}
+
 async function showTrip(d) {
   if (!d) return;
   document.getElementById("map-idle").style.display = "none";
   const detail = document.getElementById("trip-detail");
   detail.style.display = "block";
+  paintTagPicker(d.id);
 
   let track = [];
   try { track = await apiGet(`/api/drives/${d.id}/track`); } catch (e) { /* 无轨迹 */ }

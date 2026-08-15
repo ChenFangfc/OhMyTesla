@@ -141,7 +141,14 @@ async def overview(car_id: int | None = None, tz_offset_min: int = 0):
     if not cars:
         return {"connected": False, "car": None}
 
-    key = str(car_id) if car_id is not None and str(car_id) in cars else next(iter(cars))
+    # livestate 在 VIN→car_id 映射还没建好时会造 "vin:XXX" 占位键
+    # （见 livestate._car_key_for_vin）。直接 int() 会 ValueError → 500，
+    # 而这条路正是 Fleet Telemetry 抢在车辆表可读之前到达时会走的。
+    numeric = [k for k in cars if k.isdigit()]
+    if not numeric:
+        return {"connected": False, "car": None}
+    key = str(car_id) if car_id is not None and str(car_id) in cars and str(car_id).isdigit() \
+        else numeric[0]
     c = cars[key]
     cid = int(key)
 

@@ -64,6 +64,21 @@ RULES: dict[str, Rule] = {
         Rule("new_sentry_clip", "warning", "🎬 新的哨兵录像", "🎬 New sentry clip synced"),
         Rule("sentry_armed", "info", "🛡️ 哨兵模式已开启", "🛡️ Sentry mode armed", default_enabled=False),
         Rule("sentry_disarmed", "info", "🛡️ 哨兵模式已关闭", "🛡️ Sentry mode disarmed", default_enabled=False),
+        # 到达/离开某个地点。TeslaMate 把当前所在的地理围栏名发在
+        # teslamate/cars/{id}/geofence 上，进出即为该键的一次跳变。
+        # 默认关闭：通勤族每天进出好几次，默认开会很吵。
+        Rule("geofence_arrive", "info", "📍 车辆已到达", "📍 Vehicle arrived", default_enabled=False),
+        Rule("geofence_depart", "info", "📍 车辆已离开", "📍 Vehicle left", default_enabled=False),
+        # 无人在车但车在跑，而且超过了设定车速。代客泊车/借车给别人时用得上；
+        # 默认关，且需要设置里填一个阈值才会生效。
+        Rule("speed_limit", "warning", "🚗 车速超过设定值", "🚗 Speed above your limit",
+             default_enabled=False),
+        # 超充占位费：充满还不拔枪会按分钟计费。
+        Rule("idle_fee_risk", "warning", "💸 超充已充满，继续占位会产生费用",
+             "💸 Charging finished at a Supercharger — idle fees may start",
+             default_enabled=False),
+        # 保养提醒（按里程或日期，规则在设置里配）
+        Rule("maintenance_due", "info", "🔧 保养项目到期", "🔧 Maintenance due"),
         Rule("tpms_warning", "warning", "⚠️ 胎压异常", "⚠️ Tire pressure warning"),
         Rule("charging_interrupted", "warning", "⚠️ 充电意外中断", "⚠️ Charging interrupted"),
         Rule("charge_complete", "info", "🔋 充电完成", "🔋 Charging complete", default_enabled=False),
@@ -117,6 +132,11 @@ class AlertEngine:
         self._last_fired: dict[tuple[str, str], float] = {}
         self._enabled_cache: dict[str, bool] | None = None
         self._rule_lock = asyncio.Lock()
+        # 本次充电过程中见过的最大功率/电压，用来判断是不是直流快充。
+        # 不能在 charging_state=Complete 那一刻现取：那时功率已经归零。
+        # 也不能用 fast_charger_present —— 它是 charges 表的列，**不在 MQTT 上**
+        # （实测 teslamate/cars/1/# 只有 charger_power / voltage / phases 等）。
+        self._charge_peak: dict[str, tuple[float, float]] = {}
 
     async def rule_states(self) -> dict[str, bool]:
         saved = await store.get_setting("alert_rules", {}) or {}
@@ -136,6 +156,38 @@ class AlertEngine:
         if self._enabled_cache is None:
             self._enabled_cache = await self.rule_states()
         return self._enabled_cache.get(rule_id, True)
+
+    # ---------- 临时静音 ----------
+
+    async def snooze_state(self) -> dict:
+        """{until: epoch|None, scope: 'all'|'noncritical'}。过期的自动当作没静音。"""
+        s = await store.get_setting("alert_snooze", {}) or {}
+        until = float(s.get("until") or 0)
+        if until <= time.time():
+            return {"until": None, "scope": s.get("scope", "noncritical"), "active": False}
+        return {"until": until, "scope": s.get("scope", "noncritical"), "active": True,
+                "seconds_left": int(until - time.time())}
+
+    async def set_snooze(self, minutes: int, scope: str = "noncritical") -> dict:
+        """静音 N 分钟。minutes<=0 = 立刻取消。
+
+        scope='noncritical' 时**入侵级仍然会推** —— 这是有意的：
+        「今晚别烦我」和「今晚别管我的车被撬」是两件事。想全静音要显式选 all。
+        """
+        if minutes <= 0:
+            await store.set_setting("alert_snooze", {})
+        else:
+            await store.set_setting("alert_snooze", {
+                "until": time.time() + minutes * 60,
+                "scope": "all" if scope == "all" else "noncritical",
+            })
+        return await self.snooze_state()
+
+    async def _snoozed(self, level: str) -> bool:
+        s = await self.snooze_state()
+        if not s["active"]:
+            return False
+        return s["scope"] == "all" or level != "critical"
 
     # ---------- 主入口: LiveState transition hook ----------
 
@@ -157,12 +209,33 @@ class AlertEngine:
                 )
             return
 
+        # ---- Fleet Telemetry 的 DisplayState（与上面 center_display_state 不同编号）----
+        # Lock = 有人触碰了锁着的车。哨兵**没开**时这是唯一能察觉"有人在动我的车"
+        # 的信号（SentryGuard 走的也是这条）。与 center_display_state 一样不是
+        # retained 回放，首条也要处理。
+        if key == "fleet_display_state":
+            if new == "Lock" and not _is_true(car.get("is_user_present")):
+                await sentry_tracker.observe(
+                    car_id, car.get("display_name") or f"Car {car_id}",
+                    source="fleet", state="aware",
+                    geofence=car.get("geofence") or "", soc=car.get("battery_level") or "",
+                    extra="body.touched_while_locked",
+                )
+            return
+
         if old is None:
             return  # 启动时 retained 消息回放，不算变化
 
         # ---- 轮询层：center_display_state = 7 表示哨兵已被触发、正在录像 ----
         # （不是"哨兵已开启"——开启但无事时屏幕是灭的，值为 0）
         # TeslaMate 停车+哨兵时固定 30 秒轮询一次，所以这一层可能漏掉短事件。
+        #
+        # ⚠️ 这个 7 只对 **Owner API / TeslaMate MQTT** 的编号成立：
+        #     0 Off · 2 待机 · 3 充电 · 4 On · 5 大充电屏 · 6 待解锁 · 7 哨兵 · 8 狗狗 · 9 媒体
+        # Fleet Telemetry 的 DisplayState 是**另一套编号**：
+        #     1 Off · 2 Dim · 3 Accessory · 4 On · 5 Driving · 6 Charging · 7 **Lock** · 8 Sentry · 9 Dog · 10 Entertainment
+        # 两套差一位。把遥测流的值喂进这里，7 会被当成哨兵，实际是"有人碰了锁着的车"——
+        # 一个看起来能跑、但每次都报错事的 bug。遥测流请走 fleet_display_state 那条路。
         if key == "center_display_state":
             if (
                 new == "7"
@@ -208,8 +281,52 @@ class AlertEngine:
         if key == "state" and new == "driving" and not user_present and sentry_on:
             return self._schedule_confirmed("possible_theft", car_id, key, new)
 
+        if key == "geofence":
+            # 空字符串表示"不在任何已知地点"。只在两端有一端非空时才有意义，
+            # 一次移动会先离开旧地点再到达新地点，两条都发得出去。
+            if old and not new:
+                return await self._fire("geofence_depart", car_id,
+                                        extra=t("body.geofence_left", loc0, place=old))
+            if new:
+                return await self._fire("geofence_arrive", car_id,
+                                        extra=t("body.geofence_at", loc0, place=new))
+            return None
+
+        if key == "speed":
+            limit = _num(await store.get_setting("speed_limit_kmh"))
+            spd = _num(new)
+            # 不能要求 not user_present：is_user_present 的意思是"车里有人"，
+            # 而借车/代客泊车时车里当然有人 —— 加这个条件正好把这条规则的
+            # 唯一用途排除掉了。车在开就是有人在开，谁开都一样要提醒。
+            if limit and limit > 0 and spd is not None and spd > limit:
+                return await self._fire(
+                    "speed_limit", car_id,
+                    extra=t("body.speed_over", loc0, speed=f"{spd:.0f}", limit=f"{limit:.0f}"))
+            return None
+
+        # 充电中持续记录峰值，供结束时判断交流还是直流
+        if key in ("charger_power", "charger_voltage") and car.get("charging_state") == "Charging":
+            pk_p, pk_v = self._charge_peak.get(car_id, (0.0, 0.0))
+            self._charge_peak[car_id] = (
+                max(pk_p, _num(car.get("charger_power")) or 0),
+                max(pk_v, _num(car.get("charger_voltage")) or 0),
+            )
+
+        # 超充充满后继续占位会按分钟计费。只在直流快充时提 ——
+        # 家里的交流慢充充满了没人收你钱。
+        if key == "charging_state":
+            if new == "Charging":
+                self._charge_peak.pop(car_id, None)     # 新的一次充电，重新记
+            elif new == "Complete":
+                peak_kw, peak_v = self._charge_peak.pop(car_id, (0.0, 0.0))
+                # 直流快充：功率高，或电压明显高于交流（家用 110-250V，
+                # 超充 300-500V）。两个条件任一成立即可。
+                if peak_kw >= 50 or peak_v >= 300:
+                    await self._fire("idle_fee_risk", car_id,
+                                     extra=t("body.idle_fee", loc0))
+
         if key in _TPMS_KEYS and new == "true":
-            return await self._fire("tpms_warning", car_id, extra=t("body.tpms_position", loc0, position=t(_TPMS_KEYS[key], loc0)))
+            return await self._fire("tpms_warning", car_id, extra=t("body.tpms_position", loc0, corner=t(_TPMS_KEYS[key], loc0)))
 
         if key == "charging_state" and old == "Charging":
             if new == "NoPower":
@@ -294,14 +411,29 @@ class AlertEngine:
         return lines
 
     async def fire_custom(
-        self, car_id: str, level: str, title: str, body: str, rule: str = "sentry_activity"
-    ) -> None:
-        """哨兵会话专用发送通道：标题/正文由会话模型给出，不走规则表和冷却。
+        self, car_id: str, level: str, title: str, body: str,
+        rule: str = "sentry_activity", gate: str | None = None,
+    ) -> bool:
+        """哨兵会话专用发送通道：标题/正文由会话模型给出，不走规则表冷却。
 
         冷却由会话去重承担（15 秒窗口 + 升级阶梯），这里只做静默时段判断。
+
+        但**开关还是要认**：`sentry_aware` / `sentry_panic` / `data_stale` /
+        `data_resumed` 四条规则在界面上有开关（走 /api/alerts/rules），
+        以前这条路径完全不查 `_enabled()`，于是关掉它们等于没关。
+
+        `gate` 用来把"存哪条 rule"和"查哪个开关"分开：哨兵会话统一以
+        `sentry_activity` 入库（历史与界面分组依赖它），但要按当次的严重程度
+        分别去查 sentry_aware / sentry_panic 的开关 —— 用户想关掉聒噪的
+        "有人靠近"而保留"警报拉响"，这是个合理且常见的诉求。
         """
+        if (gate or rule) in RULES and not await self._enabled(gate or rule):
+            return False
         if self._quiet_now() and level != "critical":
-            return
+            return False
+        if await self._snoozed(level):
+            log.info("alert %s suppressed by snooze", rule)
+            return False
         from ..i18n import prefs as user_prefs
 
         up = await user_prefs.get()
@@ -327,16 +459,23 @@ class AlertEngine:
         with contextlib.suppress(Exception):
             await store.add_alert(car_id, car_name, rule, level, title, full, delivered, channels)
 
-        import json as _json
+        # 只有哨兵类事件才回发到 sentry_event 主题。fire_custom 现在也被
+        # 看门狗和保养提醒复用，无条件回发的话，HA 那边一条
+        # 「sentry_event → 开车库灯 + 响蜂鸣器」的自动化，会被"雨刮该换了"
+        # 触发一次。与 _fire 里的判断保持一致。
+        if rule.startswith(("sentry_", "possible_theft", "new_sentry")):
+            import json as _json
 
-        live.publish(
-            f"teslamate/cars/{car_id}/sentry_event",
-            _json.dumps(
-                {"rule": rule, "level": level, "car": car_name, "title": title, "ts": time.time()},
-                ensure_ascii=False,
-            ),
-        )
+            live.publish(
+                f"teslamate/cars/{car_id}/sentry_event",
+                _json.dumps(
+                    {"rule": rule, "level": level, "car": car_name,
+                     "title": title, "ts": time.time()},
+                    ensure_ascii=False,
+                ),
+            )
         log.info("sentry alert fired: %s level=%s delivered=%s", rule, level, delivered)
+        return True
 
     async def _fire(
         self, rule_id: str, car_id: str, extra: str = "", attach: str | None = None
@@ -346,6 +485,9 @@ class AlertEngine:
             return
 
         if self._quiet_now() and rule.level != "critical":
+            return
+        if await self._snoozed(rule.level):
+            log.info("alert %s suppressed by snooze", rule_id)
             return
 
         now = time.time()

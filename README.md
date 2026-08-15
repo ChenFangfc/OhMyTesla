@@ -95,6 +95,29 @@ PUBLIC_URL=http://192.168.1.20:8800     # 换成手机能访问到这台机器�
 
 ---
 
+## 6. 让 AI 直接查你的车（MCP）
+
+在 Claude Code / Claude Desktop / Cursor 里接上这个地址，就能直接问
+「上个月充电花了多少」「这两周能耗为什么变差」「哪次哨兵事件持续最久」，
+模型自己去查数据、自己交叉验证：
+
+```bash
+claude mcp add --transport http ohmytesla http://localhost:8800/mcp
+```
+
+15 个只读工具（行程 / 充电曲线 / 电池健康 / 停放耗电 / 胎压 / 告警 /
+哨兵会话），外加一个带护栏的 `run_sql`。四层护栏各自独立生效：
+
+1. 只允许 `SELECT` / `WITH` 开头，且不得含写入类关键字；
+2. **降权到一个专用的非超级用户角色**（`omt_mcp_readonly`）执行 ——
+   compose 给 hub 的是 TeslaMate 自己的账号，那是个 superuser，
+   不降权的话 `pg_read_file()` 能读到容器里的任意文件，`private.tokens`
+   也读得到。降权之后这两条实测都是 `permission denied`；
+3. 只读事务，跑完一律回滚；
+4. 最多 200 行、8 秒超时。
+
+> 数据全程不出你这台机器。商业 App 做不了这件事：你的数据在他们服务器上。
+
 ## 常用命令
 
 | 命令 | 作用 |
@@ -166,9 +189,32 @@ PUBLIC_URL=http://192.168.1.20:8800     # 换成手机能访问到这台机器�
 
 ## 安全
 
-默认配置**只适合家庭内网**。要从外网访问，请放在 VPN（Tailscale / WireGuard）或带认证的反向代理后面 —— 这里面有你的位置历史、行车录像和推送渠道。
+**默认配置只适合家庭内网。** 这套东西默认没有任何认证，而它能做的事包括：
 
-也可以在 `.env` 里设 `OHMYTESLA_PASSWORD` 开启全站基础认证。
+| 暴露面 | 默认状态 | 能做什么 |
+|---|---|---|
+| `:8800` 门户 | 无密码 | 解锁车门、开后备箱、关哨兵、看全部位置历史与录像 |
+| `:8800/mcp` | 无密码 | 让 AI 助手读整个数据库（只读，但含全部行程与位置） |
+| `:3001` Grafana | admin/admin | 全部数据面板 |
+| `:4000` TeslaMate | 无密码 | 原生管理界面 |
+| mosquitto | `mosquitto-no-auth.conf` | 任何能连到 broker 的人都能读实时车辆状态 |
+
+要暴露到外网之前，**至少**做这两件事：
+
+```bash
+# 1. 给门户设密码（用户名固定 ohmytesla）
+OHMYTESLA_PASSWORD=你的强密码
+
+# 2. 给 MQTT 加认证（这两项以前设不了，现在可以）
+MQTT_USERNAME=...
+MQTT_PASSWORD=...
+```
+
+更稳妥的做法是整套放在 VPN（Tailscale / WireGuard）或带认证的反向代理后面，
+而不是端口映射到公网。里面有你的位置历史、行车录像、推送渠道和车辆控制权。
+
+> `run_sql`（MCP）已经降权到一个专用只读角色执行，读不到 token 表也读不了容器文件系统；
+> 但它仍然能读你全部的行程与位置记录 —— 这是它的用途，不是缺陷。
 
 ## 更多
 
@@ -179,6 +225,8 @@ PUBLIC_URL=http://192.168.1.20:8800     # 换成手机能访问到这台机器�
 ## 许可与声明
 
 AGPL-3.0（与 TeslaMate 一致）。
+
+> This project is an unofficial community tool and is not affiliated with, endorsed by, or supported by the official TeslaMate project.
 
 与 TeslaMate 团队及 Tesla, Inc. 均无隶属关系，未获任何一方背书。TeslaMate 与 Tesla 分别是其权利人的商标。本项目按 AGPL-3.0 以 Docker 镜像方式编排**未修改的** TeslaMate。
 

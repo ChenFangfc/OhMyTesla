@@ -1,5 +1,29 @@
 # OhmyTesla 路线图
 
+> **这份文件是 2026-08-05 从市场调研直接生成的原始计划，不是进度表。**
+> 它描述的服务拆分（NestJS 的 `ohmy-core`、独立的 `ohmy-dashcam` / `ohmy-web`、
+> 以及一个独立的 `ohmy` Postgres schema）**从未落地**，实际架构是单个 FastAPI
+> 容器 + 自有 SQLite，见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+> 下面的复选框保持原样是为了留档，**真实进度看这里**：
+
+| 阶段 | 状态 | 说明 |
+|---|---|---|
+| Phase 0 编排与合规 | ✅ 基本完成 | compose 编排、AGPL、商标声明齐了；**MQTT 鉴权与认证前置仍未做**（见下方风险） |
+| Phase 1 三大主功能 | ✅ 已上线 | 行车记录仪工作室、哨兵告警、数据门户、引导页全部可用 |
+| Phase 2 融合与告警广度 | ✅ 大部分已上线 | 时钟自动校正、行程⇄录像、电价引擎、19 条车辆指令、Web Push、i18n/单位、中转桥接都已实现；隐私工具（打码）、导出布局扩展、SEI 入库分析未做 |
+| Phase 3 生态与长尾 | ⬜ 未开始 | 自动化引擎、电池健康 v2、社区统计、证据包导出等 |
+
+**已知与计划不符的地方**：
+- Phase 0 的「authed MQTT / oauth2-proxy 认证前置 / CHECK_ORIGIN」列为 P0，
+  实际 `docker-compose.yml` 仍是 `mosquitto-no-auth.conf`、Grafana 仍是 admin/admin。
+  目前的缓解是「默认只适合内网 + 可选 `OHMYTESLA_PASSWORD`」，不等于做完了。
+- Phase 2 说要 **bundle TeslaMateAgile**，实际是 `tariff/calc.py` 从零重写的
+  分时电价引擎（支持跨时段按时间占比切分，TeslaMateAgile 没有这个）。
+- Grafana 社区面板包的 provisioning 挂载没做，只挂了数据卷。
+- 设计文档里的 AI 指令层（§18-21、§53）**完全未实现**。
+
+---
+
 ## Phase 0 — Scaffold & compliance (weeks 1-4)
 
 - [ ] Monorepo + docker-compose overlay running unmodified teslamate/teslamate, teslamate/grafana, postgres:18-trixie, mosquitto — with hardened defaults: MQTT auth, oauth2-proxy/Authelia front, CHECK_ORIGIN, one-command install script
@@ -11,7 +35,7 @@
 
 ## Phase 1 — MVP: the three headliners (months 2-5)
 
-- [ ] Dashcam ingest pipeline (ohmy-dashcam, Python/ffmpeg): USB/share scan, ffprobe per file, faststart remux, event.json parse, thumbnails, SEI extraction via vendored dashcam.proto into clips/events/clip_telemetry tables; encrypted-clip and moov-missing detection with guided UX
+- [ ] Dashcam ingest pipeline (ohmy-dashcam, Python/ffmpeg): USB/share scan, ffprobe per file, faststart remux, event.json parse, thumbnails, SEI extraction via an independently written wire-format decoder (teslamotors/dashcam has NO LICENSE file — its field definitions are factual and may be referenced, but no code or .proto may be vendored) into clips/events/clip_telemetry tables; encrypted-clip and moov-missing detection with guided UX
 - [ ] Dashcam Studio viewer (ohmy-web): synced 4/6-cam playback with HEVC probe + server transcode fallback, SEI overlay gauges, TeslaMate-fused overlay (SOC/power/elevation/temps via drive-window join with interpolation and derived heading), event browser with geofence tags, MapLibre minimap
 - [ ] Export v1: server ffmpeg composition — grid + PiP layouts, telemetry dashboard burn-in, timestamp overlay, hwaccel autodetect, quality tiers; job queue + progress UI
 - [ ] Sentry alerts v1: fleet-telemetry optional compose profile (mTLS setup guide) + MyTeslaMate env profile + degraded MQTT-only tier; Aware/Panic FSM with 15s dedup and 90s escalation; channels: Telegram (inline mute button), Web Push (PWA), ntfy, SMTP; incident history feed with geofence tags; MQTT sentry_event republish

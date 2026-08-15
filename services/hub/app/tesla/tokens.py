@@ -83,8 +83,12 @@ def invalidate_cache() -> None:
     _cache.pop("tm", None)
 
 
-async def access_token() -> str | None:
-    """取可用的 access token：优先用户手填，其次 TeslaMate 解密，带 10 分钟缓存。"""
+async def access_token(*, raise_db_down: bool = False) -> str | None:
+    """取可用的 access token：优先用户手填，其次 TeslaMate 解密，带 10 分钟缓存。
+
+    raise_db_down=True 时，数据库不可用且没有缓存会抛 DbDown 而不是返回 None
+    —— 供 token_source() 区分"没登录"和"数据库连不上"。
+    """
     manual = await store.get_setting("tesla_access_token")
     if manual:
         return manual
@@ -97,7 +101,11 @@ async def access_token() -> str | None:
     try:
         token = await _from_teslamate()
     except DbDown:
-        return cached[1] if cached else None  # 数据库临时不可用时沿用旧 token
+        if cached:
+            return cached[1]        # 数据库临时不可用时沿用旧 token
+        if raise_db_down:
+            raise
+        return None
     if token:
         _cache["tm"] = (time.time(), token)
     return token
@@ -115,6 +123,9 @@ async def token_source() -> str:
     if settings.tesla_access_token:
         return "env"
     try:
-        return "teslamate" if await access_token() else "none"
+        # 必须让 DbDown 冒上来。access_token() 默认把它吞成 None，于是
+        # 这里永远走到 "none" —— 界面显示「没有可用 token / 请先登录」，
+        # 而真相是 Postgres 连不上。DbDown 这个类就是为了不给这种误导提示。
+        return "teslamate" if await access_token(raise_db_down=True) else "none"
     except DbDown:
         return "db_down"

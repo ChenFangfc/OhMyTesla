@@ -23,6 +23,15 @@
 
   <div class="metrics" id="headline"></div>
 
+  {# 与上一个等长周期的对比。选「全部」时没有可比周期，这一段自动留空。 #}
+  <div class="section" id="compare-section">
+    <div class="section-head">
+      <h2 data-i18n="energy.cmp_title">Compared with the period before</h2>
+      <span class="note" id="cmp-note"></span>
+    </div>
+    <div class="metrics" id="compare" style="gap:44px"></div>
+  </div>
+
   <div class="section">
     <div class="section-head">
       <h2 data-i18n="energy.use_title">Energy use</h2><span class="note" data-i18n="energy.use_sub">Added at the plug, by month</span>
@@ -60,6 +69,34 @@
           </table>
         </div>
         <div id="tariff-hint" class="small muted mt"></div>
+
+        {# 点某一行看那次充电的功率曲线 #}
+        <div id="curve-box" class="mt2" style="display:none">
+          <div class="eyebrow" id="curve-title"></div>
+          <div class="chart" id="c-curve" style="min-height:180px"></div>
+          <div class="small muted mt" id="curve-note"></div>
+        </div>
+      </div>
+    </details>
+
+    {# 停放耗电。所有商业记录器都有这张表，因为"车停着到底掉多少电"
+       是车主最常问的问题之一，而它恰恰只能靠长期数据回答。 #}
+    <details class="disclose" id="d-vampire">
+      <summary><span data-i18n="energy.d_vampire">Drain while parked</span><span class="value" id="v-vampire">–</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+      </summary>
+      <div class="body">
+        <div class="metrics" id="vampire-metrics" style="gap:44px"></div>
+        <div class="table-scroll mt2">
+          <table class="data" id="t-vampire">
+            <thead><tr>
+              <th data-i18n="common.time">Time</th>
+              <th class="num" data-i18n="energy.parked_for">Parked</th>
+              <th class="num" data-i18n="energy.range_lost">Range lost</th>
+              <th class="num" data-i18n="energy.per_day">Per day</th>
+            </tr></thead><tbody></tbody>
+          </table>
+        </div>
+        <div class="small muted mt" data-i18n="energy.vampire_note"></div>
       </div>
     </details>
 
@@ -85,6 +122,22 @@
         <div class="metrics" id="bat-tiles" style="gap:48px;margin-bottom:24px"></div>
         <div class="chart-sub" data-i18n="insights.chart.range_sub">Monthly rated range scaled to a full charge — the clearest read on capacity loss</div>
         <div class="chart" id="c-range" style="min-height:180px"></div>
+
+        {# 默认拿"观测到的最大值"当新车基准。对装本工具之前已经开了几年的车，
+           那几年的衰减全被吃进基准里 —— 于是显示 0% 衰减。允许手填才有意义。 #}
+        <div class="row mt2" style="gap:10px;flex-wrap:wrap;align-items:center">
+          <span class="body-sm" data-i18n="energy.baseline_label">Range when new</span>
+          <input id="bat-baseline" type="number" min="0" step="1" style="width:110px">
+          <span class="body-sm" id="bat-baseline-unit"></span>
+          <button class="btn" id="bat-baseline-save" data-i18n="common.save">Save</button>
+          <span class="small muted" id="bat-baseline-msg"></span>
+        </div>
+        <div class="small muted mt" data-i18n="energy.baseline_note"></div>
+
+        {# 日历老化：高电量静置是公认的衰减来源。这是"原因"，不是"结果"。 #}
+        <div class="eyebrow mt3" data-i18n="energy.soc_exposure">Time spent at each charge level</div>
+        <div class="chart" id="c-soc" style="min-height:150px"></div>
+        <div class="small muted mt" id="soc-note"></div>
       </div>
     </details>
 
@@ -125,6 +178,28 @@ function metric(label, value, unit, delta, cls) {
     <div class="metric-value">${value}${unit ? `<span class="unit">${esc(unit)}</span>` : ""}</div>
     ${delta ? `<div class="delta ${cls || ""}">${esc(delta)}</div>` : ""}
   </div>`;
+}
+
+/* 单次充电的功率-电量曲线。横轴用 SOC 而不是时间：不同桩、不同起始电量
+   之间只有按 SOC 对齐才能比较，这也是所有充电曲线图的画法。 */
+async function showCurve(cpId) {
+  const box = $("#curve-box");
+  let d;
+  try { d = await apiGet(`/api/insights/charge-curve?cp_id=${cpId}`); }
+  catch (e) { box.style.display = "none"; return; }
+  if (!d || !d.points || d.points.length < 2) { box.style.display = "none"; return; }
+  box.style.display = "block";
+  $("#curve-title").textContent = t("energy.curve_title", {
+    place: d.location || t("common.unknown"), kwh: d.kwh });
+  omtChart.line($("#c-curve"), {
+    series: [{ name: t("energy.curve_power"), color: "--series-2",
+               data: d.points.filter((p) => p.soc != null).map((p) => [p.soc, p.kw]) }],
+    xFmt: (v) => Math.round(v) + "%",
+    yFmt: (v) => Math.round(v) + " kW",
+    zeroBase: true,
+  });
+  $("#curve-note").textContent = t("energy.curve_note", {
+    peak: d.peak_kw, type: d.is_dc ? "DC" : "AC", min: d.duration_min });
 }
 
 async function render() {
@@ -177,9 +252,46 @@ async function render() {
     // 之前把两者写在同一个指标里（数字用里程表、副标题写记录起点）会误导
     metric(t("energy.odometer"), fmt.num(U.dist(s.odometer, 0), 0), U.distLabel()) +
     metric(t("energy.recorded"), fmt.num(U.dist(s.km_driven, 0), 0), U.distLabel(),
-           s.first_record ? t("insights.first_record", { date: fmt.date(s.first_record) }) : "");
+           s.first_record ? t("insights.first_record", { date: fmt.date(s.first_record) }) : "") +
+    // 实际里程 ÷ 消耗掉的额定续航。低于 100% = 比标称费电。
+    metric(t("energy.range_efficiency"),
+           s.range_efficiency_pct != null ? s.range_efficiency_pct + "%" : "–", "",
+           t("energy.range_efficiency_sub")) +
+    (s.gas_savings
+      ? metric(t("energy.gas_saved"), fmt.money(s.gas_savings.saved, 0), "",
+               t("energy.gas_saved_sub", {
+                 fuel: fmt.money(s.gas_savings.fuel_cost, 0),
+                 electric: fmt.money(s.gas_savings.electric_cost, 0) }))
+      : "");
 
-  apiGet(`/api/insights/charging?car_id=${carId}`).then((c) => {
+  // 单独一个数字没有信息量，"比上一个同长周期涨跌多少"才是人想知道的。
+  // days=0（全部）时没有可比周期，就不显示这一段。
+  const cmpBox = $("#compare");
+  // 选「全部」时没有可比周期。只清内容的话标题和说明还杵在那儿，
+  // 看起来像加载失败 —— 整块藏掉。
+  const cmpSection = $("#compare-section");
+  if (!days) { cmpBox.innerHTML = ""; cmpSection.style.display = "none"; } else {
+    cmpSection.style.display = "";
+    apiGet(`/api/insights/compare?car_id=${carId}&days=${days}`).then((p) => {
+      const pct = (v) => v == null ? "" : (v > 0 ? "+" : "") + v + "%";
+      // design.css 里 .delta.up 是橙色（警示）、.down 是绿色（向好）。
+      // 所以只给**真的有好坏方向**的指标上色：能耗越低越好。
+      // 里程和次数纯粹是"你开得多还是少"，没有好坏，留中性。
+      const effCls = (v) => v == null || v === 0 ? "" : (v > 0 ? "up" : "down");
+      cmpBox.innerHTML =
+        metric(t("energy.cmp_distance"), fmt.num(U.dist(p.current.km, 0), 0), U.distLabel(),
+               pct(p.change_pct.km)) +
+        metric(t("energy.cmp_energy"), fmt.num(p.current.kwh, 1), "kWh",
+               pct(p.change_pct.kwh)) +
+        metric(t("insights.avg_consumption"), U.cons(p.current.wh_per_km) ?? "–", U.consLabel(),
+               pct(p.change_pct.wh_per_km), effCls(p.change_pct.wh_per_km)) +
+        metric(t("energy.cmp_drives"), p.current.drives, "",
+               pct(p.change_pct.drives));
+      $("#cmp-note").textContent = t("energy.cmp_note", { days: p.days });
+    }).catch(() => { cmpBox.innerHTML = ""; });
+  }
+
+  apiGet(`/api/insights/charging?car_id=${carId}&days=${days}`).then((c) => {
     omtChart.bars($("#c-charge"), {
       labels: c.monthly.map((m) => fmt.month(m.month)),
       series: [
@@ -190,21 +302,25 @@ async function render() {
     });
 
     $("#v-charging").textContent = t("energy.n_sessions", { n: c.recent.length });
-    rows("#t-charges tbody", c.recent.map((r) => `<tr>
-      <td>${fmt.dt(r.start)}</td><td>${esc(r.location)}</td>
+    rows("#t-charges tbody", c.recent.map((r) => `<tr class="tappable" data-cp="${r.id}">
+      <td>${fmt.dt(r.start)}</td><td>${esc(r.location || t("common.unknown"))}</td>
       <td class="dim">${esc(r.type)}${r.max_power ? " · " + r.max_power + " kW" : ""}</td>
       <td class="num">${r.soc}%</td><td class="num">${r.kwh}</td>
       <td class="num dim">${r.duration_min} min</td>
       <td class="num">${r.cost_source === "unset" ? "–" : fmt.money(r.cost)}</td></tr>`).join(""), 7);
     $("#tariff-hint").textContent = c.computed_sessions ? "" : t("insights.tariff_hint");
+    // 点某一次充电看它的功率-电量曲线。直流快充的曲线形状是判断
+    // "这个桩到底快不快""电池是不是热管理限速了"最直接的依据。
+    document.querySelectorAll("#t-charges tbody tr[data-cp]").forEach((tr) =>
+      tr.addEventListener("click", () => showCurve(+tr.dataset.cp)));
 
     $("#v-places").textContent = t("energy.n_places", { n: c.top_locations.length });
     rows("#t-locations tbody", c.top_locations.map((l) => `<tr>
-      <td>${esc(l.location)}</td><td class="num">${fmt.num(l.kwh, 0)}</td>
+      <td>${esc(l.location || t("common.unknown"))}</td><td class="num">${fmt.num(l.kwh, 0)}</td>
       <td class="num dim">${l.sessions}</td><td class="num">${fmt.money(l.cost, 0)}</td></tr>`).join(""), 4);
   }).catch(() => {});
 
-  apiGet(`/api/insights/drives?car_id=${carId}`).then((d) => {
+  apiGet(`/api/insights/drives?car_id=${carId}&days=${days}`).then((d) => {
     omtChart.line($("#c-temp"), {
       series: [{ name: t("insights.avg_consumption"), color: "--series-1", points: true,
                  data: d.by_temp.map((x) => [U.temp(x.temp, 0), U.cons(x.wh_km)]) }],
@@ -222,12 +338,65 @@ async function render() {
              t("insights.range_best", { value: (U.dist(b.max_range_at_100) ?? "–") + " " + U.distLabel() })) +
       metric(t("insights.degradation"), b.degradation_pct != null ? b.degradation_pct + "%" : "–", "",
              b.lfp_battery ? t("insights.battery_lfp") : t("insights.battery_nca")) +
-      metric(t("insights.capacity_now"), b.current_capacity_kwh ?? "–", "kWh");
+      metric(t("insights.capacity_now"), b.current_capacity_kwh ?? "–", "kWh") +
+      metric(t("energy.full_cycles"), b.equivalent_full_cycles ?? "–", "",
+             b.lifetime_kwh_added ? t("energy.lifetime_added", { kwh: b.lifetime_kwh_added }) : "");
     omtChart.line($("#c-range"), {
       series: [{ name: t("insights.chart.range_series"), color: "--series-1",
                  data: b.range_based.map((r) => [new Date(r.month).getTime(), r.range_km]) }],
       xTime: true, yFmt: (v) => Math.round(U.dist(v, 0)) + " " + U.distLabel(),
     });
+
+    // 基准来源要说清楚：显示 0% 衰减的时候，用户得知道那是"按观测最大值算的"
+    $("#bat-baseline-unit").textContent = U.distLabel();
+    if (b.baseline_source === "user") $("#bat-baseline").value = Math.round(U.dist(b.max_range_at_100, 0));
+    $("#bat-baseline-msg").textContent =
+      b.baseline_source === "user" ? t("energy.baseline_user") : t("energy.baseline_observed");
+
+    // SOC 停留时长分箱。LFP 电池不适用"别长期高电量"这条经验，就别提。
+    const order = ["0-30", "30-60", "60-80", "80-90", "90-100"];
+    const sh = b.soc_hours || {};
+    omtChart.bars($("#c-soc"), {
+      labels: order.map((k) => k + "%"),
+      // bars() 收的是 values（按 labels 顺序的一维数组），不是 [x,y] 的 data
+      series: [{ name: t("energy.hours"), color: "--series-2",
+                 values: order.map((k) => sh[k] || 0) }],
+      yFmt: (v) => Math.round(v) + " h",
+    });
+    $("#soc-note").textContent = b.high_soc_pct == null ? ""
+      : b.lfp_battery ? t("energy.soc_note_lfp")
+      : t("energy.soc_note", { pct: b.high_soc_pct });
+  }).catch(() => {});
+
+  document.getElementById("bat-baseline-save").onclick = async () => {
+    const raw = parseFloat(document.getElementById("bat-baseline").value);
+    // 输入框跟着用户的单位走，后端一律存公里
+    const km = isFinite(raw) && raw > 0
+      ? (U.distLabel() === "mi" ? raw * 1.609344 : raw) : null;
+    try {
+      await apiPost(`/api/insights/battery/baseline?car_id=${carId}`, { range_km: km });
+      render();
+    } catch (e) { $("#bat-baseline-msg").textContent = e.message; }
+  };
+
+  apiGet(`/api/insights/vampire?car_id=${carId}&days=${days || 365}`).then((v) => {
+    // 推不出电池容量时 avg_pct_per_day 是 null，直接套模板会显示 "null%"
+    $("#v-vampire").textContent =
+      v.avg_kwh_per_day == null ? t("common.no_data")
+      : v.avg_pct_per_day == null
+        ? t("energy.vampire_summary_kwh", { kwh: fmt.num(v.avg_kwh_per_day, 1) })
+        : t("energy.vampire_summary", { kwh: fmt.num(v.avg_kwh_per_day, 1), pct: v.avg_pct_per_day });
+    $("#vampire-metrics").innerHTML =
+      metric(t("energy.per_day"), v.avg_kwh_per_day != null ? fmt.num(v.avg_kwh_per_day, 2) : "–", "kWh")
+      + metric(t("energy.range_lost"), v.avg_km_per_day != null ? U.dist(v.avg_km_per_day, 1) : "–", U.distLabel())
+      + metric(t("energy.pack_est"), v.pack_kwh_est ?? "–", "kWh")
+      + metric(t("insights.table.sessions"), v.sessions, "");
+    rows("#t-vampire tbody", (v.recent || []).slice().reverse().map((s) => `<tr>
+      <td class="dim nowrap">${fmt.dt(s.from)}</td>
+      <td class="num">${fmt.num(s.hours, 1)} h</td>
+      <td class="num">${U.dist(s.km_lost, 1)} ${esc(U.distLabel())}</td>
+      <td class="num">${s.kwh_per_day != null ? fmt.num(s.kwh_per_day, 2) + " kWh" : "–"}</td>
+    </tr>`).join(""), 4);
   }).catch(() => {});
 
   apiGet(`/api/insights/records?car_id=${carId}`).then((r) => {

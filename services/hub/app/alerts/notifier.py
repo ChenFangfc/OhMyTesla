@@ -136,7 +136,9 @@ async def send(title: str, body: str, payload: dict | None = None, attach: str |
         try:
             from . import webpush
 
-            url = "/alerts"
+            # /alerts 是旧路径，会 301 到 /security。推送里给的链接直接给终点，
+            # 别让手机上点开先吃一次跳转。
+            url = "/security"
             if payload and payload.get("rule", "").startswith(("sentry_", "new_sentry")):
                 url = "/dashcam"
             ok = await webpush.send(

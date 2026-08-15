@@ -13,6 +13,23 @@
      A security product that quietly can't notify you is worse than none. #}
   <div id="delivery" class="card" style="display:none;margin-bottom:24px"></div>
 
+  {# 临时静音。默认只挡非严重级 —— 洗车、修车、自己在车里折腾的时候需要它，
+     但「别烦我」不该等于「别管我的车被撬」。 #}
+  <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:24px">
+    <span class="eyebrow" data-i18n="security.snooze">Snooze alerts</span>
+    <div class="segmented" id="snooze-pick">
+      <button data-min="60">1h</button>
+      <button data-min="480">8h</button>
+      <button data-min="1440">24h</button>
+    </div>
+    <label class="row" style="gap:6px;align-items:center">
+      <input type="checkbox" id="snooze-all">
+      <span class="body-sm" data-i18n="security.snooze_all">including intrusion alerts</span>
+    </label>
+    <button class="btn ghost" id="snooze-off" style="display:none" data-i18n="security.snooze_cancel">Cancel</button>
+    <span class="small" id="snooze-msg"></span>
+  </div>
+
   <div class="section" style="margin-top:0">
     <div class="section-head">
       <h2 data-i18n="security.activity">Sentry Mode activity</h2><span class="spacer"></span>
@@ -75,6 +92,25 @@
         <tbody><tr><td colspan="5" class="empty small" data-i18n="common.loading">Loading…</td></tr></tbody>
       </table>
     </div>
+
+    {# 指令流水。这个门户能解锁你的车 —— 谁在什么时候下了什么、成没成，
+       必须留痕。排查「我点了没反应」时这是唯一有用的东西。 #}
+    <details class="disclose mt2" id="d-commands">
+      <summary><span data-i18n="security.commands">Vehicle commands sent</span><span class="value" id="v-commands">–</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+      </summary>
+      <div class="body">
+        <div class="table-scroll">
+          <table class="data" id="t-commands">
+            <thead><tr>
+              <th data-i18n="common.time">Time</th>
+              <th data-i18n="security.command">Command</th>
+              <th class="num" data-i18n="security.took">Took</th>
+              <th data-i18n="security.result">Result</th>
+            </tr></thead><tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </details>
   </div>
 
 </div>
@@ -130,7 +166,10 @@ function loadChannels() { return apiGet("/api/alerts/channels").then(({ channels
         <div><div class="title" style="color:var(--warning-orange)">${esc(t("security.email_half_title"))}</div>
         <div class="body-sm mt" style="max-width:60ch">${esc(t("security.email_" + email_problem))}</div></div></div>`;
   }
-  if (!channels.length) {
+  // 一个渠道都没有 **且** 邮件也没配到一半时才盖上面那块。以前是无条件覆盖，
+  // 于是「填了邮件服务器但没填密码」这个最该看见的提示，恰恰在它唯一会出现的
+  // 场景（没有其它可用渠道）被后面这段整块冲掉了。
+  if (!channels.length && !email_problem) {
     box.style.display = "block";
     box.style.borderColor = "rgba(255,159,10,.35)";
     box.innerHTML = `<div class="row" style="align-items:flex-start;gap:12px"><span style="color:var(--warning-orange);flex:none">${icon("bell", 18)}</span>
@@ -245,6 +284,15 @@ function loadRules() { return apiGet("/api/alerts/rules").then((rules) => {
 }); }
 
 /* ------------------------------------------------------------- history -- */
+/* channels 是一列 JSON 文本。一行坏数据以前会让整个 .map() 抛异常，
+   而 loadHistory 没有 catch —— 表格就永远停在「加载中…」。 */
+function chanNames(raw) {
+  let list = [];
+  try { list = JSON.parse(raw || "[]"); } catch (e) { return ""; }
+  if (!Array.isArray(list)) return "";
+  return list.map((c) => (CH_KEY[c] ? t(CH_KEY[c]) : c)).join(", ");
+}
+
 function loadHistory() { return apiGet("/api/alerts/history?limit=200").then((rows) => {
   const tb = $("#history tbody");
   if (!rows.length) {
@@ -256,7 +304,7 @@ function loadHistory() { return apiGet("/api/alerts/history?limit=200").then((ro
     <td><span class="pill ${a.level}">${esc(t("level." + a.level))}</span></td>
     <td>${esc(plain(a.title))}<div class="meta" style="white-space:pre-line">${
       esc(bodyLines(a.body))}</div></td>
-    <td class="dim">${esc(JSON.parse(a.channels || "[]").map((c) => CH_KEY[c] ? t(CH_KEY[c]) : c).join(", "))}</td>
+    <td class="dim">${esc(chanNames(a.channels))}</td>
     <td class="num">${a.delivered ? icon("check", 15) : icon("x", 15)}</td>
   </tr>`).join("");
 }); }
@@ -270,9 +318,77 @@ $("#clear-history").addEventListener("click", async (e) => {
   finally { e.target.disabled = false; }
 });
 
+/* -------------------------------------------------------- command log -- */
+async function loadCommands() {
+  let rows;
+  try { rows = (await apiGet("/api/tesla/commands/log?limit=100")).commands; }
+  catch (e) { return; }
+  $("#v-commands").textContent = rows.length
+    ? t("security.n_commands", { n: rows.length }) : t("common.no_data");
+  const tb = $("#t-commands tbody");
+  if (!rows.length) {
+    tb.innerHTML = `<tr><td colspan="4" class="empty small">${esc(t("security.no_commands"))}</td></tr>`;
+    return;
+  }
+  tb.innerHTML = rows.map((c) => `<tr>
+    <td class="dim nowrap">${new Date(c.ts * 1000).toLocaleString(localeTag())}</td>
+    <td>${esc(t("cmd." + c.command, {}) || c.command)}</td>
+    <td class="num">${c.ms != null ? c.ms + " ms" : ""}</td>
+    <td>${c.ok ? icon("check", 15)
+      : `<span class="body-sm" style="color:var(--warning-orange)">${esc(c.error || "")}</span>`}</td>
+  </tr>`).join("");
+}
+
+/* ------------------------------------------------------------- snooze -- */
+function paintSnooze(s) {
+  const msg = $("#snooze-msg");
+  const off = $("#snooze-off");
+  document.querySelectorAll("#snooze-pick button").forEach((b) => b.classList.remove("active"));
+  if (!s.active) {
+    msg.textContent = "";
+    msg.className = "small";
+    off.style.display = "none";
+    return;
+  }
+  const mins = Math.max(1, Math.round(s.seconds_left / 60));
+  // 高亮当前生效的那个时长：不标的话按下去毫无反馈，像没生效
+  document.querySelectorAll("#snooze-pick button").forEach((b) => {
+    if (Math.abs(+b.dataset.min - mins) <= Math.max(2, mins * 0.1)) b.classList.add("active");
+  });
+  msg.textContent = s.scope === "all"
+    ? t("security.snoozed_all", { n: mins })
+    : t("security.snoozed", { n: mins });
+  // 全静音（连入侵也不推）是个危险状态，必须一眼看得出来
+  msg.className = s.scope === "all" ? "small" : "small muted";
+  if (s.scope === "all") msg.style.color = "var(--warning-orange)";
+  else msg.style.color = "";
+  off.style.display = "";
+}
+
+async function loadSnooze() {
+  try { paintSnooze(await apiGet("/api/alerts/snooze")); } catch (e) { /* 忽略 */ }
+}
+
+document.querySelectorAll("#snooze-pick button").forEach((b) =>
+  b.addEventListener("click", async () => {
+    try {
+      paintSnooze(await apiPost("/api/alerts/snooze", {
+        minutes: +b.dataset.min,
+        scope: $("#snooze-all").checked ? "all" : "noncritical",
+      }));
+    } catch (e) { $("#snooze-msg").textContent = e.message; }
+  }));
+
+$("#snooze-off").addEventListener("click", async () => {
+  try { paintSnooze(await apiPost("/api/alerts/snooze", { minutes: 0 })); }
+  catch (e) { $("#snooze-msg").textContent = e.message; }
+});
+
 i18nReady.catch(() => {}).then(() => {
   paintRich(); paintIcons();
   loadChannels(); loadPolicies(); loadRules(); loadHistory();
+  loadSnooze(); setInterval(loadSnooze, 60000);
+  loadCommands();
   loadSentry(); setInterval(loadSentry, 30000);
 });
 </script>

@@ -1,5 +1,6 @@
 import asyncpg
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from .. import db
 from . import queries
@@ -39,14 +40,16 @@ async def battery(car_id: int):
     return await _guard(queries.battery_health)(car_id)
 
 
+# days: 时间窗，0/省略 = 全部。Energy 页那排 30/90/365/全部 靠它生效
+# —— 之前那排按钮只改了个 JS 变量，接口根本不收这个参数，点了等于没点。
 @router.get("/insights/charging")
-async def charging(car_id: int):
-    return await _guard(queries.charging)(car_id)
+async def charging(car_id: int, days: int = 0):
+    return await _guard(queries.charging)(car_id, days)
 
 
 @router.get("/insights/drives")
-async def drives(car_id: int):
-    return await _guard(queries.drives)(car_id)
+async def drives(car_id: int, days: int = 0):
+    return await _guard(queries.drives)(car_id, days)
 
 
 @router.get("/insights/tpms")
@@ -64,10 +67,84 @@ async def records(car_id: int):
     return await _guard(queries.records)(car_id)
 
 
+@router.get("/insights/compare")
+async def compare(car_id: int, days: int = 30):
+    """本期 vs 上一个等长周期，带同比百分比。"""
+    return await _guard(queries.period_compare)(car_id, days)
+
+
+class IceBaseline(BaseModel):
+    l_per_100km: float | None = None
+    fuel_price: float | None = None
+
+
+@router.post("/insights/ice-baseline")
+async def set_ice_baseline(body: IceBaseline):
+    """油车对比基准（百公里油耗 + 油价）。不填就不显示对比，不替用户编数字。"""
+    from ..alerts.store import store
+
+    if not body.l_per_100km or not body.fuel_price:
+        await store.set_setting("ice_baseline", {})
+        return {"ok": True, "baseline": None}
+    b = {"l_per_100km": round(float(body.l_per_100km), 2),
+         "fuel_price": round(float(body.fuel_price), 3)}
+    await store.set_setting("ice_baseline", b)
+    return {"ok": True, "baseline": b}
+
+
+@router.get("/insights/real-range")
+async def real_range(car_id: int, window_km: float = 160.0):
+    """按你自己最近的真实能耗算的续航，而不是 EPA 标称值。"""
+    return await _guard(queries.real_world_range)(car_id, window_km)
+
+
+class BatteryBaseline(BaseModel):
+    range_km: float | None = None
+    kwh: float | None = None
+
+
+@router.post("/insights/battery/baseline")
+async def set_battery_baseline(car_id: int, body: BatteryBaseline):
+    """手填"新车时的容量/续航"。
+
+    默认基准是"观测到的最大值"，这对装本工具之前已经开了几年的车是偏袒的
+    —— 那几年的衰减全被吃进基准，结果显示 0% 衰减。
+    """
+    from ..alerts.store import store
+
+    cur = await store.get_setting("battery_baseline", {}) or {}
+    if not body.range_km and not body.kwh:
+        cur.pop(str(car_id), None)          # 清空 = 回到观测最大值
+    else:
+        entry = {}
+        if body.range_km and body.range_km > 0:
+            entry["range_km"] = round(float(body.range_km), 1)
+        if body.kwh and body.kwh > 0:
+            entry["kwh"] = round(float(body.kwh), 1)
+        cur[str(car_id)] = entry
+    await store.set_setting("battery_baseline", cur)
+    return {"ok": True, "baseline": cur.get(str(car_id))}
+
+
+@router.get("/insights/vampire")
+async def vampire(car_id: int, days: int = 90):
+    """停放耗电。每家记录器都有这张表，因为"车停着掉多少电"是最常问的问题之一。"""
+    return await _guard(queries.vampire_drain)(car_id, days)
+
+
+@router.get("/insights/charge-curve")
+async def charge_curve(cp_id: int):
+    """单次充电的功率-电量曲线。"""
+    return await _guard(queries.charge_curve)(cp_id)
+
+
 # ---------------- 行程 ----------------
 
+# 注意：不要叫 drives —— 上面 /insights/drives 已经用了这个名字，
+# 重名会把前一个函数从模块命名空间里挤掉（路由仍然工作，因为 FastAPI
+# 在装饰时就抓住了函数对象，但任何按名字引用的地方都会拿到错的那个）。
 @router.get("/drives")
-async def drives(car_id: int, limit: int = 50):
+async def drives_list(car_id: int, limit: int = 50):
     return await _guard(queries.drives_list)(car_id, limit)
 
 

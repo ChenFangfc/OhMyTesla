@@ -59,6 +59,13 @@ services:
     depends_on:
       - database
       - mosquitto
+    # 显式 environment 列表只覆盖得到写在下面的那些键，配置里另有十几项
+    # （MQTT 认证、TILE_DATUM、FLEET_REPLAY_GATE_SECONDS、FLEET_BRIDGE_* 的
+    # 一整组）就永远取不到用户设的值 —— 其中 MQTT_USERNAME/PASSWORD 还是
+    # 文档里列为 P0 的加固项，等于根本开不了。补一个 env_file 把 .env 整个
+    # 带进来；不认识的变量 pydantic 会忽略，下面的显式项仍然优先。
+    env_file:
+      - .env
     environment:
       - TM_DB_HOST=database
       - TM_DB_USER=${TM_DB_USER}
@@ -112,6 +119,32 @@ services:
     volumes:
       - ${TESLACAM_DIR:-./data/teslacam}:/teslacam
       - ./data/hub:/data
+
+  # 可选: 官方签名指令代理（tesla-http-proxy）
+  #
+  # 2021 年之后出厂的车（含 Cybertruck）**拒绝未签名指令** —— 不挂这个代理，
+  # 鸣笛、锁车、开空调、设充电上限统统会被 Tesla 回 403，而且路线图里
+  # 「自动化引擎 / 哨兵定时 / 充电计划 / 座椅加热」那一整类功能全都卡在这一步。
+  #
+  # 需要一次性准备：Tesla 开发者账号 + 一对 EC P-256 密钥 + 车辆配对虚拟钥匙。
+  # 步骤见 docs/COMMANDS.md。配好后把 .env 里的 TESLA_COMMAND_PROXY 指向
+  # https://tesla-proxy:4443 即可，hub 侧无需改动。
+  #
+  # 启用: docker compose --profile commands up -d
+  tesla-proxy:
+    image: tesla/vehicle-command:latest
+    profiles: ["commands"]
+    restart: always
+    command: >
+      tesla-http-proxy
+      -tls-key /config/tls-key.pem -cert /config/tls-cert.pem
+      -key-file /config/private-key.pem
+      -port 4443 -host 0.0.0.0 -verbose
+    volumes:
+      - ./config/tesla-proxy:/config:ro
+    ports:
+      # 只绑本机：这个端口能解锁你的车，绝不要暴露到局域网之外
+      - "127.0.0.1:4443:4443"
 
   # 可选: 官方 Fleet Telemetry 自托管（哨兵 Aware/Panic 真实事件流）
   # 需要 Tesla 开发者账号 + 公网域名 + mTLS 证书，配置见 docs/FLEET-TELEMETRY.md

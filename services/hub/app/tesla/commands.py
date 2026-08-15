@@ -51,6 +51,13 @@ COMMANDS: dict[str, dict] = {
 }
 
 
+# 带参指令的取值范围。超出范围 Tesla 会回 400，先在本地挡住并说明白。
+_PARAM_RANGE = {
+    "percent": (50, 100),        # 充电上限：低于 50% 特斯拉不接受
+    "driver_temp": (15, 28),     # 车内空调设定温度（摄氏）
+}
+
+
 class CommandError(Exception):
     pass
 
@@ -110,9 +117,25 @@ async def send(car_id: int, command: str, params: dict | None = None) -> dict:
     ref = await _vehicle_ref(car_id, loc)
     url = f"{_api_base()}/api/1/vehicles/{ref}/{spec['ep']}"
     body: dict = dict(spec.get("body") or {})
-    if spec.get("param") and params:
+    need = spec.get("param")
+    if need:
+        # 缺参数就直接说清楚。以前是"没传就发空 body"，Tesla 回 400，
+        # 用户看到的是一句莫名其妙的 502。
+        if not params or params.get(need) is None:
+            raise CommandError(t("cmd.error.missing_param", loc, param=need))
+        try:
+            value = float(params[need])
+        except (TypeError, ValueError):
+            raise CommandError(t("cmd.error.missing_param", loc, param=need)) from None
+        lo, hi = _PARAM_RANGE.get(need, (None, None))
+        if lo is not None and not (lo <= value <= hi):
+            raise CommandError(
+                t("cmd.error.param_range", loc, param=need, lo=lo, hi=hi))
+        body[need] = int(value) if float(value).is_integer() else value
+    if params:
         for k, v in params.items():
-            body[k] = v
+            if k != need and k in (spec.get("body") or {}):
+                body[k] = v
     if command == "set_temps" and "driver_temp" in body:
         body.setdefault("passenger_temp", body["driver_temp"])
     if spec["ep"].endswith("window_control"):
@@ -137,7 +160,16 @@ async def send(car_id: int, command: str, params: dict | None = None) -> dict:
         raise CommandError(t("cmd.error.asleep", loc))
     if resp.status_code >= 400:
         detail = resp.text[:300]
-        if "unsigned" in detail.lower() or "signed command" in detail.lower():
+        low = detail.lower()
+        # 2021+ 的车（含 Cybertruck）拒绝未签名指令。Tesla 有时给一句
+        # "unsigned command"，但**更多时候只回一个光秃秃的 403**，报文里
+        # 什么都不说。没配签名代理时把 403 直接当成这件事来解释 ——
+        # 否则用户看到的就只是 "HTTP 403"，完全不知道该去做什么。
+        if (
+            "unsigned" in low
+            or "signed command" in low
+            or (resp.status_code == 403 and not settings.tesla_command_proxy)
+        ):
             raise CommandError(t("cmd.error.unsigned", loc))
         raise CommandError(t("cmd.error.http", loc, status=resp.status_code, detail=detail))
 

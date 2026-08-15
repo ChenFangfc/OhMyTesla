@@ -42,9 +42,16 @@ const REASONS = {
 const TYPE_ICON = { sentry: "shield", saved: "film", recent: "drive" };
 let curType = "";
 
-window.addEventListener("omt:locale", () => { document.title = t("dashcam.page_title"); load(); });
+/* i18n.apply() 在首次载入词表时也会派发 omt:locale，所以这个监听器和下面的
+   i18nReady.then(load) 会在首屏各拉一次事件列表。切语言时只需重画，不必重取。 */
+let dashcamLoaded = false;
+window.addEventListener("omt:locale", () => {
+  document.title = t("dashcam.page_title");
+  if (dashcamLoaded) load();
+});
 
 async function load() {
+  dashcamLoaded = true;
   const div = document.getElementById("events");
   let evs, st;
   try {

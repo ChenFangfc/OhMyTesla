@@ -15,6 +15,9 @@ log = logging.getLogger(__name__)
 
 _pool: asyncpg.Pool | None = None
 _lock = asyncio.Lock()
+# 持有正在后台关闭的池的任务引用。不留引用的话 asyncio 只保存弱引用，
+# 任务可能在 await 中途被回收，连接就漏了。
+_CLOSING: set[asyncio.Task] = set()
 
 
 class DbUnavailable(Exception):
@@ -66,10 +69,13 @@ async def _run(method: str, query: str, *args):
         async with pool.acquire() as conn:
             return await getattr(conn, method)(query, *args)
     except _CONN_ERRORS as e:
-        # 让下次调用重建连接池，数据库恢复后自动自愈
-        broken, _pool = _pool, None
-        if broken is not None:
-            asyncio.create_task(_close_quietly(broken))
+        # 让下次调用重建连接池，数据库恢复后自动自愈。
+        # 必须比对身份：只有当全局池仍是**我这次用的这个**时才置空。
+        # 否则并发下会出现——A 失败置空、B 建好新池、慢一步的 C 拿着旧池
+        # 失败后把 B 刚建好的池关掉，之后所有查询都 "pool is closing"。
+        if _pool is pool:
+            _pool = None
+            _CLOSING.add(asyncio.create_task(_close_quietly(pool)))
         log.warning("database connection lost: %s", e)
         raise DbUnavailable(str(e)) from e
 
@@ -79,6 +85,8 @@ async def _close_quietly(pool: asyncpg.Pool) -> None:
         await pool.close()
     except Exception:  # noqa: BLE001
         pass
+    finally:
+        _CLOSING.discard(asyncio.current_task())
 
 
 async def fetch(query: str, *args):

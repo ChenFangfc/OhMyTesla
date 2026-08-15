@@ -52,7 +52,10 @@ async def get() -> dict:
 
 async def set_prefs(patch: dict) -> dict:
     cur = await get()
-    for k in ("locale", "length", "temp", "pressure"):
+    # currency 以前不在这里：唯一能改它的途径是市场自动检测，用户手改不了。
+    # 于是「电价方案里选了 EUR」和「fmt.money 用的显示币种」可以长期不一致，
+    # 同一页上两个金额跟着两种符号。
+    for k in ("locale", "length", "temp", "pressure", "currency"):
         if k in patch and patch[k]:
             cur[k] = str(patch[k])
     if "locale" in patch and patch["locale"]:
@@ -67,6 +70,9 @@ async def set_prefs(patch: dict) -> dict:
         cur["temp"] = "C"
     if cur["pressure"] not in ("bar", "psi", "kpa"):
         cur["pressure"] = "bar"
+    # ISO 4217 是三位字母；别的一律回落，免得把乱码写进显示层
+    code = str(cur.get("currency") or "").upper()
+    cur["currency"] = code if (len(code) == 3 and code.isalpha()) else "USD"
     await store.set_setting("prefs", cur)
     return cur
 

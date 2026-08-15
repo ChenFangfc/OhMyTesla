@@ -10,8 +10,23 @@ TeslaMate 生态公认的三条"缝"接入：
 2. **Postgres 只读**—— 历史数据（positions/drives/charging_processes/charges/updates/geofences/addresses）；
 3. **文件系统**—— 挂载的 TeslaCam 素材目录（U 盘拷贝或 teslausb 自动同步）。
 
-Hub 自己的状态（告警历史、规则开关、合成任务）存独立 SQLite（`data/hub/hub.db`），
-不向 TeslaMate 库写任何东西，升级永不冲突。
+Hub 自己的状态（告警历史、规则开关、合成任务、电价方案、偏好）存独立 SQLite
+（`data/hub/hub.db`），升级永不冲突。
+
+**对 TeslaMate 库的写入（诚实清单）**：早期文档写的是「不向 TeslaMate 库写任何东西」，
+这条已经不成立 —— 白标化要求我们接管 TeslaMate 的配置界面，因此确实会写它的表。
+全部写入面只有这些，其余一律只读：
+
+| 表 | 写什么 | 为什么 | 注意 |
+|---|---|---|---|
+| `charging_processes.cost` | 电价核算结果 | 与 TeslaMateAgile 同款做法，Grafana 也能看到 | 需显式开 `COST_WRITE_BACK`；只写空白或本工具此前写过且未被手改的 |
+| `geofences` | 增/改/删 | 设置页里的地点管理 | **不会**跑 TeslaMate 的 `apply_geofence` 回填，新建围栏不追溯历史行程 |
+| `cars.name` | 车辆命名 | 设置页 | TeslaMate 进程内有缓存，**重启后才生效** |
+| `car_settings` | 休眠参数 / LFP / 免费超充 | 设置页 | 同上，TeslaMate 靠 PubSub 广播更新缓存，裸 SQL 不触发 |
+| `private.tokens` | Tesla token | 自建登录页 `/welcome` | 同上：TeslaMate 只在启动时读一次 token |
+
+后三项的「重启后才生效」是硬事实，来自 TeslaMate 自身实现（`settings.ex` / `api.ex`
+都在 GenServer/ETS 里缓存）。改完这些设置需要 `./omt restart`。
 
 ```
 ┌────────────┐   Tesla API    ┌────────────┐
@@ -85,10 +100,20 @@ Hub 自己的状态（告警历史、规则开关、合成任务）存独立 SQL
 
 ## 剩余已知局限（诚实清单）
 
-- 多车支持：播放器叠加/校准默认取第一辆车；多车账号校准会要求显式 `car_id`（422 提示），播放器车辆选择器待加；
-- 加密片段（2026.20+ 默认开）无法解析，只能引导关闭加密；dashcam.tesla.com 的账号密钥本地解密流程逆向实现有法律与稳定性风险，不做；
-- Web Push（PWA 离线推送）未实现——iOS 需 16.4+ 且加主屏；当前推荐 ntfy/Telegram；
-- 充电成本电价方案（对标 TeslaMateAgile）与 Tesla 指令控制（鸣笛/闪灯/空调）未做，见 ROADMAP Phase 3。
+> 这一节曾经把 Web Push、电价引擎、车辆指令列为"未实现"，而三者早已上线
+> （`alerts/webpush.py`、`tariff/calc.py`、`tesla/commands.py` 19 条指令）。
+> 下面是**核对过代码后**的真实清单。
+
+- 加密片段（2026.20+ 默认开）无法解析，只能引导用户在车机关闭加密；
+  dashcam.tesla.com 的账号密钥本地解密流程逆向实现有法律与稳定性风险，不做；
+- 设置页写入 `cars` / `car_settings` / `tokens` 后，运行中的 TeslaMate 因为
+  自身有内存缓存而不会立刻生效，需要重启容器；
+- 地理围栏的增删改不会回填历史行程与充电记录（TeslaMate 自己的
+  `apply_geofence` 是在事务里跑的，我们发的是裸 SQL）；
+- Fleet Bridge 的 Tessie / MyTeslaMate 两家是 WebSocket，而 `websockets`
+  没写进 `requirements.txt`，只有 Teslemetry（SSE）开箱可用；
+- 设计文档里的 AI 指令层（"Ask your Tesla"）尚未实现：`cmdk.js` 留了
+  `setLLM()` 钩子但无人调用，命令面板目前是纯确定性的。
 
 ## 双语与单位（2026-08-07）
 

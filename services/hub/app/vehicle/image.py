@@ -68,6 +68,10 @@ def _norm(value: str | None) -> str:
     return s
 
 
+# 公开别名：别的模块要用就用这个，不要伸手去拿 _norm
+normalise_colour = _norm
+
+
 def supported(model: str | None) -> bool:
     return (model or "").upper() in MODELS
 

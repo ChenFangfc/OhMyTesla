@@ -87,6 +87,15 @@
 
       <div id="plan-warnings" class="body-sm mt" style="color:var(--warning-orange)"></div>
 
+      {# 时段结构是最烦人也最容易填漏的部分（少填几小时就按 0 元计费）。
+         模板只给结构，费率一律留空让用户自己填。 #}
+      <div class="row mt3" style="gap:10px;align-items:center;flex-wrap:wrap">
+        <span class="body-sm" data-i18n="settings.tariff.template">Start from a template</span>
+        <select id="tariff-template" style="min-width:220px"></select>
+        <button class="btn ghost" id="apply-template" data-i18n="settings.tariff.apply_template">Apply</button>
+        <span class="small muted" data-i18n="settings.tariff.template_note"></span>
+      </div>
+
       <div class="eyebrow mt3" data-i18n="settings.tariff.default_heading">Default rate</div>
       <div id="default-rule" class="mt"></div>
 
@@ -106,6 +115,67 @@
         <button id="recompute" class="btn" data-i18n="settings.tariff.recompute">Recompute all costs</button><span id="tariff-status" class="body-sm"></span>
       </div>
       <div class="body-sm mt" id="writeback-note"></div>
+
+      {# 油车对比。不填就不显示这项对比 —— 替用户假设一个"大概 8 升"
+         等于在编数据，而这个数会直接变成他看到的"省了多少钱"。 #}
+      <div class="mt3" style="border-top:1px solid var(--border-subtle);padding-top:18px">
+        <div class="eyebrow" data-i18n="settings.ice_title">Compare with a petrol car</div>
+        <div class="body-sm mt" style="max-width:60ch" data-i18n="settings.ice_help"></div>
+        <div class="row mt2" style="gap:14px;flex-wrap:wrap;align-items:flex-end">
+          <label class="stack gap-1"><span class="body-sm" data-i18n="settings.ice_l100">L / 100 km</span>
+            <input id="ice-l100" type="number" min="0" step="0.1" style="width:110px"></label>
+          <label class="stack gap-1"><span class="body-sm" data-i18n="settings.ice_price">Fuel price per litre</span>
+            <input id="ice-price" type="number" min="0" step="0.01" style="width:130px"></label>
+          <button class="btn" id="ice-save" data-i18n="common.save">Save</button>
+          <span class="small muted" id="ice-msg"></span>
+        </div>
+      </div>
+    </div>
+  </details>
+
+  {# 保养提醒。刻意不内置厂商保养表 —— 各地区各年份都不一样，猜错比不提醒更糟。 #}
+  <details class="disclose" id="s-maint">
+    <summary><span data-i18n="settings.maintenance">Maintenance reminders</span><span class="value" id="v-maint"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+    </summary>
+    <div class="body">
+      <div class="body-sm" style="max-width:62ch" data-i18n="settings.maint_help"></div>
+      <div id="maint-list" class="stack gap-2 mt2"></div>
+
+      <div class="mt3" style="border-top:1px solid var(--border-subtle);padding-top:18px">
+        <div class="eyebrow" data-i18n="settings.speed_limit">Speed alert when nobody is in the car</div>
+        <div class="body-sm mt" style="max-width:60ch" data-i18n="settings.speed_limit_help"></div>
+        <div class="row mt2" style="gap:10px;align-items:center">
+          <input id="speed-limit" type="number" min="0" step="5" style="width:110px">
+          <span class="body-sm" id="speed-limit-unit"></span>
+          <button class="btn" id="speed-limit-save" data-i18n="common.save">Save</button>
+          <span class="small muted" id="speed-limit-msg"></span>
+        </div>
+      </div>
+    </div>
+  </details>
+
+  {# 数据体检 + 导出。「永远不会被锁死」这句话，只有真能把数据拿走才算数。 #}
+  <details class="disclose" id="s-data">
+    <summary><span data-i18n="settings.data">Data &amp; export</span><span class="value" id="v-data"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+    </summary>
+    <div class="body">
+      <div class="eyebrow" data-i18n="settings.data_health">Collection health</div>
+      <div id="health-summary" class="body-sm mt" style="max-width:64ch"></div>
+      <div id="health-gaps" class="small muted mt"></div>
+
+      <div class="eyebrow mt3" data-i18n="settings.data_export">Export</div>
+      <div class="body-sm mt" style="max-width:64ch" data-i18n="settings.data_export_help"></div>
+      <div class="row mt2" style="gap:10px;flex-wrap:wrap">
+        <a class="btn ghost" id="x-drives" download data-i18n="settings.x_drives">Drives CSV</a>
+        <a class="btn ghost" id="x-charges" download data-i18n="settings.x_charges">Charges CSV</a>
+        <a class="btn ghost" id="x-idles" download data-i18n="settings.x_idles">Idle CSV</a>
+        <a class="btn ghost" id="x-all" download data-i18n="settings.x_all">Everything (JSON)</a>
+        <a class="btn ghost" id="x-config" href="/api/export/config.json" download data-i18n="settings.x_config">Settings backup</a>
+      </div>
+
+      <div class="eyebrow mt3" data-i18n="settings.integrations">Integrations</div>
+      <div id="abrp-status" class="body-sm mt"></div>
+      <div class="body-sm mt" style="max-width:64ch" data-i18n-html="settings.mcp_hint"></div>
     </div>
   </details>
 
@@ -258,14 +328,17 @@ async function loadCarSettings() {
       row.querySelector(".c-save").addEventListener("click", async () => {
         const msg = row.querySelector(".c-msg");
         try {
-          await apiPost(`/api/setup/cars/${row.dataset.car}`, {
+          const r = await apiPost(`/api/setup/cars/${row.dataset.car}`, {
             name: row.querySelector(".c-name").value,
             suspend_min: +row.querySelector(".c-suspend").value,
             suspend_after_idle_min: +row.querySelector(".c-idle").value,
             free_supercharging: row.querySelector(".c-free").checked,
             lfp_battery: row.querySelector(".c-lfp").checked,
           });
-          msg.textContent = t("settings.car_saved");
+          // 这些值 TeslaMate 缓存在自己进程里，不重启不会重新读。
+          // 不说的话用户会以为设置没保存上。
+          msg.textContent = r.needs_restart
+            ? t("settings.car_saved_restart") : t("settings.car_saved");
         } catch (e) { msg.textContent = e.message; }
       });
     });
@@ -487,9 +560,22 @@ document.getElementById("save-plan").addEventListener("click", async () => {
   }
 });
 
+/* 后端给的是 {code, scope, place, ...} 结构，文案在这里按语言拼。
+   以前后端直接返回中文句子，英文界面上就会冒出中文。 */
+function warningText(w) {
+  if (typeof w === "string") return w;            // 兼容旧格式
+  const scope = w.scope === "location"
+    ? t("settings.tariff.scope_location", { place: w.place || "" })
+    : t("settings.tariff.scope_" + (w.scope || "default"));
+  if (w.code === "gap") {
+    return t("settings.tariff.warn_gap", { scope, hours: w.hours, minutes: w.minutes });
+  }
+  return t("settings.tariff.warn_bad_period", { scope, period: w.period || "?" });
+}
+
 function showWarnings(list) {
   document.getElementById("plan-warnings").innerHTML =
-    (list && list.length) ? list.map(w => " " + esc(w)).join("<br>") : "";
+    (list && list.length) ? list.map(w => esc(warningText(w))).join("<br>") : "";
 }
 document.getElementById("recompute").addEventListener("click", async () => {
   const st = document.getElementById("tariff-status");
@@ -598,7 +684,6 @@ async function loadTariff() {
     ? t("settings.tariff.writeback_on")
     : t("settings.tariff.writeback_off");
   renderPlan();
-  pushState();
 }
 
 /* 所有初次取数都在词表就绪之后：这些渲染函数都调 t()，
@@ -616,9 +701,12 @@ function paintSummaries() {
     set("v-places", t("settings.n_places", { n: g.length }))).catch(() => {});
   apiGet("/api/setup/cars").then((c) =>
     set("v-vehicles", t("settings.n_vehicles", { n: c.length }))).catch(() => {});
+  // 接口返回的是 {plan, geofences, warnings, dirty, unconfigured}，
+  // 以前这里读的 p.rules / p.default_rate 两个字段根本不存在，
+  // 于是电价配好了也永远显示「未设置」。
   apiGet("/api/tariff/plan").then((p) =>
-    set("v-rates", (p.rules && p.rules.length) || p.default_rate
-        ? t("settings.rates_set") : t("settings.rates_unset"))).catch(() => {});
+    set("v-rates", p.unconfigured ? t("settings.rates_unset") : t("settings.rates_set"))
+  ).catch(() => {});
 }
 window.addEventListener("omt:locale", paintSummaries);
 
@@ -630,7 +718,143 @@ i18nReady.catch(() => {}).then(() => {
   loadCarSettings();
   loadBridge();
   loadToken();
+  // pushState() 以前挂在 loadTariff() 末尾，而它的失败又被 catch 吞掉 ——
+  // 电价接口一出错（库没起来、方案坏了），整个「通知」区块就再也不初始化，
+  // 推送开关停在静态文案上。推送和电价没有任何关系，各走各的。
+  pushState();
   loadTariff().catch(() => {});
+  loadIceBaseline();
+  loadMaintenance();
+  loadSpeedLimit();
+  loadTemplates();
+  loadDataSection();
 });
+
+/* ---------------- 数据体检与导出 ---------------- */
+async function loadDataSection() {
+  let carId = 1;
+  try { carId = (await apiGet("/api/setup/cars"))[0]?.id ?? 1; } catch (e) { /* 用默认 */ }
+
+  // 导出链接（都是 GET，直接给 href 让浏览器下载，不走 fetch）
+  document.getElementById("x-drives").href = `/api/trips/export.csv?car_id=${carId}`;
+  document.getElementById("x-charges").href = `/api/export/charges.csv?car_id=${carId}`;
+  document.getElementById("x-idles").href = `/api/export/idles.csv?car_id=${carId}`;
+  document.getElementById("x-all").href = `/api/export/all.json?car_id=${carId}`;
+
+  try {
+    const h = await apiGet(`/api/health/data?car_id=${carId}`);
+    document.getElementById("v-data").textContent =
+      h.ok ? t("settings.data_ok") : t("settings.data_issues", { n: h.issues.length });
+    document.getElementById("health-summary").innerHTML = h.ok
+      ? esc(t("settings.data_ok_long"))
+      : h.issues.map((i) => `<div>${esc(t("settings.issue_" + i.kind, { n: i.count }))}</div>`).join("");
+    // 缺口要给出具体时段，否则"有 4 个缺口"没法排查
+    document.getElementById("health-gaps").innerHTML = (h.gaps || []).slice(0, 5)
+      .map((g) => esc(t("settings.gap_row", {
+        from: fmt.dt(g.from), hours: g.hours }))).join("<br>");
+  } catch (e) { document.getElementById("health-summary").textContent = e.message; }
+
+  try {
+    const a = await apiGet("/api/integrations/abrp/status");
+    // 用 enabled 而不是 configured：填了 token 但 ABRP_ENABLED=false 时，
+    // 中继根本没起来，显示"运行中"是在骗人。
+    document.getElementById("abrp-status").textContent = a.enabled
+      ? t("settings.abrp_on", { sent: a.sent, failed: a.failed })
+      : t("settings.abrp_off");
+  } catch (e) { /* 忽略 */ }
+}
+
+/* ---------------- 电价模板 ---------------- */
+async function loadTemplates() {
+  let d;
+  try { d = await apiGet("/api/tariff/templates"); } catch (e) { return; }
+  const sel = document.getElementById("tariff-template");
+  sel.innerHTML = d.templates
+    .map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join("");
+  document.getElementById("apply-template").addEventListener("click", () => {
+    const tpl = d.templates.find((t) => t.id === sel.value);
+    if (!tpl || !plan) return;
+    // 只换时段结构，不动已经填好的币种/时区/地点覆盖
+    plan.default = JSON.parse(JSON.stringify(tpl.rule));
+    renderPlan();
+    document.getElementById("tariff-status").textContent = t("settings.tariff.template_applied");
+  });
+}
+
+/* ---------------- 保养提醒 ---------------- */
+async function loadMaintenance() {
+  let d;
+  try { d = await apiGet("/api/alerts/maintenance"); } catch (e) { return; }
+  const due = d.items.filter((i) => i.due).length;
+  document.getElementById("v-maint").textContent =
+    due ? t("settings.maint_due") + " · " + due : t("settings.maint_never_due");
+
+  document.getElementById("maint-list").innerHTML = d.items.map((i) => {
+    const every = i.every_km
+      ? t("settings.maint_every_km", { n: i.every_km })
+      : t("settings.maint_every_months", { n: i.every_months });
+    const last = i.last_date
+      ? t("settings.maint_last", { when: i.last_date })
+      : t("settings.maint_never");
+    return `<div class="row" style="gap:12px;align-items:center">
+      <span style="min-width:9em">${esc(i18n.state.locale === "zh" ? i.name_zh : i.name_en)}</span>
+      <span class="body-sm muted">${esc(every)} · ${esc(last)}</span>
+      ${i.due ? `<span class="pill warning">${esc(t("settings.maint_due"))}</span>` : ""}
+      <span class="spacer"></span>
+      <button class="btn ghost maint-done" data-id="${esc(i.id)}">${esc(t("settings.maint_done"))}</button>
+    </div>`;
+  }).join("");
+
+  document.querySelectorAll(".maint-done").forEach((b) =>
+    b.addEventListener("click", async () => {
+      try { await apiPost(`/api/alerts/maintenance/${encodeURIComponent(b.dataset.id)}/done`); loadMaintenance(); }
+      catch (e) { alert(e.message); }
+    }));
+}
+
+/* 车速阈值。输入框跟用户单位走，后端一律存 km/h。 */
+async function loadSpeedLimit() {
+  document.getElementById("speed-limit-unit").textContent = U.speedLabel();
+  // 原来只写不读：存好的阈值刷新后看不见，用户会以为没保存上，
+  // 再点一次保存就把空输入框当成"关闭"写回去了。
+  try {
+    const cur = await apiGet("/api/alerts/speed-limit");
+    if (cur && cur.kmh) {
+      document.getElementById("speed-limit").value =
+        U.distLabel() === "mi" ? Math.round(cur.kmh / 1.609344) : Math.round(cur.kmh);
+    }
+  } catch (e) { /* 没设过就留空 */ }
+  document.getElementById("speed-limit-save").addEventListener("click", async () => {
+    const raw = parseFloat(document.getElementById("speed-limit").value);
+    const kmh = isFinite(raw) && raw > 0
+      ? (U.distLabel() === "mi" ? raw * 1.609344 : raw) : null;
+    try {
+      await apiPost("/api/alerts/speed-limit", { kmh });
+      document.getElementById("speed-limit-msg").textContent = t("settings.ice_saved");
+    } catch (e) { document.getElementById("speed-limit-msg").textContent = e.message; }
+  });
+}
+
+/* 油车对比基准。存在 hub 自有库，和电价方案分开 —— 一个是电费，一个是油费。 */
+async function loadIceBaseline() {
+  try {
+    const s = await apiGet("/api/insights/summary?car_id=1");
+    const b = s.gas_savings;
+    if (b) {
+      document.getElementById("ice-l100").value = b.l_per_100km;
+      document.getElementById("ice-price").value = b.fuel_price;
+    }
+  } catch (e) { /* 没车或库没起来，输入框留空即可 */ }
+  document.getElementById("ice-save").addEventListener("click", async () => {
+    const msg = document.getElementById("ice-msg");
+    try {
+      await apiPost("/api/insights/ice-baseline", {
+        l_per_100km: parseFloat(document.getElementById("ice-l100").value) || null,
+        fuel_price: parseFloat(document.getElementById("ice-price").value) || null,
+      });
+      msg.textContent = t("settings.ice_saved");
+    } catch (e) { msg.textContent = e.message; }
+  });
+}
 </script>
 {% endblock %}

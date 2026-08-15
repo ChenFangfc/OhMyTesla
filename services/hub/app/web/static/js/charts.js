@@ -89,6 +89,10 @@
 
     let xs = [], ys = [];
     for (const s of series) for (const [x, y] of s.data) { if (y != null) { xs.push(x); ys.push(y); } }
+    // 上面只按 data.length 过滤，一条全是 null 的序列（比如还没有能耗数据的
+    // Wh/km）能通过。那样 xs/ys 为空 → Math.min(...[]) 得 Infinity → 所有坐标
+    // 变成 NaN → 画出一张什么都没有的空 SVG，而不是"暂无数据"。
+    if (!ys.length) { wrap.innerHTML = `<div class="empty small">${typeof t === "function" ? t("common.no_data") : "No data yet"}</div>`; return; }
     const xmin = Math.min(...xs), xmax = Math.max(...xs);
     let ymin = Math.min(...ys), ymax = Math.max(...ys);
     if (opts.zeroBase) ymin = Math.min(0, ymin);
@@ -100,7 +104,13 @@
 
     drawYAxis(svg, yticks, sy, W, opts.yFmt);
     // x 轴刻度（首/中/尾）
-    const xFmt = opts.xFmt || ((x) => opts.xTime ? new Date(x).toLocaleDateString("zh-CN", { month: "numeric", day: "numeric" }) : defFmt(x));
+    // 日期格式必须跟用户语言走。写死 zh-CN 的话英文界面上的图表
+    // x 轴会出现 "8/15" 这种中式写法（localeTag() 在 util.js）。
+    const xFmt = opts.xFmt || ((x) => opts.xTime
+      ? new Date(x).toLocaleDateString(
+          typeof localeTag === "function" ? localeTag() : undefined,
+          { month: "numeric", day: "numeric" })
+      : defFmt(x));
     for (const fx of [xmin, (xmin + xmax) / 2, xmax]) {
       const lbl = el("text", { x: sx(fx), y: H - 8, "text-anchor": "middle", "font-size": 11, fill: css("--muted") });
       lbl.textContent = xFmt(fx);
@@ -233,14 +243,17 @@
     legend(wrap, series);
   }
 
-  const registry = [];
+  /* 每个容器只记最后一次的画法。以前是无脑 push，而 energy 页每次切时间段
+     / 切车都会重跑 render()，于是同一个元素被登记 N 次 —— 窗口一改大小就把
+     N 份陈旧的配置依次重画一遍。用 Map 按元素覆盖，天然去重。 */
+  const registry = new Map();
   window.omtChart = {
-    line(elm, opts) { registry.push([elm, () => line(elm, opts)]); line(elm, opts); },
-    bars(elm, opts) { registry.push([elm, () => bars(elm, opts)]); bars(elm, opts); },
+    line(elm, opts) { registry.set(elm, () => line(elm, opts)); line(elm, opts); },
+    bars(elm, opts) { registry.set(elm, () => bars(elm, opts)); bars(elm, opts); },
   };
   let rt;
   window.addEventListener("resize", () => {
     clearTimeout(rt);
-    rt = setTimeout(() => registry.forEach(([, fn]) => fn()), 200);
+    rt = setTimeout(() => registry.forEach((fn) => fn()), 200);
   });
 })();

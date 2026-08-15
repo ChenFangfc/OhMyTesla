@@ -30,6 +30,23 @@ async def get_plan():
     }
 
 
+@router.get("/templates")
+async def list_templates():
+    """常见分时电价的**时段结构**。费率一律留空让用户自己填 ——
+    各地各档年年变，内置一个数字出来用户很可能直接用了，然后账就是错的。"""
+    from ..i18n.prefs import get as _get_prefs
+
+    loc = (await _get_prefs())["locale"]
+    return {
+        "templates": [
+            {"id": t["id"],
+             "name": t["name_zh"] if loc == "zh" else t["name_en"],
+             "rule": calc.template(t["id"], loc)}
+            for t in calc.TEMPLATES
+        ]
+    }
+
+
 @router.post("/plan")
 async def save_plan(plan: dict):
     if not isinstance(plan, dict):

@@ -93,6 +93,7 @@ async def save_tokens(access: str, refresh: str) -> None:
         raise VaultError("加密自检未通过，拒绝写入（避免写坏数据）")
 
     enc_a, enc_r = encrypt(access.strip()), encrypt(refresh.strip())
+    last: Exception | None = None
     for table in ("private.tokens", "public.tokens"):
         try:
             row = await db.fetchrow(f"SELECT id FROM {table} ORDER BY id DESC LIMIT 1")  # noqa: S608
@@ -109,6 +110,11 @@ async def save_tokens(access: str, refresh: str) -> None:
                 )
             log.info("Tesla tokens saved into %s", table)
             return
+        except db.DbUnavailable:
+            # 数据库连不上要原样往上抛，让接口回 503「稍后再试」。
+            # 以前这里被 except Exception 一并吞成 VaultError，登录页就会在
+            # Postgres 重启的十几秒里告诉用户「token 无效」——完全是误导。
+            raise
         except Exception as e:  # noqa: BLE001 - 表不存在就试下一个
             last = e
             continue
@@ -116,13 +122,25 @@ async def save_tokens(access: str, refresh: str) -> None:
 
 
 async def has_tokens() -> bool:
+    """库里有没有存过 token。
+
+    数据库不可用时抛 db.DbUnavailable —— **不要**改成返回 False。
+    首页用它决定是否跳转引导页，返回 False 会在 Postgres 抖一下的时候
+    把已经登录的用户踢去 /welcome，看起来就像"账号掉了"。
+    """
     from .. import db
 
+    reachable = False
     for table in ("private.tokens", "public.tokens"):
         try:
             n = await db.fetchval(f"SELECT count(*) FROM {table}")  # noqa: S608
+            reachable = True
             if n:
                 return True
-        except Exception:  # noqa: BLE001
+        except db.DbUnavailable:
+            raise
+        except Exception:  # noqa: BLE001 - 表不存在（新旧版本差异）属正常
             continue
+    if not reachable:
+        raise db.DbUnavailable("tokens table unreachable")
     return False

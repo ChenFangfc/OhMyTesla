@@ -17,7 +17,9 @@ router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
 @router.get("/history")
 async def history(limit: int = 100):
-    return await store.recent_alerts(limit=min(limit, 500))
+    # 两头都夹：SQLite 的 LIMIT -1 表示"不限"，只夹上界的话 limit=-5
+    # 会把整张表倒出来（和 /api/dashcam/events 是同一个坑）。
+    return await store.recent_alerts(limit=max(1, min(limit, 500)))
 
 
 @router.get("/rules")
@@ -47,6 +49,87 @@ async def update_rule(rule_id: str, body: RuleUpdate):
     return {"ok": True}
 
 
+@router.get("/maintenance")
+async def maintenance_status():
+    """保养项目与到期情况。里程取实时状态里的 odometer。"""
+    from . import maintenance
+
+    car_id = next((k for k in live.cars if k.isdigit()), None)
+    odo = None
+    if car_id:
+        try:
+            odo = float(live.cars[car_id].get("odometer") or 0) or None
+        except (TypeError, ValueError):
+            odo = None
+    return {"odometer_km": odo, "items": await maintenance.status(odo)}
+
+
+class MaintenanceItems(BaseModel):
+    items: list[dict]
+
+
+@router.post("/maintenance")
+async def set_maintenance(body: MaintenanceItems):
+    from . import maintenance
+
+    return {"items": await maintenance.set_items(body.items)}
+
+
+@router.post("/maintenance/{item_id}/done")
+async def maintenance_done(item_id: str):
+    """做完了：把基准推到当前里程与日期。"""
+    from . import maintenance
+
+    car_id = next((k for k in live.cars if k.isdigit()), None)
+    odo = None
+    if car_id:
+        try:
+            odo = float(live.cars[car_id].get("odometer") or 0) or None
+        except (TypeError, ValueError):
+            odo = None
+    items = await maintenance.mark_done(item_id, odo)
+    # 允许下一轮到期时重新提醒
+    notified = set(await store.get_setting("maintenance_notified", []) or [])
+    notified.discard(item_id)
+    await store.set_setting("maintenance_notified", sorted(notified))
+    return {"items": items}
+
+
+class SpeedLimit(BaseModel):
+    kmh: float | None = None
+
+
+@router.get("/speed-limit")
+async def get_speed_limit():
+    """当前阈值。界面要能读回来 —— 只写不读的话，用户刷新后看到空输入框，
+    再点一次保存就把"空"当成关闭写回去了。"""
+    return {"kmh": await store.get_setting("speed_limit_kmh")}
+
+
+@router.post("/speed-limit")
+async def set_speed_limit(body: SpeedLimit):
+    """无人在车时的车速告警阈值。留空 = 关闭。"""
+    await store.set_setting("speed_limit_kmh", body.kmh if body.kmh and body.kmh > 0 else None)
+    return {"kmh": await store.get_setting("speed_limit_kmh")}
+
+
+class SnoozeBody(BaseModel):
+    minutes: int = 0
+    scope: str = "noncritical"      # noncritical | all
+
+
+@router.get("/snooze")
+async def get_snooze():
+    return await engine.snooze_state()
+
+
+@router.post("/snooze")
+async def set_snooze(body: SnoozeBody):
+    """临时静音。默认只静音非严重级 —— 「今晚别烦我」不等于
+    「今晚别管我的车被撬」。要全静音必须显式选 all。"""
+    return await engine.set_snooze(body.minutes, body.scope)
+
+
 @router.get("/channels")
 async def channels():
     return {"channels": await notifier.configured_channels(),
@@ -67,7 +150,7 @@ async def sentry_sessions(limit: int = 100):
     「有人靠近你的车」和「看那段录像」本来就是同一件事，之前拆在两个页面
     上，用户得自己对时间戳。这里在服务端接起来。
     """
-    rows = await sentry_tracker.recent(min(limit, 500))
+    rows = await sentry_tracker.recent(max(1, min(limit, 500)))
     return await _attach_clips(rows)
 
 
