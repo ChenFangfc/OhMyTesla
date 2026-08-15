@@ -1,11 +1,31 @@
-# ⚡ OhmyTesla
+<div align="center">
+
+<img src="services/hub/app/web/static/icon.svg" width="76" height="76" alt="OhmyTesla">
+
+# OhmyTesla
+
+**自托管的特斯拉助手 —— 行车记录仪多机位合成、哨兵告警推送、<br>能耗洞见、充电费用、车辆控制，一个网页全包。**
+
+[![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
+[![Built on TeslaMate](https://img.shields.io/badge/built_on-TeslaMate-cc0000?style=flat-square)](https://github.com/teslamate-org/teslamate)
+[![Self-hosted](https://img.shields.io/badge/你的数据-不出这台机器-2ea44f?style=flat-square)](#安全)
+[![MCP](https://img.shields.io/badge/MCP-15_个只读工具-8a63d2?style=flat-square)](#让-ai-直接查你的车mcp)
 
 [English](README.md) · **中文**
 
-自托管的特斯拉助手：行车记录仪多机位合成、哨兵告警推送、能耗与充电费用、车辆控制，
-一个网页全包。
+</div>
 
-数据采集基于 [TeslaMate](https://github.com/teslamate-org/teslamate)，原封不动、可随时升级。AGPL-3.0。
+---
+
+数据采集基于 [TeslaMate](https://github.com/teslamate-org/teslamate) —— 原封不动，
+随时可以自己升级。其余部分都是本项目。
+
+**[安装](#安装)** · [连上你的车](#连上你的车) · [手机告警](#手机告警) ·
+[行车记录仪](#行车记录仪) · [充电花了多少钱](#充电花了多少钱) ·
+[AI 直查](#让-ai-直接查你的车mcp) · [常用命令](#常用命令) ·
+[让 AI 替你装](#让-ai-助手替你装好) · [安全](#安全)
+
+---
 
 ## 安装
 
@@ -21,6 +41,7 @@ openssl rand -base64 32 | tr -d '/+=' | cut -c1-28
 
 打开 **http://localhost:8800** —— 用户名 `ohmytesla`，密码就是刚才生成的那串。
 
+> [!WARNING]
 > `OHMYTESLA_PASSWORD` 留空 = **整个界面不需要登录**，而它能解锁车门、关哨兵、
 > 看你去过的每一个地方。8800 端口是整个局域网可达的，不只是本机。
 
@@ -32,13 +53,13 @@ openssl rand -base64 32 | tr -d '/+=' | cut -c1-28
 ./tools/tesla_auth      # 弹出特斯拉官方登录页，密码只提交给特斯拉
 ```
 
-把两串 token 粘进引导页点 Connect。之后就不用管了，会自动续期。
+把两串 token 粘进引导页点 **Connect**。之后就不用管了，会自动续期。
 
 ## 手机告警
 
 **ntfy** —— 推荐，秒级到达。手机装 App，起一个别人猜不到的主题名，填进 `.env`：
 
-```
+```ini
 NTFY_URL=https://ntfy.sh
 NTFY_TOPIC=omt-<随机串>                 # echo "omt-$(openssl rand -hex 10)"
 PUBLIC_URL=http://192.168.1.20:8800     # 手机能访问到这台机器的地址，通知里的链接才点得动
@@ -46,11 +67,11 @@ PUBLIC_URL=http://192.168.1.20:8800     # 手机能访问到这台机器的地�
 
 **邮件**也支持（`SMTP_HOST/PORT/USER/PASS/FROM/TO`），Gmail 必须用
 [应用专用密码](https://myaccount.google.com/apppasswords)而不是登录密码。
-邮件延迟几分钟，当存档可以，**别拿它当哨兵告警的唯一渠道**——有人在动你车的时候，
-迟到的邮件没有意义。
+邮件延迟几分钟，当存档可以，**别拿它当哨兵告警的唯一渠道**。
 
 配完 `./omt restart`，然后 **Security 页 → Send test alert**。收不到的话那一页会告诉你缺哪一项。
 
+> [!IMPORTANT]
 > 主题名就是密码。ntfy.sh 是公开服务器，知道这串字符的人都能收到你的告警。
 
 ## 行车记录仪
@@ -58,17 +79,18 @@ PUBLIC_URL=http://192.168.1.20:8800     # 手机能访问到这台机器的地�
 把车上的 U 盘插到这台电脑，打开 **Dashcam → Browse USB drive** ——
 浏览器直接读，不上传不拷贝。也可以把 `TeslaCam/` 整个拷进 `data/teslacam/`。
 
+> [!NOTE]
 > 列出了录像却没画面？特斯拉可以加密行车记录仪录像。在车机
 > **控制 → 安全 → 行车记录仪加密** 里关掉，之后新录的才能读。
 
 ## 充电花了多少钱
 
-**设置 → 电价方案**：填一次单价（支持峰谷分时、按地点区分），点「重新核算」，
-所有历史充电立刻有钱了。没覆盖到的时段显示「–」，而不是假装是 0。
+**设置 → 电价方案** —— 填一次单价（支持峰谷分时、按地点区分），点「重新核算」，
+所有历史充电立刻有钱了。没覆盖到的时段显示 `–`，而不是假装是 0。
 
 ## 让 AI 直接查你的车（MCP）
 
-直接问「上个月充电花了多少」「这两周能耗为什么变差」，模型自己去查数据、自己交叉验证：
+直接问*「上个月充电花了多少」*「这两周能耗为什么变差」，模型自己去查数据、自己交叉验证：
 
 ```bash
 claude mcp add --transport http ohmytesla http://localhost:8800/mcp \
@@ -76,21 +98,25 @@ claude mcp add --transport http ohmytesla http://localhost:8800/mcp \
     "$(grep '^OHMYTESLA_PASSWORD=' .env | cut -d= -f2-)" | base64)"
 ```
 
-15 个只读工具（行程 / 充电曲线 / 电池健康 / 停放耗电 / 胎压 / 告警 / 哨兵会话），
-外加一个带护栏的 `run_sql`。四层护栏各自独立生效：
+15 个只读工具 —— 行程、充电曲线、电池健康、停放耗电、胎压、告警、哨兵会话 ——
+外加一个带护栏的 `run_sql`，四层护栏各自独立生效：
 
-1. 只允许 `SELECT` / `WITH` 开头，不含写入类关键字，不含注释；
-2. **降权到一个专用的非超级用户角色**（`omt_mcp_readonly`）执行 —— compose 给 hub 的是
-   TeslaMate 自己的账号，那是个 superuser，不降权的话 `pg_read_file()` 能读容器里的
-   任意文件，`private.tokens` 也读得到。降权后这两条实测都是 `permission denied`；
-3. 只读事务，跑完一律回滚；
-4. 服务端游标强制最多 200 行、8 秒超时。
+| # | 护栏 |
+|---|---|
+| 1 | 只允许 `SELECT` / `WITH` 开头；不含写入类关键字，不含注释 |
+| 2 | 降权到一个专用的**非超级用户角色**（`omt_mcp_readonly`）执行 |
+| 3 | 只读事务，跑完一律回滚 |
+| 4 | 服务端游标强制最多 200 行、8 秒超时 |
+
+第 2 层最关键：compose 给 hub 的是 TeslaMate 自己的账号，那**是个 superuser**。
+不降权的话 `pg_read_file()` 能读容器里的任意文件，`private.tokens` 也读得到。
+降权后这两条实测都是 `permission denied`。
 
 数据全程不出你这台机器 —— 商业 App 做不到这件事，你的数据在他们服务器上。
 
 ## 常用命令
 
-| | |
+| 命令 | 作用 |
 |---|---|
 | `./omt up` · `down` | 启动 · 停止（数据保留） |
 | `./omt status` | 各服务状态 + 数据还在不在流 |
@@ -100,13 +126,13 @@ claude mcp add --transport http ohmytesla http://localhost:8800/mcp \
 | `./omt backup` | 数据库导出到 `backups/` |
 | `./omt grafana-password` | 改 Grafana 管理员密码 |
 
-| 地址 | 登录 | |
+| 地址 | 登录 | 是什么 |
 |---|---|---|
-| http://localhost:8800 | `ohmytesla` / `OHMYTESLA_PASSWORD` | OhmyTesla，日常只用这个 |
-| http://localhost:3001 | `admin` / 见 `./omt grafana-password` | Grafana 深度面板 |
-| http://localhost:4000 | 无 | TeslaMate 原生界面 |
+| <http://localhost:8800> | `ohmytesla` / `OHMYTESLA_PASSWORD` | OhmyTesla，日常只用这个 |
+| <http://localhost:3001> | `admin` / 见 `./omt grafana-password` | Grafana 深度面板 |
+| <http://localhost:4000> | 无 | TeslaMate 原生界面 |
 
-按 **⌘K** 打开命令面板。
+按 <kbd>⌘</kbd><kbd>K</kbd> 打开命令面板。
 
 ## 让 AI 助手替你装好
 
@@ -155,7 +181,9 @@ SMTP_HOST/PORT/USER/PASS/FROM/TO 再 `./omt restart`。只填 SMTP_HOST 不填�
 
 ## 安全
 
-**只适合家庭内网。** 三个端口都绑在 `0.0.0.0`，同一个 Wi-Fi 下的任何设备都能直接访问。
+> [!CAUTION]
+> **只适合家庭内网。** 三个端口都绑在 `0.0.0.0`，同一个 Wi-Fi 下的任何设备都能直接访问。
+> 绝对不要把这些端口映射到公网。
 
 | 暴露面 | 认证 | 能拿到什么 |
 |---|---|---|
@@ -177,23 +205,28 @@ MQTT_PASSWORD=...
 
 TeslaMate 4.0.1 完全没有 HTTP 认证选项 —— 它的 `runtime.exs` 只认 `DATABASE_*`、
 `MQTT_*`、`SECRET_KEY_BASE` —— 所以 `:4000` 只能靠「别让别人够到」来保护。
-想让 3001/4000 只有本机能开，把 `docker-compose.yml` 里那两行端口前面加上
+想让 3001 和 4000 只有本机能开，把 `docker-compose.yml` 里那两行端口前面加上
 `127.0.0.1:`，代价是手机和平板就访问不到 Grafana 了。
 
-**不要把这些端口直接映射到公网。** 要在外面访问就整套放进 VPN（Tailscale / WireGuard）
-或带认证的反向代理后面。里面有你的位置历史、行车录像、推送渠道和车辆控制权。
+要在外面访问，就整套放进 VPN（Tailscale / WireGuard）或带认证的反向代理后面。
+里面有你的位置历史、行车录像、推送渠道和车辆控制权。
 
+> [!NOTE]
 > `run_sql` 仍然能读你全部的行程与位置记录 —— 这是它的用途，不是缺陷。
 
-## 更多
+## 文档
 
-- [使用流程](docs/QUICKSTART.md) · [架构设计](docs/ARCHITECTURE.md) ·
-  [车辆控制](docs/COMMANDS.md) · [Fleet Telemetry](docs/FLEET-TELEMETRY.md)
-- [功能矩阵](docs/FEATURE-MATRIX.md) —— 71 项功能 × 全竞品对照
+| | |
+|---|---|
+| [使用流程](docs/QUICKSTART.md) | 完整上手步骤、日常用法、常见问题 |
+| [架构设计](docs/ARCHITECTURE.md) | 各部分怎么拼起来的 |
+| [车辆控制](docs/COMMANDS.md) | 支持的 19 条指令 |
+| [Fleet Telemetry](docs/FLEET-TELEMETRY.md) | 流式采集配置 |
+| [功能矩阵](docs/FEATURE-MATRIX.md) | 71 项功能 × 全竞品对照 |
 
 ## 许可与声明
 
-AGPL-3.0（与 TeslaMate 一致）。
+[AGPL-3.0](LICENSE)（与 TeslaMate 一致）。
 
 > This project is an unofficial community tool and is not affiliated with, endorsed by, or supported by the official TeslaMate project.
 
