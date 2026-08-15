@@ -1,0 +1,269 @@
+{% extends "shell.html" %}
+{% block title %}{{ t('energy.page_title') }}{% endblock %}
+
+{% block content %}
+<div class="page" style="padding-bottom:96px">
+
+  {# The headline answers "how much, what did it cost, is that normal" before
+     any chart appears. Everything below is opt-in detail (§47). #}
+  <div class="page-head">
+    <h1 data-i18n="nav.energy">Energy</h1>
+    <div class="row mt" style="gap:10px">
+      <div class="segmented" id="range-pick">
+        <button data-range="30"  data-i18n="energy.range_30">30 days</button>
+        <button data-range="90"  data-i18n="energy.range_90">90 days</button>
+        <button data-range="365" class="active" data-i18n="energy.range_365">Year</button>
+        <button data-range="0"   data-i18n="energy.range_all">All</button>
+      </div><span class="spacer"></span>
+      <select id="car-picker" hidden></select>
+    </div>
+  </div>
+
+  <div id="db-err" class="empty" style="display:none"></div>
+
+  <div class="metrics" id="headline"></div>
+
+  <div class="section">
+    <div class="section-head">
+      <h2 data-i18n="energy.use_title">Energy use</h2><span class="note" data-i18n="energy.use_sub">Added at the plug, by month</span>
+    </div>
+    <div class="chart" id="c-charge" style="min-height:220px"></div>
+  </div>
+
+  <div class="section">
+    <div class="section-head">
+      <h2 data-i18n="energy.eff_title">Efficiency</h2><span class="note" id="eff-note"></span>
+    </div>
+    <div class="chart" id="c-temp" style="min-height:200px"></div>
+  </div>
+
+  {# Detail lives behind disclosures. Each summary carries its own headline
+     value, so you can read the page without opening anything. #}
+  <div class="section">
+    <div class="section-head"><h2 data-i18n="energy.detail_title">Detail</h2></div>
+
+    <details class="disclose" id="d-charging">
+      <summary><span data-i18n="energy.d_charging">Charging sessions</span><span class="value" id="v-charging">–</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+      </summary>
+      <div class="body">
+        <div class="table-scroll">
+          <table class="data" id="t-charges">
+            <thead><tr>
+              <th data-i18n="common.time">Time</th>
+              <th data-i18n="common.location">Location</th>
+              <th data-i18n="insights.table.type">Type</th>
+              <th class="num" data-i18n="insights.table.soc">SOC</th>
+              <th class="num" data-i18n="insights.table.kwh">kWh</th>
+              <th class="num" data-i18n="common.duration">Duration</th>
+              <th class="num" data-i18n="insights.table.cost">Cost</th>
+            </tr></thead><tbody></tbody>
+          </table>
+        </div>
+        <div id="tariff-hint" class="small muted mt"></div>
+      </div>
+    </details>
+
+    <details class="disclose" id="d-places">
+      <summary><span data-i18n="energy.d_places">Where you charge</span><span class="value" id="v-places">–</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+      </summary>
+      <div class="body">
+        <table class="data" id="t-locations">
+          <thead><tr>
+            <th data-i18n="common.location">Location</th>
+            <th class="num" data-i18n="insights.table.kwh">kWh</th>
+            <th class="num" data-i18n="insights.table.sessions">Sessions</th>
+            <th class="num" data-i18n="insights.table.cost">Cost</th>
+          </tr></thead><tbody></tbody>
+        </table>
+      </div>
+    </details>
+
+    <details class="disclose" id="d-battery">
+      <summary><span data-i18n="energy.d_battery">Battery health</span><span class="value" id="v-battery">–</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+      </summary>
+      <div class="body">
+        <div class="metrics" id="bat-tiles" style="gap:48px;margin-bottom:24px"></div>
+        <div class="chart-sub" data-i18n="insights.chart.range_sub">Monthly rated range scaled to a full charge — the clearest read on capacity loss</div>
+        <div class="chart" id="c-range" style="min-height:180px"></div>
+      </div>
+    </details>
+
+    <details class="disclose" id="d-records">
+      <summary><span data-i18n="energy.d_records">Records</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+      </summary>
+      <div class="body"><div class="metrics" id="records" style="gap:44px"></div></div>
+    </details>
+
+    <details class="disclose" id="d-updates">
+      <summary><span data-i18n="energy.d_updates">Software history</span><span class="value" id="v-updates">–</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+      </summary>
+      <div class="body">
+        <table class="data" id="t-updates">
+          <thead><tr><th data-i18n="insights.table.date">Date</th><th data-i18n="insights.table.version">Version</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </details>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/charts.js"></script>
+<script>
+window.addEventListener("omt:locale", () => { document.title = t("energy.page_title"); });
+
+let carId = null, days = 365;
+const $ = (s) => document.querySelector(s);
+const rows = (sel, html, cols) =>
+  $(sel).innerHTML = html || `<tr><td colspan="${cols}" class="empty small">${t("insights.empty")}</td></tr>`;
+
+function metric(label, value, unit, delta, cls) {
+  return `<div class="metric">
+    <div class="label">${esc(label)}</div>
+    <div class="metric-value">${value}${unit ? `<span class="unit">${esc(unit)}</span>` : ""}</div>
+    ${delta ? `<div class="delta ${cls || ""}">${esc(delta)}</div>` : ""}
+  </div>`;
+}
+
+async function render() {
+  let s;
+  try {
+    s = await apiGet(`/api/insights/summary?car_id=${carId}`);
+  } catch (e) {
+    $("#db-err").style.display = "block";
+    $("#db-err").textContent = e.message;
+    return;
+  }
+  $("#db-err").style.display = "none";
+
+  // 还没有任何充电或行程记录时，一排破折号加两块空图表读起来像坏了。
+  // 说一句话就够（§23）。
+  const hasHistory = (s.n_charges || 0) > 0 || (s.n_drives || 0) > 0;
+  document.querySelectorAll(".section, .metrics").forEach(
+    (n) => n.style.display = hasHistory ? "" : "none");
+  let blank = document.getElementById("no-history");
+  if (!hasHistory) {
+    if (!blank) {
+      blank = document.createElement("div");
+      blank.id = "no-history";
+      blank.className = "empty";
+      blank.style.padding = "72px 24px";
+      $("#headline").after(blank);
+    }
+    blank.innerHTML = `<div style="font-size:15px;color:var(--text-secondary)">${esc(t("energy.no_history"))}</div>
+      <div class="body-sm" style="max-width:46ch;margin:12px auto 0">${esc(t("energy.no_history_sub"))}</div>`;
+    return;
+  }
+  if (blank) blank.remove();
+
+  // 电价方案还全是 0 的话，所有金额都是假的
+  const priced = (s.charge_cost || 0) > 0;
+
+  $("#headline").innerHTML =
+    metric(t("energy.total_energy"), fmt.num(s.kwh_added, 0), "kWh",
+           t("insights.charge_session_count", { n: s.n_charges })) +
+    // 没配电价时 charge_cost 恒为 0。显示 "$0" 是在断言你没花钱，
+    // 而事实是我们不知道 —— 显示"未设置"并给出去处。
+    metric(t("energy.total_cost"),
+           priced ? fmt.money(s.charge_cost, 0) : `<span class="tertiary">–</span>`, "",
+           priced
+             ? t(U.distLabel() === "mi" ? "insights.cost_per_mi" : "insights.cost_per_km",
+                 { cost: fmt.money(U.distLabel() === "mi" ? s.cost_per_km / 0.621371 : s.cost_per_km, 3) })
+             : t("energy.no_rates")) +
+    metric(t("insights.avg_consumption"), U.cons(s.avg_consumption_wh_km) ?? "–", U.consLabel()) +
+    // 里程表是车辆自出厂的累计值，跟"我们记录了多少"是两回事，
+    // 之前把两者写在同一个指标里（数字用里程表、副标题写记录起点）会误导
+    metric(t("energy.odometer"), fmt.num(U.dist(s.odometer, 0), 0), U.distLabel()) +
+    metric(t("energy.recorded"), fmt.num(U.dist(s.km_driven, 0), 0), U.distLabel(),
+           s.first_record ? t("insights.first_record", { date: fmt.date(s.first_record) }) : "");
+
+  apiGet(`/api/insights/charging?car_id=${carId}`).then((c) => {
+    omtChart.bars($("#c-charge"), {
+      labels: c.monthly.map((m) => fmt.month(m.month)),
+      series: [
+        { name: t("insights.chart.energy_ac"), color: "--series-1", values: c.monthly.map((m) => +(m.kwh - m.kwh_dc).toFixed(1)) },
+        { name: t("insights.chart.energy_dc"), color: "--series-2", values: c.monthly.map((m) => m.kwh_dc) },
+      ],
+      stacked: true, yFmt: (v) => Math.round(v) + " kWh",
+    });
+
+    $("#v-charging").textContent = t("energy.n_sessions", { n: c.recent.length });
+    rows("#t-charges tbody", c.recent.map((r) => `<tr>
+      <td>${fmt.dt(r.start)}</td><td>${esc(r.location)}</td>
+      <td class="dim">${esc(r.type)}${r.max_power ? " · " + r.max_power + " kW" : ""}</td>
+      <td class="num">${r.soc}%</td><td class="num">${r.kwh}</td>
+      <td class="num dim">${r.duration_min} min</td>
+      <td class="num">${r.cost_source === "unset" ? "–" : fmt.money(r.cost)}</td></tr>`).join(""), 7);
+    $("#tariff-hint").textContent = c.computed_sessions ? "" : t("insights.tariff_hint");
+
+    $("#v-places").textContent = t("energy.n_places", { n: c.top_locations.length });
+    rows("#t-locations tbody", c.top_locations.map((l) => `<tr>
+      <td>${esc(l.location)}</td><td class="num">${fmt.num(l.kwh, 0)}</td>
+      <td class="num dim">${l.sessions}</td><td class="num">${fmt.money(l.cost, 0)}</td></tr>`).join(""), 4);
+  }).catch(() => {});
+
+  apiGet(`/api/insights/drives?car_id=${carId}`).then((d) => {
+    omtChart.line($("#c-temp"), {
+      series: [{ name: t("insights.avg_consumption"), color: "--series-1", points: true,
+                 data: d.by_temp.map((x) => [U.temp(x.temp, 0), U.cons(x.wh_km)]) }],
+      yFmt: (v) => Math.round(v) + " " + U.consLabel(),
+      xFmt: (v) => Math.round(v) + U.tempLabel(),
+    });
+    $("#eff-note").textContent = t("energy.eff_sub");
+  }).catch(() => {});
+
+  apiGet(`/api/insights/battery?car_id=${carId}`).then((b) => {
+    $("#v-battery").textContent = b.degradation_pct != null
+      ? t("energy.degraded", { pct: b.degradation_pct }) : "–";
+    $("#bat-tiles").innerHTML =
+      metric(t("insights.range_at_100"), U.dist(b.current_range_at_100) ?? "–", U.distLabel(),
+             t("insights.range_best", { value: (U.dist(b.max_range_at_100) ?? "–") + " " + U.distLabel() })) +
+      metric(t("insights.degradation"), b.degradation_pct != null ? b.degradation_pct + "%" : "–", "",
+             b.lfp_battery ? t("insights.battery_lfp") : t("insights.battery_nca")) +
+      metric(t("insights.capacity_now"), b.current_capacity_kwh ?? "–", "kWh");
+    omtChart.line($("#c-range"), {
+      series: [{ name: t("insights.chart.range_series"), color: "--series-1",
+                 data: b.range_based.map((r) => [new Date(r.month).getTime(), r.range_km]) }],
+      xTime: true, yFmt: (v) => Math.round(U.dist(v, 0)) + " " + U.distLabel(),
+    });
+  }).catch(() => {});
+
+  apiGet(`/api/insights/records?car_id=${carId}`).then((r) => {
+    const items = [
+      [t("common.top_speed"), r.top_speed_kmh, U.speedLabel(), U.speed],
+      [t("common.peak_power"), r.top_power_kw, "kW"],
+      [t("insights.record.max_regen"), r.max_regen_kw, "kW"],
+      [t("insights.record.longest_drive"), r.longest_drive_km, U.distLabel(), U.dist],
+      [t("insights.record.busiest_day"), r.busiest_day_km, U.distLabel(), U.dist],
+      [t("insights.record.biggest_charge"), r.biggest_charge_kwh, "kWh"],
+      [t("insights.record.best_consumption"), r.best_efficiency_wh_km, U.consLabel(), U.cons],
+    ];
+    $("#records").innerHTML = items.map(([label, rec, unit, conv]) =>
+      metric(label, rec ? fmt.num(conv ? conv(rec.value) : rec.value, 1) : "–", unit,
+             rec && rec.date ? fmt.date(rec.date) : "")).join("");
+  }).catch(() => {});
+
+  apiGet(`/api/insights/updates?car_id=${carId}`).then((u) => {
+    $("#v-updates").textContent = t("energy.n_updates", { n: u.length });
+    rows("#t-updates tbody", u.map((x) =>
+      `<tr><td>${fmt.dt(x.date)}</td><td class="dim">${esc(x.version)}</td></tr>`).join(""), 2);
+  }).catch(() => {});
+
+  paintIcons();
+}
+
+document.querySelectorAll("#range-pick button").forEach((b) =>
+  b.addEventListener("click", () => {
+    document.querySelectorAll("#range-pick button").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    days = +b.dataset.range;
+    render();
+  }));
+
+i18nReady.catch(() => {}).then(() =>
+  initCarPicker("#car-picker", (id) => { carId = id; render(); })
+    .then((id) => { carId = id; render(); }));
+</script>
+{% endblock %}

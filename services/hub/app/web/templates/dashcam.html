@@ -1,0 +1,130 @@
+{% extends "shell.html" %}
+{% block title %}{{ t('dashcam.page_title') }}{% endblock %}
+
+{% block content %}
+<div class="page" style="padding-bottom:96px">
+
+  <div class="page-head">
+    <h1 data-i18n="dashcam.title">Dashcam</h1>
+    <div class="sub" id="scan-status">&nbsp;</div>
+  </div>
+
+  <div class="row" style="margin-bottom:24px;flex-wrap:wrap;gap:10px">
+    <div class="segmented" id="type-pick">
+      <button data-type="" class="active" data-i18n="dashcam.all">All</button>
+      <button data-type="sentry" data-i18n="dashcam.sentry">Sentry Mode</button>
+      <button data-type="saved"  data-i18n="dashcam.saved">Saved</button>
+      <button data-type="recent" data-i18n="dashcam.recent">Recent</button>
+    </div><span class="spacer"></span>
+    <button id="rescan" class="btn ghost" data-i18n="common.rescan">Rescan</button>
+    <a class="btn primary" href="/dashcam/usb"><span class="ico-slot" data-icon="upload" data-size="15"></span><span data-i18n="dashcam.usb">Browse USB drive</span>
+    </a>
+  </div>
+
+  <div id="clip-warning" class="card" style="display:none;gap:12px;align-items:flex-start;margin-bottom:24px"></div>
+
+  <div id="events" class="grid cols-3"><div class="empty" style="grid-column:1/-1" data-i18n="common.loading">Loading…</div></div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* Reason codes carry an icon name plus a catalog key — text is resolved at
+   render time because the catalog may still be loading when this parses. */
+const REASONS = {
+  sentry_aware_object_detection:        ["shield", "dashcam.reason.object_detected"],
+  sentry_panic_alarm:                   ["shield", "dashcam.reason.panic_alarm"],
+  user_interaction_dashcam_icon_tapped: ["film",   "dashcam.reason.saved_icon"],
+  user_interaction_dashcam_panel_save:  ["film",   "dashcam.reason.saved_panel"],
+  user_interaction_honk:                ["horn",   "dashcam.reason.honk"],
+};
+const TYPE_ICON = { sentry: "shield", saved: "film", recent: "drive" };
+let curType = "";
+
+window.addEventListener("omt:locale", () => { document.title = t("dashcam.page_title"); load(); });
+
+async function load() {
+  const div = document.getElementById("events");
+  let evs, st;
+  try {
+    evs = await apiGet("/api/dashcam/events?limit=500" + (curType ? "&type=" + curType : ""));
+    st  = await apiGet("/api/dashcam/status");
+  } catch (err) {
+    div.innerHTML = `<div class="empty" style="grid-column:1/-1">${esc(t("dashcam.error.load", { message: err.message }))}</div>`;
+    return;
+  }
+
+  /* 「有条目、没画面」是加密片段的典型表现：目录结构、文件名、时长都正常，
+     里面一帧也解不出来。不明说的话用户只会以为是这个软件坏了。 */
+  const warn = document.getElementById("clip-warning");
+  if (st.unreadable > 0) {
+    warn.style.display = "flex";
+    warn.innerHTML = `<span style="color:var(--warning-orange);flex:none">${icon("bell", 18)}</span>
+      <div><div class="title" style="color:var(--warning-orange)">${esc(st.unreadable === 1 ? t("dashcam.locked_title_one") : t("dashcam.locked_title", { n: st.unreadable }))}</div>
+      <div class="body-sm mt" style="max-width:62ch">${t("dashcam.locked_body")}</div></div>`;
+  } else if (st.needs_transcode > 0) {
+    warn.style.display = "flex";
+    warn.innerHTML = `<div class="body-sm">${esc(t("dashcam.hevc_note", { n: st.needs_transcode }))}</div>`;
+  } else {
+    warn.style.display = "none";
+  }
+
+  // 目录空着是正常的初始状态，不是故障；只有目录真的不见了才算异常
+  document.getElementById("scan-status").textContent =
+    st.found ? t("dashcam.status.summary", { events: st.events, sentry: st.by_type.sentry,
+                                             saved: st.by_type.saved, recent: st.by_type.recent })
+    : st.root_exists ? t("dashcam.status.awaiting")
+    : t("dashcam.status.no_folder");
+
+  if (!evs.length) {
+    div.innerHTML = `<div class="empty" style="grid-column:1/-1;padding:56px 24px">
+      <div style="font-size:16px;color:var(--text-secondary)">${esc(t("dashcam.empty.title"))}</div>
+      <div class="mt2"><a class="btn primary" href="/dashcam/usb">${esc(t("dashcam.empty.usb_cta"))}</a></div>
+      <div class="body-sm" style="max-width:56ch;margin:24px auto 0;line-height:1.7;text-align:left">
+        ${t("dashcam.empty.usb_why")}<br><br>${t("dashcam.empty.setup")}<br><br>${t("dashcam.empty.encryption")}
+      </div></div>`;
+    return;
+  }
+
+  const typeLabel = { sentry: t("dashcam.sentry"), saved: t("dashcam.saved"), recent: t("dashcam.driving") };
+  div.innerHTML = evs.map((e) => {
+    const r = REASONS[e.reason];
+    return `<a class="card clip" style="padding:0;overflow:hidden;display:block"
+       href="/dashcam/play?id=${encodeURIComponent(e.id)}">
+      <img loading="lazy" src="/api/dashcam/thumb?id=${encodeURIComponent(e.id)}"
+           style="width:100%;aspect-ratio:16/9;object-fit:cover;display:block;background:var(--bg-elevated)"
+           onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'empty',style:'aspect-ratio:16/9;display:grid;place-items:center;margin:0',innerHTML:icon('film',24)}))">
+      <div style="padding:12px 14px 14px">
+        <div class="row" style="gap:7px"><span style="color:var(--text-tertiary);display:flex">${icon(TYPE_ICON[e.type] || "film", 14)}</span><span class="small">${esc(typeLabel[e.type] || e.type)}</span><span class="spacer"></span><span class="meta nowrap">${fmt.dt(e.timestamp)}</span>
+        </div>
+        <div class="meta" style="margin-top:6px">
+          ${esc([e.city, r ? t(r[1]) : e.reason].filter(Boolean).join(" · "))}
+        </div>
+        <div class="meta">${esc(t("dashcam.card.sub", { minutes: e.segment_count, cameras: e.cameras.length }))}</div>
+      </div></a>`;
+  }).join("");
+  paintIcons();
+}
+
+document.querySelectorAll("#type-pick button").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll("#type-pick button").forEach((x) => x.classList.remove("active"));
+  b.classList.add("active");
+  curType = b.dataset.type;
+  load();
+}));
+
+document.getElementById("rescan").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  await apiGet("/api/dashcam/events?force=true&limit=1").catch(() => {});
+  await load();
+  e.target.disabled = false;
+});
+
+i18nReady.catch(() => {}).then(load);
+</script>
+<style>
+  .clip { transition: border-color var(--t-hover) var(--ease), transform var(--t-hover) var(--ease); }
+  .clip:hover { border-color: var(--border-medium); }
+</style>
+{% endblock %}

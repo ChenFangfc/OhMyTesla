@@ -1,0 +1,131 @@
+#!/usr/bin/env bash
+# OhmyTesla control script. Run `./omt` for a menu, or `./omt <command>`.
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
+BOLD=$'\033[1m'; DIM=$'\033[2m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'
+RED=$'\033[31m'; CYAN=$'\033[36m'; OFF=$'\033[0m'
+
+port() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2 | tr -d ' ' | cut -d'#' -f1; }
+OHMYTESLA_PORT=$(port OHMYTESLA_PORT); OHMYTESLA_PORT=${OHMYTESLA_PORT:-8800}
+GRAFANA_PORT=$(port GRAFANA_PORT);     GRAFANA_PORT=${GRAFANA_PORT:-3001}
+TESLAMATE_PORT=$(port TESLAMATE_PORT); TESLAMATE_PORT=${TESLAMATE_PORT:-4000}
+
+die() { echo "${RED}$1${OFF}" >&2; exit 1; }
+
+preflight() {
+  command -v docker >/dev/null || die "Docker isn't installed. Get Docker Desktop from docker.com."
+  docker info >/dev/null 2>&1 || die "Docker isn't running. Open Docker Desktop and wait for the whale icon to settle."
+  [ -f .env ] || die ".env is missing. Copy it from the template:  cp .env.example .env"
+  grep -q '^TM_ENCRYPTION_KEY=.\+' .env || die "TM_ENCRYPTION_KEY is empty in .env. Generate one:  openssl rand -base64 32"
+}
+
+# Poll until the hub answers, so `up` doesn't return before the app is usable.
+wait_ready() {
+  printf "  waiting for the app"
+  for _ in $(seq 1 60); do
+    if curl -fs --max-time 2 "http://localhost:${OHMYTESLA_PORT}/healthz" >/dev/null 2>&1; then
+      echo " ${GREEN}ready${OFF}"; return 0
+    fi
+    printf "."; sleep 2
+  done
+  echo " ${YELLOW}still starting${OFF}"
+  echo "  ${DIM}Check the logs with:  ./omt logs${OFF}"
+}
+
+signed_in() {
+  curl -fs --max-time 5 "http://localhost:${OHMYTESLA_PORT}/api/setup/status" 2>/dev/null \
+    | grep -q '"signed_in": *true'
+}
+
+banner() {
+  echo
+  echo "  ${BOLD}OhmyTesla${OFF}  ${CYAN}http://localhost:${OHMYTESLA_PORT}${OFF}"
+  if signed_in; then
+    echo "  ${DIM}Signed in. Everything else runs on its own.${OFF}"
+  else
+    echo "  ${YELLOW}Not connected yet${OFF} — open the link above and follow the setup page."
+  fi
+  echo "  ${DIM}Advanced: Grafana :${GRAFANA_PORT} · TeslaMate :${TESLAMATE_PORT} (you shouldn't need these)${OFF}"
+  echo
+}
+
+cmd_up() {
+  preflight
+  echo "${BOLD}Starting OhmyTesla…${OFF}"
+  docker compose up -d
+  wait_ready
+  banner
+}
+
+cmd_down() {
+  echo "${BOLD}Stopping…${OFF} ${DIM}(your data stays on disk)${OFF}"
+  docker compose down
+  echo "${GREEN}Stopped.${OFF} Start it again with ./omt up"
+}
+
+# `docker compose restart` 重用容器原有的环境变量，改了 .env 也不会生效。
+# 必须 up -d 让 compose 比对配置并重建容器。
+cmd_restart() {
+  preflight
+  if [ -n "${1:-}" ]; then docker compose up -d "$1"; else docker compose up -d; fi
+  wait_ready
+  banner
+}
+
+cmd_status() {
+  docker compose ps --format "table {{.Service}}\t{{.Status}}\t{{.Ports}}"
+  echo
+  if curl -fs --max-time 5 "http://localhost:${OHMYTESLA_PORT}/api/health/detail" >/dev/null 2>&1; then
+    curl -s "http://localhost:${OHMYTESLA_PORT}/api/health/detail" | python3 -m json.tool 2>/dev/null || true
+  else
+    echo "${YELLOW}The app isn't answering on :${OHMYTESLA_PORT}.${OFF}  Try:  ./omt logs"
+  fi
+  banner
+}
+
+cmd_logs() { docker compose logs -f --tail=100 "${1:-ohmytesla}"; }
+
+cmd_update() {
+  preflight
+  echo "${BOLD}Rebuilding the app…${OFF}"
+  docker compose up -d --build ohmytesla
+  wait_ready
+  banner
+}
+
+cmd_backup() {
+  local out="backups/ohmytesla-$(date +%Y%m%d-%H%M%S).sql.gz"
+  mkdir -p backups
+  echo "Backing up the database to ${out}…"
+  docker compose exec -T database pg_dump -U "$(port TM_DB_USER)" "$(port TM_DB_NAME)" | gzip > "$out"
+  echo "${GREEN}Done.${OFF} $(du -h "$out" | cut -f1)"
+}
+
+cmd_menu() {
+  echo
+  echo "  ${BOLD}OhmyTesla${OFF}"
+  echo "  ${DIM}./omt <command>${OFF}"
+  echo
+  printf "    %-10s %s\n" up      "start everything (use this one)"
+  printf "    %-10s %s\n" down    "stop everything, keep the data"
+  printf "    %-10s %s\n" status  "what's running, and is it healthy"
+  printf "    %-10s %s\n" logs    "follow the log ( ./omt logs teslamate )"
+  printf "    %-10s %s\n" restart "restart after changing .env"
+  printf "    %-10s %s\n" update  "rebuild after changing the code"
+  printf "    %-10s %s\n" backup  "dump the database to backups/"
+  echo
+}
+
+case "${1:-menu}" in
+  up|start)    cmd_up ;;
+  down|stop)   cmd_down ;;
+  restart)     cmd_restart "${2:-}" ;;
+  status|ps)   cmd_status ;;
+  logs|log)    cmd_logs "${2:-ohmytesla}" ;;
+  update|build|rebuild) cmd_update ;;
+  backup)      cmd_backup ;;
+  menu|help|-h|--help) cmd_menu ;;
+  *) echo "${RED}Unknown command: $1${OFF}"; cmd_menu; exit 1 ;;
+esac

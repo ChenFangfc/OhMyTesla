@@ -1,0 +1,21 @@
+{
+  "_comment": "复制为 fleet-telemetry.json 并按 docs/FLEET-TELEMETRY.md 修改。字段以官方 github.com/teslamotors/fleet-telemetry 文档为准。",
+  "host": "0.0.0.0",
+  "port": 4443,
+  "log_level": "info",
+  "json_log_enable": true,
+  "records": {
+    "V": ["mqtt"]
+  },
+  "mqtt": {
+    "broker": "mosquitto:1883",
+    "client_id": "fleet-telemetry",
+    "topic_base": "telemetry",
+    "qos": 1,
+    "retained": false
+  },
+  "tls": {
+    "server_cert": "/etc/fleet-telemetry/certs/server.crt",
+    "server_key": "/etc/fleet-telemetry/certs/server.key"
+  }
+}

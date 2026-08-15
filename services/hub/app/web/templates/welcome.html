@@ -1,0 +1,113 @@
+{% extends "shell.html" %}
+{% block title %}{{ t('setup.page_title') }}{% endblock %}
+{% block content %}
+<div class="page" style="padding-bottom:96px">
+<div style="max-width:660px;margin:0 auto">
+  <h1 data-i18n="setup.title">Connect your Tesla</h1>
+  <p class="muted" data-i18n="setup.lede">
+    One-time setup. After this, everything runs on its own.
+  </p>
+
+  <div id="setup-state" class="card mt"></div>
+
+  <div class="card mt">
+    <h2 style="margin:0 0 4px"><span data-i18n="setup.step1">1. Get your tokens</span></h2>
+    <p class="small muted" data-i18n="setup.step1_note">
+      Tesla no longer lets third-party apps sign in with an email and password.
+      A small helper opens Tesla's own login page and hands back two tokens.
+      Your password only ever goes to Tesla.
+    </p>
+    <pre style="background:var(--page);border:1px solid var(--border);border-radius:8px;padding:10px 12px;overflow-x:auto;font-size:13px"><code>~/Desktop/OhmyTesla/tools/tesla_auth</code></pre>
+    <p class="small muted"><span data-i18n="setup.step1_alt">Or download it here:</span>
+      <a href="https://github.com/adriankumpf/tesla_auth/releases/latest" target="_blank" rel="noopener">tesla_auth</a>
+      ·
+      <a href="https://apps.apple.com/us/app/auth-app-for-tesla/id1552058613" target="_blank" rel="noopener">Auth app for Tesla</a>
+    </p>
+  </div>
+
+  <div class="card mt">
+    <h2 style="margin:0 0 4px"><span data-i18n="setup.step2">2. Paste them here</span></h2>
+    <div class="mt">
+      <label class="small muted" data-i18n="setup.access_token">Access token</label>
+      <textarea id="tok-access" rows="3" style="width:100%;font-family:ui-monospace,Menlo,monospace;font-size:12px;
+        background:var(--surface);color:var(--ink);border:1px solid var(--baseline);border-radius:8px;padding:8px"
+        placeholder="eyJhbGciOi..."></textarea>
+    </div>
+    <div class="mt">
+      <label class="small muted" data-i18n="setup.refresh_token">Refresh token</label>
+      <textarea id="tok-refresh" rows="2" style="width:100%;font-family:ui-monospace,Menlo,monospace;font-size:12px;
+        background:var(--surface);color:var(--ink);border:1px solid var(--baseline);border-radius:8px;padding:8px"
+        placeholder="eyJhbGciOi..."></textarea>
+    </div>
+    <div class="row mt">
+      <button id="btn-signin" class="primary" data-i18n="setup.connect">Connect</button><span id="signin-msg" class="small muted"></span>
+    </div>
+  </div>
+
+  <div class="card mt small muted"><span data-i18n="setup.privacy">
+      Tokens are stored encrypted on this machine and never leave it except to talk to Tesla.
+    </span>
+  </div>
+</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function refresh() {
+  const el = document.getElementById("setup-state");
+  let st;
+  try { st = await apiGet("/api/setup/status"); }
+  catch (e) { el.innerHTML = `<span class="chip critical">${esc(e.message)}</span>`; return; }
+
+  const bits = [];
+  bits.push(st.db
+    ? `<span class="chip good">${t("setup.db_ready")}</span>`
+    : `<span class="chip warn">${t("setup.db_waiting")}</span>`);
+  if (st.signed_in) bits.push(`<span class="chip good">${t("setup.signed_in")}</span>`);
+  if (st.cars) bits.push(`<span class="chip good">${t("setup.vehicles_found", { n: st.cars })}</span>`);
+  if (!st.vault_ok) bits.push(`<span class="chip critical">${t("setup.vault_bad")}</span>`);
+  el.innerHTML = bits.join(" ");
+
+  if (st.signed_in && st.cars) {
+    el.insertAdjacentHTML("beforeend",
+      `<div class="mt">${t("setup.done")} <a href="/">${t("setup.goto")}</a></div>`);
+  } else if (st.signed_in) {
+    el.insertAdjacentHTML("beforeend",
+      `<div class="mt small muted">${t("setup.waiting_vehicle")}</div>`);
+  }
+  return st;
+}
+
+document.getElementById("btn-signin").addEventListener("click", async (e) => {
+  const msg = document.getElementById("signin-msg");
+  const access = document.getElementById("tok-access").value.trim();
+  const refreshTok = document.getElementById("tok-refresh").value.trim();
+  if (!access || !refreshTok) { msg.textContent = t("setup.need_tokens"); return; }
+  e.target.disabled = true;
+  msg.textContent = t("setup.connecting");
+  try {
+    await apiPost("/api/setup/signin", { access, refresh: refreshTok });
+    msg.textContent = t("setup.connected");
+    document.getElementById("tok-access").value = "";
+    document.getElementById("tok-refresh").value = "";
+    for (let i = 0; i < 12; i++) {
+      await new Promise(r => setTimeout(r, 5000));
+      const st = await refresh();
+      if (st && st.cars) { location.href = "/"; return; }
+    }
+  } catch (err) {
+    msg.textContent = err.message;
+  }
+  e.target.disabled = false;
+});
+
+// i18n.load() 是异步的；在它完成前调 t() 会显示原始 key。
+// 监听 apply() 派发的事件，保证首绘和切换语言时都正确。
+window.addEventListener("omt:locale", () => { document.title = t("setup.page_title"); });
+(window.i18n ? i18n.load().catch(() => {}) : Promise.resolve()).then(() => {
+  refresh();
+  setInterval(refresh, 15000);
+});
+</script>
+{% endblock %}

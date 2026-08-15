@@ -1,0 +1,401 @@
+{% extends "shell.html" %}
+{% block title %}{{ t('player.page_title') }}{% endblock %}
+{% block content %}
+<div class="page" style="padding-bottom:96px">
+<div class="subhead">
+  <a href="/dashcam" class="back" data-i18n-title="player.back">
+    <span class="ico-slot" data-icon="arrow" data-size="15"></span><span data-i18n="nav.dashcam">Dashcam</span>
+  </a>
+  <h1 id="ev-title"><span data-i18n="common.loading">Loading…</span></h1><span class="spacer"></span><span class="crumb" data-i18n="player.telemetry_car">Telemetry vehicle</span>
+  <select id="car-picker"></select>
+</div>
+
+<div class="player-wrap">
+  <div>
+    <div class="video-stage">
+      <video id="main" class="main" muted playsinline></video>
+      <div class="pip-row" id="pips"></div>
+      <div class="hud" id="hud" style="display:none">
+        <div class="speed"><span id="h-speed">--</span> <small id="h-speed-unit">km/h</small></div>
+        <div class="item"><div class="l" data-i18n="player.hud.gear">Gear / Autopilot</div><div id="h-gear">–</div></div>
+        <div class="item"><div class="l" data-i18n="player.hud.power">Power</div><div id="h-power">–</div></div>
+        <div class="item"><div class="l" data-i18n="common.battery">Battery</div><div id="h-soc">–</div></div>
+        <div class="item"><div class="l" data-i18n="player.hud.elevation">Elevation</div><div id="h-elev">–</div></div>
+        <div class="item"><div class="l" data-i18n="player.hud.steering">Steering</div><div id="h-steer">–</div></div>
+        <div class="item"><div class="l" data-i18n="player.hud.pedal">Accelerator</div><div id="h-pedal">–</div></div>
+        <div class="clock" id="h-clock"></div>
+      </div>
+    </div>
+    <div class="controls">
+      <button id="btn-play" class="primary">▶ <span data-i18n="player.play">Play</span></button>
+      <input type="range" id="seek" min="0" max="100" step="0.1" value="0"><span id="time-label" class="small muted" style="min-width:90px;text-align:right">0:00 / 0:00</span>
+      <select id="rate">
+        <option value="0.5">0.5×</option>
+        <option value="1" selected>1×</option>
+        <option value="2">2×</option>
+        <option value="4">4×</option>
+      </select>
+    </div>
+    <div class="seg-list" id="segs"></div>
+    <!-- 文案含 <b> 标签，data-i18n 只能写 textContent，改由脚本注入 innerHTML -->
+    <div id="hevc-tip" class="small muted mt" style="display:none"></div>
+  </div>
+
+  <div>
+    <div class="card">
+      <h2 style="margin:0 0 10px" data-i18n="player.export.title">Export video</h2>
+      <div class="row mt"><label style="width:64px" data-i18n="player.export.layout">Layout</label>
+        <select id="x-layout">
+          <option value="grid" data-i18n="player.export.layout_grid">Grid (all cameras)</option>
+          <option value="front_pip" data-i18n="player.export.layout_front_pip">Front camera + PiP</option>
+          <option value="back_pip" data-i18n="player.export.layout_back_pip">Rear camera + PiP</option>
+        </select>
+      </div>
+      <div class="row mt"><label style="width:64px" data-i18n="player.export.quality">Quality</label>
+        <select id="x-quality">
+          <option value="standard" selected data-i18n="player.export.quality_standard">Standard (CRF 23)</option>
+          <option value="high" data-i18n="player.export.quality_high">High (CRF 18)</option>
+          <option value="fast" data-i18n="player.export.quality_fast">Fast (CRF 27)</option>
+        </select>
+      </div>
+      <div class="row mt"><label style="width:64px" data-i18n="player.export.range">Include</label>
+        <select id="x-range">
+          <option value="all" data-i18n="player.export.range_all">Entire clip</option>
+          <option value="seg" data-i18n="player.export.range_seg">Current minute only</option>
+        </select>
+      </div>
+      <div class="mt" id="x-cams"></div>
+      <label class="check mt"><input type="checkbox" id="x-overlay" checked><span data-i18n="player.export.overlay">Overlay telemetry (speed, power, battery + SEI gear, steering, accelerator)</span></label>
+      <div class="mt"><button id="x-go" class="primary" style="width:100%" data-i18n="player.export.start">Start export</button></div>
+    </div>
+
+    <div class="card mt">
+      <h2 style="margin:0 0 6px" data-i18n="player.jobs.title">Export jobs</h2>
+      <div id="jobs" class="small"><div class="muted" data-i18n="player.jobs.empty">No export jobs</div></div>
+    </div>
+
+    <div class="card mt small">
+      <b data-i18n="player.align.title">Clock calibration</b>
+      <div class="muted mt" data-i18n="player.align.desc">Video and TeslaMate telemetry out of sync? Match the SEI speed trace to find the exact offset.</div>
+      <div class="mt"><button id="btn-align" style="width:100%" data-i18n="player.align.btn"> Calibrate clock</button></div>
+      <div id="align-result" class="muted mt"></div>
+    </div>
+
+    <div class="card mt small" id="sei-stats"></div>
+    <div class="card mt small" id="ev-meta"></div>
+  </div>
+</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* 机位名不能在解析时用 t() 建成常量 —— 那会把词表加载前的原始 key
+   永久固化进去。改成渲染时才取。 */
+const camName = (c) => t("dashcam.cam." + c, undefined) === "dashcam.cam." + c ? c : t("dashcam.cam." + c);
+const evId = new URLSearchParams(location.search).get("id");
+let ev = null, segIdx = 0, mainCam = "front", playing = false;
+let tmSamples = [], seiCache = {}, hudTimer = null;
+let carId = null;  // 遥测/校准/合成叠加所针对的车辆
+
+const $main = document.getElementById("main");
+const $pips = document.getElementById("pips");
+const $seek = document.getElementById("seek");
+
+function segCams() { return ev.segments[segIdx].cameras; }
+function camList() { return ev.cameras; }
+
+function mediaUrl(rel) { return "/media/" + rel.split("/").map(encodeURIComponent).join("/"); }
+
+function currentRate() { return +document.getElementById("rate").value; }
+
+function loadSegment(idx, keepTime = 0) {
+  segIdx = idx;
+  const cams = segCams();
+  if (!cams[mainCam]) mainCam = Object.keys(cams)[0];
+  $main.src = mediaUrl(cams[mainCam]);
+  $main.currentTime = keepTime;
+  $main.playbackRate = currentRate(); // 换 src 会把倍速重置回 1×
+  $pips.innerHTML = "";
+  for (const cam of camList()) {
+    if (cam === mainCam || !cams[cam]) continue;
+    const v = document.createElement("video");
+    v.muted = true; v.playsInline = true;
+    v.src = mediaUrl(cams[cam]);
+    v.currentTime = keepTime;
+    v.playbackRate = currentRate();
+    v.title = camName(cam);
+    v.dataset.cam = cam;
+    v.addEventListener("click", () => { mainCam = cam; loadSegment(segIdx, $main.currentTime); });
+    $pips.appendChild(v);
+  }
+  document.querySelectorAll("#segs button").forEach((b, i) => b.classList.toggle("active", i === idx));
+  if (playing) playAll();
+  loadSei(idx);
+}
+
+function playAll() {
+  playing = true;
+  $main.play().catch(() => document.getElementById("hevc-tip").style.display = "block");
+  $pips.querySelectorAll("video").forEach(v => v.play().catch(() => {}));
+  document.getElementById("btn-play").textContent = "⏸ " + t("player.pause");
+}
+function pauseAll() {
+  playing = false;
+  $main.pause();
+  $pips.querySelectorAll("video").forEach(v => v.pause());
+  document.getElementById("btn-play").textContent = "▶ " + t("player.play");
+}
+
+document.getElementById("btn-play").addEventListener("click", () => playing ? pauseAll() : playAll());
+document.getElementById("rate").addEventListener("change", (e) => {
+  const r = +e.target.value;
+  $main.playbackRate = r;
+  $pips.querySelectorAll("video").forEach(v => v.playbackRate = r);
+});
+let previewTried = {};
+$main.addEventListener("error", async () => {
+  document.getElementById("hevc-tip").style.display = "block";
+  // 自动请求服务端 H.264 转码预览（每分段只试一次）
+  const cams = ev && segCams();
+  const rel = cams && cams[mainCam];
+  if (!rel || previewTried[rel]) return;
+  previewTried[rel] = true;
+  const tip = document.getElementById("hevc-tip");
+  tip.innerHTML = t("player.preview.transcoding");
+  try {
+    const fd = new FormData();
+    fd.append("path", rel);
+    const r = await fetch("/api/dashcam/preview", { method: "POST", body: fd });
+    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+    const { url } = await r.json();
+    // 转码要 10-30 秒，期间用户可能已切换分段/机位——核对后再替换
+    if (!ev || segCams()[mainCam] !== rel) return;
+    const keep = $main.currentTime;
+    $main.src = url;
+    $main.currentTime = keep;
+    $main.playbackRate = currentRate();
+    tip.innerHTML = t("player.preview.ready");
+    if (playing) $main.play().catch(() => {});
+  } catch (e) {
+    tip.innerHTML = t("player.preview.failed", { message: e.message });
+  }
+});
+$main.addEventListener("ended", () => {
+  if (segIdx < ev.segments.length - 1) loadSegment(segIdx + 1);
+  else pauseAll();
+});
+
+/* 同步画中画与主画面 */
+setInterval(() => {
+  if (!playing) return;
+  $pips.querySelectorAll("video").forEach(v => {
+    if (Math.abs(v.currentTime - $main.currentTime) > 0.3) v.currentTime = $main.currentTime;
+  });
+}, 1000);
+
+/* 全局时间轴 */
+$main.addEventListener("timeupdate", () => {
+  const total = ev ? ev.segments.length * 60 : 0;
+  const pos = segIdx * 60 + $main.currentTime;
+  $seek.value = total ? (pos / total) * 100 : 0;
+  document.getElementById("time-label").textContent = fmt.ts(pos) + " / " + fmt.ts(total);
+});
+$seek.addEventListener("input", () => {
+  const total = ev.segments.length * 60;
+  const want = (+$seek.value / 100) * total;
+  const idx = Math.min(Math.floor(want / 60), ev.segments.length - 1);
+  const within = want - idx * 60;
+  if (idx !== segIdx) loadSegment(idx, within);
+  else $main.currentTime = within;
+});
+
+/* ---------------- HUD 遥测 ---------------- */
+async function loadTelemetry() {
+  try {
+    const start = ev.segments[0].start;
+    const endT = new Date(new Date(ev.segments[ev.segments.length - 1].start).getTime() + 60000);
+    const end = endT.getFullYear() + "-" + String(endT.getMonth() + 1).padStart(2, "0") + "-" + String(endT.getDate()).padStart(2, "0") +
+      "T" + String(endT.getHours()).padStart(2, "0") + ":" + String(endT.getMinutes()).padStart(2, "0") + ":" + String(endT.getSeconds()).padStart(2, "0");
+    const q = `/api/dashcam/telemetry?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&step=1` +
+              (carId ? `&car_id=${carId}` : "");
+    const r = await apiGet(q);
+    tmSamples = r.samples;
+    if (r.clock_offset) {
+      document.getElementById("align-result").innerHTML =
+        t("player.align.current", { offset: (r.clock_offset > 0 ? "+" : "") + r.clock_offset });
+    }
+  } catch (e) { tmSamples = []; }
+}
+async function loadSei(idx) {
+  const cams = ev.segments[idx].cameras;
+  const rel = cams.front || cams[Object.keys(cams)[0]];
+  if (!rel || seiCache[idx] !== undefined) { updateSeiStats(); return; }
+  seiCache[idx] = null;
+  try {
+    const r = await apiGet(`/api/dashcam/sei?path=${encodeURIComponent(rel)}`);
+    seiCache[idx] = r.available ? r.samples : [];
+  } catch (e) { seiCache[idx] = []; }
+  updateSeiStats();
+}
+
+function updateSeiStats() {
+  const s = seiCache[segIdx];
+  const div = document.getElementById("sei-stats");
+  if (!s || !s.length) { div.innerHTML = `<b>${t("dashcam.sei.title")}</b><div class='muted mt'>${t("dashcam.sei.none")}</div>`; return; }
+  let apN = 0, brakes = 0, prev = false, maxG = 0, maxV = 0;
+  for (const x of s) {
+    if (x.ap) apN++;
+    if (x.brake && !prev) brakes++;
+    prev = x.brake;
+    if (x.accel_x != null && x.accel_y != null) maxG = Math.max(maxG, Math.hypot(x.accel_x, x.accel_y) / 9.81);
+    if (x.speed_kmh) maxV = Math.max(maxV, x.speed_kmh);
+  }
+  div.innerHTML = `<b>${t("dashcam.sei.title")}</b><div class="muted mt">
+    ${t("dashcam.sei.summary_ap", { pct: Math.round(apN / s.length * 100), brakes })}<br>
+    ${t("dashcam.sei.summary_max", { speed: U.speed(maxV), unit: U.speedLabel(), g: maxG.toFixed(2) })}</div>`;
+}
+// 形参原名 t，会遮蔽全局的 t()——改名 tSec
+function nearest(arr, tSec, key = "t") {
+  if (!arr || !arr.length) return null;
+  let best = null, bd = Infinity;
+  for (const s of arr) { const d = Math.abs(s[key] - tSec); if (d < bd) { bd = d; best = s; } }
+  return bd <= 3 ? best : null;
+}
+function set(id, v) { document.getElementById(id).textContent = v; }
+hudTimer = setInterval(() => {
+  if (!ev) return;
+  document.getElementById("hud").style.display = "flex";
+  set("h-speed-unit", U.speedLabel());
+  const tGlobal = segIdx * 60 + $main.currentTime;
+  const tm = nearest(tmSamples, tGlobal);
+  const se = nearest(seiCache[segIdx], $main.currentTime);
+  const speed = (se && se.speed_kmh != null) ? se.speed_kmh : (tm && tm.speed != null ? tm.speed : null);
+  set("h-speed", speed != null ? U.speed(speed) : "--");
+  set("h-gear", se ? `${se.gear || "–"}${se.ap ? " · " + se.ap : ""}${se.brake ? " · " + t("player.hud.brake") : ""}` : "–");
+  set("h-power", tm && tm.power != null ? Math.round(tm.power) + " kW" : "–");
+  set("h-soc", tm && tm.usable_battery_level != null ? Math.round(tm.usable_battery_level) + "%" : (tm && tm.battery_level != null ? Math.round(tm.battery_level) + "%" : "–"));
+  set("h-elev", tm && tm.elevation != null ? Math.round(tm.elevation) + " m" : "–");
+  set("h-steer", se && se.steering_angle != null ? (se.steering_angle > 0 ? "+" : "") + Math.round(se.steering_angle) + "°" : "–");
+  set("h-pedal", se && se.accel_pedal != null ? Math.round(se.accel_pedal) + "%" : "–");
+  const clk = new Date(new Date(ev.segments[segIdx].start).getTime() + $main.currentTime * 1000);
+  set("h-clock", clk.toLocaleString(localeTag()));
+}, 300);
+
+/* ---------------- 合成导出 ---------------- */
+document.getElementById("x-go").addEventListener("click", async () => {
+  const cams = [...document.querySelectorAll("#x-cams input:checked")].map(i => i.value);
+  const range = document.getElementById("x-range").value;
+  const body = {
+    event_id: evId,
+    layout: document.getElementById("x-layout").value,
+    quality: document.getElementById("x-quality").value,
+    cameras: cams.length ? cams : null,
+    overlay: document.getElementById("x-overlay").checked,
+    car_id: carId,
+    // 用分段起始时间定位而非偏移量——掉段时偏移会指到错误的分钟
+    segment: range === "seg" ? ev.segments[segIdx].start : null,
+  };
+  try {
+    await apiPost("/api/dashcam/compose", body);
+    pollJobs();
+  } catch (e) { alert(t("player.export.submit_failed", { message: e.message })); }
+});
+
+async function pollJobs() {
+  try {
+    const rows = (await apiGet("/api/dashcam/jobs")).filter(j => j.event_id === evId).slice(0, 6);
+    const div = document.getElementById("jobs");
+    if (!rows.length) { div.innerHTML = `<div class="muted">${t("player.jobs.empty")}</div>`; return; }
+    const S = { queued: t("player.jobs.queued"), running: t("player.jobs.running"), done: t("player.jobs.done"), failed: t("player.jobs.failed"), cancelled: t("player.jobs.cancelled") };
+    div.innerHTML = rows.map(j => `
+      <div class="rule-row">
+        <div class="name">#${j.id} ${JSON.parse(j.params).layout || ""} <span class="muted">${S[j.status] || j.status}</span>
+          ${j.status === "running" ? `<progress max="100" value="${j.progress}" style="width:100%"></progress>` : ""}
+          ${j.status === "failed" ? `<div class="muted" style="white-space:pre-wrap;max-height:60px;overflow:auto">${(j.error || "").slice(-300)}</div>` : ""}
+        </div>
+        ${j.status === "done" ? `<a class="btn" href="${j.output}" download>${t("common.download")}</a>` : ""}
+        ${(j.status === "running" || j.status === "queued") ? `<button onclick="cancelJob(${j.id})">${t("common.cancel")}</button>` : ""}
+      </div>`).join("");
+    if (rows.some(j => j.status === "running" || j.status === "queued")) setTimeout(pollJobs, 2000);
+  } catch (e) { /* ignore */ }
+}
+async function cancelJob(id) { await apiPost(`/api/dashcam/jobs/${id}`, undefined, "DELETE"); pollJobs(); }
+
+/* ---------------- 时钟自动校准 ---------------- */
+document.getElementById("btn-align").addEventListener("click", async () => {
+  const btn = document.getElementById("btn-align");
+  const out = document.getElementById("align-result");
+  btn.disabled = true;
+  out.textContent = t("player.align.running");
+  try {
+    const fd = new FormData();
+    fd.append("event_id", evId);
+    if (carId) fd.append("car_id", carId);
+    const r = await fetch("/api/dashcam/align", { method: "POST", body: fd });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.detail || r.statusText);
+    out.innerHTML = t("player.align.result", {
+      offset: (data.offset > 0 ? "+" : "") + data.offset,
+      rmse: U.speed(data.rmse_kmh, 1),
+      unit: U.speedLabel(),
+      samples: data.samples,
+    });
+    loadTelemetry();  // 用新偏移刷新 HUD 数据
+  } catch (e) {
+    out.textContent = t("player.align.failed", { message: e.message });
+  }
+  btn.disabled = false;
+});
+
+/* ---------------- 初始化 ---------------- */
+/* i18n.load() 是异步的，目录就绪（以及切换语言）时会派发 omt:locale——
+   标题和含 HTML 标签的文案在这里注入，避免早于目录加载取到 key 本身 */
+window.addEventListener("omt:locale", () => {
+  document.title = t("player.page_title");
+  document.getElementById("hevc-tip").innerHTML = t("player.hevc_tip");
+});
+
+/* 整块启动逻辑要等词表：里面全是 t()，早一步就会把
+   "player.type.sentry"、"dashcam.cam.front" 这些原始 key 显示给用户。 */
+i18nReady.catch(() => {}).then(async () => {
+  // 车辆选择器：多车账号必须显式指定，否则遥测/校准会张冠李戴
+  carId = await initCarPicker("#car-picker", (id) => {
+    carId = id;
+    localStorage.setItem("omt_car", id);
+    loadTelemetry();
+  });
+  const saved = +localStorage.getItem("omt_car");
+  if (saved) {
+    const sel = document.querySelector("#car-picker");
+    if (sel && [...sel.options].some(o => +o.value === saved)) { sel.value = saved; carId = saved; }
+  }
+
+  ev = await apiGet(`/api/dashcam/event?id=${encodeURIComponent(evId)}`);
+  const typeTag = { sentry: " " + t("player.type.sentry"), saved: " " + t("player.type.saved"), recent: " " + t("player.type.recent") };
+  document.getElementById("ev-title").textContent = `${typeTag[ev.type] || ev.type} · ${fmt.dt(ev.timestamp)}`;
+  document.getElementById("ev-meta").innerHTML = `
+    <div><b>${t("player.meta.title")}</b></div>
+    <div class="muted mt">${ev.city ? t("common.city") + ": " + esc(ev.city) + "<br>" : ""}${ev.reason ? t("common.reason") + ": " + esc(ev.reason) + "<br>" : ""}
+    ${t("common.duration")}: ${ev.segment_count} ${t("common.minutes")} · ${t("common.cameras")}: ${ev.cameras.map(camName).join(" / ")}
+    ${ev.est_lat ? `<br>${t("common.location")}: <a target="_blank" href="https://uri.amap.com/marker?position=${ev.est_lon},${ev.est_lat}">${t("player.meta.map_amap")}</a> · <a target="_blank" href="https://maps.google.com/?q=${ev.est_lat},${ev.est_lon}">${t("player.meta.map_google")}</a>` : ""}</div>`;
+  document.getElementById("segs").innerHTML = ev.segments.map((s, i) =>
+    `<button onclick="loadSegment(${i})">${new Date(s.start).toLocaleTimeString(localeTag(), { hour: "2-digit", minute: "2-digit" })}</button>`).join("");
+  document.getElementById("x-cams").innerHTML = ev.cameras.map(c =>
+    `<label class="check"><input type="checkbox" value="${c}" checked> ${camName(c)}</label>`).join("");
+  // 定位: URL 带 t 参数（行程页跳转）优先；哨兵事件默认跳到触发时刻前 1 分钟
+  let startIdx = 0, startWithin = 0;
+  const tParam = +(new URLSearchParams(location.search).get("t") || 0);
+  if (tParam > 0) {
+    startIdx = Math.min(Math.floor(tParam / 60), ev.segments.length - 1);
+    startWithin = tParam - startIdx * 60;
+  } else if (ev.type === "sentry" && ev.timestamp) {
+    const trigger = new Date(ev.timestamp).getTime();
+    ev.segments.forEach((s, i) => { if (new Date(s.start).getTime() <= trigger - 55000) startIdx = i; });
+  }
+  loadTelemetry();
+  loadSegment(startIdx, startWithin);
+  pollJobs();
+});
+</script>
+{% endblock %}

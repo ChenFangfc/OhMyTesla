@@ -1,0 +1,636 @@
+{% extends "shell.html" %}
+{% block title %}{{ t('settings.page_title') }}{% endblock %}
+
+{% block content %}
+<div class="page" style="padding-bottom:96px">
+  {# 内容收窄到 780，但左边缘和导航对齐——居中会让整页看起来歪掉 #}
+  <div style="max-width:780px">
+
+  <div class="page-head">
+    <h1 data-i18n="settings.title">Settings</h1>
+    <div class="sub" data-i18n="settings.sub">Everything here is optional. The defaults work.</div>
+  </div>
+
+  {# Six groups, all collapsed by default. Nobody opens Settings to browse —
+     they come for one thing, so the list of things is what they should see
+     first (§47). #}
+
+  <details class="disclose" id="s-appearance">
+    <summary><span data-i18n="settings.language">Language &amp; units</span><span class="value" id="v-appearance"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+    </summary>
+    <div class="body">
+      <div class="setting-row">
+        <div class="info"><div class="name" data-i18n="settings.lang">Language</div></div>
+        <select id="pref-locale">
+          <option value="zh">中文</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <div class="info">
+          <div class="name" data-i18n="settings.auto_detect">Follow detected region</div>
+          <div class="desc" id="region-info"></div>
+        </div>
+        <label class="switch"><input type="checkbox" id="pref-auto"><span class="slider"></span></label>
+      </div>
+      <div class="setting-row">
+        <div class="info"><div class="name" data-i18n="settings.unit_length">Distance</div></div>
+        <select id="pref-length"><option value="km">km</option><option value="mi">mi</option></select>
+      </div>
+      <div class="setting-row">
+        <div class="info"><div class="name" data-i18n="settings.unit_temp">Temperature</div></div>
+        <select id="pref-temp"><option value="C">°C</option><option value="F">°F</option></select>
+      </div>
+      <div class="setting-row">
+        <div class="info"><div class="name" data-i18n="settings.unit_pressure">Tire pressure</div></div>
+        <select id="pref-pressure">
+          <option value="bar">bar</option><option value="psi">psi</option><option value="kpa">kPa</option>
+        </select>
+      </div>
+      <div class="row mt2">
+        <button id="btn-detect" class="btn" data-i18n="settings.detect_btn">Detect region</button><span id="pref-msg" class="body-sm"></span>
+      </div>
+      <p class="body-sm mt2" style="max-width:62ch" data-i18n="settings.units_note"></p>
+    </div>
+  </details>
+
+  <details class="disclose" id="notifications">
+    <summary><span data-i18n="settings.push.heading">Notifications</span><span class="value" id="v-push"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+    </summary>
+    <div class="body">
+      <p class="body-sm" style="margin:0 0 16px;max-width:64ch" data-i18n="settings.push.intro"></p>
+      <div class="row">
+        <button id="push-toggle" class="btn primary" data-i18n="settings.push.enable">Turn on push</button><span id="push-status" class="body-sm"></span>
+      </div>
+      <p class="body-sm mt2" style="max-width:64ch" data-i18n="settings.channels_note"></p>
+    </div>
+  </details>
+
+  <details class="disclose" id="s-rates">
+    <summary><span data-i18n="settings.tariff.heading">Electricity rates</span><span class="value" id="v-rates"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+    </summary>
+    <div class="body">
+      <p class="body-sm" style="margin:0 0 18px;max-width:64ch" data-i18n="settings.tariff.intro"></p>
+
+      <div class="setting-row">
+        <div class="info"><div class="name" data-i18n="settings.tariff.currency">Currency</div></div>
+        <input type="text" id="currency" style="width:96px" value="USD">
+      </div>
+      <div class="setting-row">
+        <div class="info"><div class="name" data-i18n="settings.tariff.timezone">Time zone</div></div>
+        <input type="text" id="tariff-tz" style="width:180px" data-i18n-ph="settings.tariff.timezone_ph">
+      </div>
+      <div class="setting-row">
+        <div class="info"><div class="name" data-i18n="settings.tariff.free_supercharging">Free Supercharging</div></div>
+        <label class="switch"><input type="checkbox" id="free-sc"><span class="slider"></span></label>
+      </div>
+
+      <div id="plan-warnings" class="body-sm mt" style="color:var(--warning-orange)"></div>
+
+      <div class="eyebrow mt3" data-i18n="settings.tariff.default_heading">Default rate</div>
+      <div id="default-rule" class="mt"></div>
+
+      <div class="eyebrow mt3" data-i18n="settings.tariff.sc_heading">DC fast charging</div>
+      <div id="sc-rule" class="mt"></div>
+
+      <div class="eyebrow mt3" data-i18n="settings.tariff.loc_heading">Per-location rates</div>
+      <p class="body-sm" style="margin:6px 0 12px" data-i18n="settings.tariff.loc_note"></p>
+      <div id="loc-rules"></div>
+      <div class="row mt">
+        <select id="new-loc"></select>
+        <button id="add-loc" class="btn ghost" data-i18n="settings.tariff.loc_add">Add location</button>
+      </div>
+
+      <div class="row mt3" style="border-top:1px solid var(--border-subtle);padding-top:18px">
+        <button id="save-plan" class="btn primary" data-i18n="settings.tariff.save">Save rates</button>
+        <button id="recompute" class="btn" data-i18n="settings.tariff.recompute">Recompute all costs</button><span id="tariff-status" class="body-sm"></span>
+      </div>
+      <div class="body-sm mt" id="writeback-note"></div>
+    </div>
+  </details>
+
+  <details class="disclose" id="s-places">
+    <summary><span data-i18n="settings.places">Saved places</span><span class="value" id="v-places"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+    </summary>
+    <div class="body">
+      <p class="body-sm" style="margin:0 0 16px;max-width:64ch" data-i18n="settings.places_note"></p>
+      <div id="geofences"></div>
+      <div class="row mt2" style="flex-wrap:wrap;gap:8px;border-top:1px solid var(--border-subtle);padding-top:16px">
+        <input type="text" id="gf-name" style="width:150px" data-i18n-ph="settings.places_add">
+        <input type="number" id="gf-lat" placeholder="Latitude" step="0.00001" style="width:128px">
+        <input type="number" id="gf-lon" placeholder="Longitude" step="0.00001" style="width:128px">
+        <input type="number" id="gf-radius" placeholder="m" value="100" style="width:80px">
+        <button id="gf-here" class="btn ghost" data-i18n="settings.places_use_loc">Use vehicle location</button>
+        <button id="gf-add" class="btn primary" data-i18n="settings.places_add">Add place</button><span id="gf-msg" class="body-sm"></span>
+      </div>
+    </div>
+  </details>
+
+  <details class="disclose" id="s-vehicles">
+    <summary><span data-i18n="settings.vehicles">Vehicles</span><span class="value" id="v-vehicles"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+    </summary>
+    <div class="body">
+      <div id="car-settings"></div>
+      <p class="body-sm mt2" style="max-width:64ch" data-i18n="settings.sleep_note"></p>
+    </div>
+  </details>
+
+  <details class="disclose" id="s-advanced">
+    <summary><span data-i18n="settings.advanced">Advanced</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+    </summary>
+    <div class="body">
+      <div class="eyebrow" data-i18n="settings.token.heading">Tesla API token</div>
+      <div id="token-info" class="body-sm mt"></div>
+      <div class="row mt">
+        <input type="text" id="token-input" style="flex:1" data-i18n-ph="settings.token.placeholder">
+        <button id="token-save" class="btn" data-i18n="common.save">Save</button>
+      </div>
+
+      <div class="eyebrow mt3" data-i18n="settings.bridge.heading">Live Sentry Mode stream</div>
+      <p class="body-sm mt" style="max-width:64ch" data-i18n="settings.bridge.intro"></p>
+      <div id="bridge-status" class="body-sm mt"></div>
+      <div id="bridge-actions" class="row mt" style="display:none">
+        <button id="bridge-enable-field" class="btn" data-i18n="settings.bridge.enable_field">Turn on the SentryMode field</button><span id="bridge-field-msg" class="body-sm"></span>
+      </div>
+      <div class="body-sm mt" id="bridge-help"></div>
+
+      <div class="eyebrow mt3" data-i18n="settings.about.heading">About</div>
+      <p class="body-sm mt" style="max-width:64ch;line-height:1.7"><span data-i18n="settings.about.line1"></span><br><span data-i18n="settings.about.line2"></span><br><br><span data-i18n="settings.credits">Data logging is powered by</span>
+        <a href="https://github.com/teslamate-org/teslamate" target="_blank" rel="noopener"
+           style="color:var(--text-primary);text-decoration:underline">TeslaMate</a><span data-i18n="settings.credits2">and charts by</span>
+        <a href="https://grafana.com" target="_blank" rel="noopener"
+           style="color:var(--text-primary);text-decoration:underline">Grafana</a>.
+      </p>
+      <div class="row mt">
+        <a id="lnk-grafana" class="btn ghost" href="#" target="_blank" rel="noopener" data-i18n="settings.open_grafana">Open Grafana ↗</a>
+        <a id="lnk-teslamate" class="btn ghost" href="#" target="_blank" rel="noopener" data-i18n="settings.open_logger">Open the logger ↗</a>
+      </div>
+      <p class="body-sm mt2" style="max-width:64ch" data-i18n-html="settings.env_note"></p>
+    </div>
+  </details>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* 标题跟着语言走：apply() 每次切换语言都会派发 omt:locale */
+window.addEventListener("omt:locale", () => { document.title = t("settings.page_title"); });
+
+/* ---------------- 地点与车辆（接管自 TeslaMate 界面）---------------- */
+apiGet("/api/config").then(c => {
+  const g = document.getElementById("lnk-grafana"), tm = document.getElementById("lnk-teslamate");
+  if (g) g.href = c.grafana_url;
+  if (tm) tm.href = c.teslamate_url;
+}).catch(() => {});
+
+async function loadGeofences() {
+  const div = document.getElementById("geofences");
+  try {
+    const rows = await apiGet("/api/setup/geofences");
+    div.innerHTML = rows.length ? rows.map(g => `
+      <div class="rule-row"><span class="name"><b>${esc(g.name)}</b><span class="muted small">${g.latitude.toFixed(5)}, ${g.longitude.toFixed(5)} · ${g.radius} m</span></span>
+        <button data-del="${g.id}">${t("settings.places_remove")}</button>
+      </div>`).join("") : `<div class="muted small">${t("settings.places_none")}</div>`;
+    div.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", async () => {
+      if (!confirm(t("settings.places_confirm"))) return;
+      await apiPost(`/api/setup/geofences/${b.dataset.del}`, undefined, "DELETE");
+      loadGeofences();
+    }));
+  } catch (e) { div.innerHTML = `<div class="muted small">${esc(e.message)}</div>`; }
+}
+
+document.getElementById("gf-add").addEventListener("click", async () => {
+  const msg = document.getElementById("gf-msg");
+  const body = {
+    name: document.getElementById("gf-name").value,
+    latitude: parseFloat(document.getElementById("gf-lat").value),
+    longitude: parseFloat(document.getElementById("gf-lon").value),
+    radius: parseInt(document.getElementById("gf-radius").value || "100", 10),
+  };
+  if (!body.name || isNaN(body.latitude) || isNaN(body.longitude)) {
+    msg.textContent = t("settings.places_need"); return;
+  }
+  try {
+    await apiPost("/api/setup/geofences", body);
+    document.getElementById("gf-name").value = "";
+    msg.textContent = t("settings.places_added");
+    loadGeofences();
+  } catch (e) { msg.textContent = e.message; }
+});
+
+document.getElementById("gf-here").addEventListener("click", async () => {
+  const msg = document.getElementById("gf-msg");
+  try {
+    const cars = await apiGet("/api/live/state");
+    const c = Object.values(cars).find(v => v.latitude && v.longitude);
+    if (!c) { msg.textContent = t("settings.places_no_loc"); return; }
+    document.getElementById("gf-lat").value = (+c.latitude).toFixed(5);
+    document.getElementById("gf-lon").value = (+c.longitude).toFixed(5);
+    msg.textContent = t("settings.places_filled");
+  } catch (e) { msg.textContent = e.message; }
+});
+
+async function loadCarSettings() {
+  const div = document.getElementById("car-settings");
+  try {
+    const cars = await apiGet("/api/setup/cars");
+    div.innerHTML = cars.length ? cars.map(c => `
+      <div style="border-bottom:1px solid var(--grid);padding:10px 0" data-car="${c.id}">
+        <div class="row">
+          <input type="text" class="c-name" value="${esc(c.name || "")}" placeholder="${t('settings.car_name_ph')}" style="width:170px"><span class="muted small">${esc(c.marketing_name || c.model || "")} · VIN …${esc((c.vin || "").slice(-6))}</span>
+        </div>
+        <div class="row mt">
+          <label class="small muted" style="width:150px">${t("settings.car_sleep_wait")}</label>
+          <input type="number" class="c-suspend" value="${c.suspend_min ?? 21}" min="12" max="300" style="width:80px">
+          <label class="small muted" style="width:120px">${t("settings.car_idle_wait")}</label>
+          <input type="number" class="c-idle" value="${c.suspend_after_idle_min ?? 15}" min="1" max="300" style="width:80px">
+        </div>
+        <div class="row mt">
+          <label class="check"><input type="checkbox" class="c-free" ${c.free_supercharging ? "checked" : ""}> ${t("settings.car_free_sc")}</label>
+          <label class="check"><input type="checkbox" class="c-lfp" ${c.lfp_battery ? "checked" : ""}> ${t("settings.car_lfp")}</label>
+          <button class="c-save primary">${t("common.save")}</button><span class="c-msg small muted"></span>
+        </div>
+      </div>`).join("") : `<div class="muted small">${t("settings.car_none")}</div>`;
+
+    div.querySelectorAll("[data-car]").forEach(row => {
+      row.querySelector(".c-save").addEventListener("click", async () => {
+        const msg = row.querySelector(".c-msg");
+        try {
+          await apiPost(`/api/setup/cars/${row.dataset.car}`, {
+            name: row.querySelector(".c-name").value,
+            suspend_min: +row.querySelector(".c-suspend").value,
+            suspend_after_idle_min: +row.querySelector(".c-idle").value,
+            free_supercharging: row.querySelector(".c-free").checked,
+            lfp_battery: row.querySelector(".c-lfp").checked,
+          });
+          msg.textContent = t("settings.car_saved");
+        } catch (e) { msg.textContent = e.message; }
+      });
+    });
+  } catch (e) { div.innerHTML = `<div class="muted small">${esc(e.message)}</div>`; }
+}
+
+
+
+/* ---------------- 语言与单位 ---------------- */
+const PREF_IDS = { locale: "pref-locale", length: "pref-length", temp: "pref-temp", pressure: "pref-pressure" };
+
+function paintPrefs(p) {
+  for (const k in PREF_IDS) {
+    const el = document.getElementById(PREF_IDS[k]);
+    if (el && p[k]) el.value = p[k];
+  }
+  document.getElementById("pref-auto").checked = !!p.auto;
+  const info = document.getElementById("region-info");
+  info.innerHTML = p.market
+    ? `${t("settings.detected")}: <b>${esc(p.market)}</b>`
+    : `${t("settings.detected")}: —`;
+}
+
+
+Object.entries(PREF_IDS).forEach(([key, id]) => {
+  document.getElementById(id).addEventListener("change", async (e) => {
+    const p = await i18n.save({ [key]: e.target.value });
+    paintPrefs(p);
+    document.getElementById("pref-msg").textContent = t("settings.prefs_saved");
+    if (key === "locale") location.reload();
+  });
+});
+
+document.getElementById("pref-auto").addEventListener("change", async (e) => {
+  const p = await i18n.save({ auto: e.target.checked });
+  paintPrefs(p);
+});
+
+document.getElementById("btn-detect").addEventListener("click", async (e) => {
+  const msg = document.getElementById("pref-msg");
+  e.target.disabled = true; msg.textContent = "…";
+  try {
+    const r = await apiPost("/api/prefs/detect");
+    paintPrefs(r.prefs);
+    msg.innerHTML = r.detected.signals.length
+      ? esc(r.detected.signals.join(" · "))
+      : t("settings.detect_none");
+    if (r.prefs.auto) setTimeout(() => location.reload(), 1200);
+  } catch (err) { msg.textContent = t("settings.detect_failed", { message: err.message }); }
+  e.target.disabled = false;
+});
+
+/* ---------------- Web Push ---------------- */
+function urlB64ToUint8Array(base64String) {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
+}
+
+async function pushState() {
+  const btn = document.getElementById("push-toggle");
+  const st = document.getElementById("push-status");
+  if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+    btn.disabled = true;
+    // Web Push 要求安全来源：https 或 localhost。用 http://192.168.x.x 访问时
+    // 浏览器根本不暴露这些 API，所以要如实说明原因而不是"浏览器不支持"
+    st.innerHTML = window.isSecureContext
+      ? t("settings.push.unsupported")
+      : t("settings.push.insecure_origin", { origin: esc(location.origin) });
+    return;
+  }
+  const reg = await navigator.serviceWorker.getRegistration();
+  const sub = reg && await reg.pushManager.getSubscription();
+  const info = await apiGet("/api/alerts/push/key");
+  btn.textContent = sub ? t("settings.push.disable") : t("settings.push.enable");
+  btn.dataset.on = sub ? "1" : "";
+  st.textContent = t("settings.push.devices", { devices: info.devices })
+    + (sub ? t("settings.push.includes_this") : "");
+}
+
+document.getElementById("push-toggle").addEventListener("click", async (e) => {
+  const btn = e.target;
+  const turningOn = !btn.dataset.on;
+  // iOS Safari 要求 requestPermission 在用户点击的同步阶段发起，
+  // 任何 await 之后再调用都会因为丢失 user activation 而被静默拒绝
+  const permPromise = (turningOn && Notification.permission === "default")
+    ? Notification.requestPermission() : Promise.resolve(Notification.permission);
+  btn.disabled = true;
+  try {
+    const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    await navigator.serviceWorker.ready;
+    const existing = await reg.pushManager.getSubscription();
+    if (!turningOn && existing) {
+      await apiPost("/api/alerts/push/unsubscribe", { endpoint: existing.endpoint });
+      await existing.unsubscribe();
+    } else {
+      const perm = await permPromise;
+      if (perm !== "granted") { alert(t("settings.push.need_permission")); btn.disabled = false; return; }
+      const { public_key } = await apiGet("/api/alerts/push/key");
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlB64ToUint8Array(public_key),
+      });
+      await apiPost("/api/alerts/push/subscribe", sub.toJSON());
+    }
+    await pushState();
+  } catch (err) {
+    alert(t("settings.push.failed", { message: err.message }));
+  }
+  btn.disabled = false;
+});
+
+/* ---------------- 电价方案 ---------------- */
+let plan = null, geofences = [];
+
+function ruleEditor(id, rule, onChange) {
+  const isTou = rule.type === "tou";
+  let html = `<div class="row">
+    <select data-role="type">
+      <option value="flat" ${!isTou ? "selected" : ""}>${t("settings.tariff.type_flat")}</option>
+      <option value="tou" ${isTou ? "selected" : ""}>${t("settings.tariff.type_tou")}</option>
+    </select>`;
+  if (!isTou) {
+    html += `<input type="number" step="0.01" data-role="rate" value="${rule.rate ?? 0}" style="width:100px"> ${t("settings.tariff.per_kwh")}`;
+  }
+  html += `</div>`;
+  if (isTou) {
+    html += `<table class="data mt"><thead><tr><th>${t("settings.tariff.col_period")}</th><th>${t("settings.tariff.col_from")}</th><th>${t("settings.tariff.col_to")}</th><th class="num">${t("settings.tariff.col_rate")}</th><th></th></tr></thead><tbody>`;
+    (rule.periods || []).forEach((p, i) => {
+      html += `<tr>
+        <td><input type="text" data-p="${i}" data-f="name" value="${esc(p.name || "")}" style="width:70px"></td>
+        <td><input type="time" data-p="${i}" data-f="from" value="${esc(p.from || "")}"></td>
+        <td><input type="time" data-p="${i}" data-f="to" value="${esc(p.to || "")}"></td>
+        <td class="num"><input type="number" step="0.01" data-p="${i}" data-f="rate" value="${p.rate ?? 0}" style="width:80px"></td>
+        <td><button data-del="${i}"></button></td></tr>`;
+    });
+    html += `</tbody></table><button data-add="1" class="mt">${t("settings.tariff.period_add")}</button>`;
+  }
+  const el = document.getElementById(id);
+  el.innerHTML = html;
+  el.querySelector('[data-role="type"]').addEventListener("change", (e) => {
+    onChange(e.target.value === "tou"
+      ? { type: "tou", periods: rule.periods || [
+          { name: t("settings.tariff.period_offpeak"), from: "22:00", to: "08:00", rate: 0.35 },
+          { name: t("settings.tariff.period_shoulder"), from: "08:00", to: "17:00", rate: 0.65 },
+          { name: t("settings.tariff.period_peak"), from: "17:00", to: "22:00", rate: 0.95 }] }
+      : { type: "flat", rate: rule.rate ?? 0.6 });
+  });
+  const rateEl = el.querySelector('[data-role="rate"]');
+  // 数值改动只更新数据，不重绘 —— 重绘会销毁正在编辑的输入框
+  if (rateEl) rateEl.addEventListener("change", (e) => {
+    const v = parseFloat(e.target.value);
+    onChange({ type: "flat", rate: isNaN(v) ? 0 : v }, true);
+  });
+  el.querySelectorAll("[data-p]").forEach(inp => inp.addEventListener("change", () => {
+    const periods = [...rule.periods];
+    const p = periods[+inp.dataset.p];
+    if (inp.dataset.f === "rate") {
+      const v = parseFloat(inp.value);
+      p.rate = isNaN(v) ? 0 : v;
+    } else {
+      p[inp.dataset.f] = inp.value;
+    }
+    onChange({ type: "tou", periods }, true);
+  }));
+  el.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", () => {
+    const periods = rule.periods.filter((_, i) => i !== +b.dataset.del);
+    onChange({ type: "tou", periods });
+  }));
+  const addBtn = el.querySelector("[data-add]");
+  if (addBtn) addBtn.addEventListener("click", () =>
+    onChange({ type: "tou", periods: [...(rule.periods || []), { name: t("settings.tariff.period_new"), from: "00:00", to: "06:00", rate: 0.3 }] }));
+}
+
+function renderPlan() {
+  document.getElementById("currency").value = plan.currency || "CNY";
+  document.getElementById("free-sc").checked = !!plan.free_supercharging;
+  ruleEditor("default-rule", plan.default, (r, quiet) => { plan.default = r; if (!quiet) renderPlan(); });
+  ruleEditor("sc-rule", plan.supercharger, (r, quiet) => { plan.supercharger = r; if (!quiet) renderPlan(); });
+
+  const locs = Object.entries(plan.locations || {});
+  document.getElementById("loc-rules").innerHTML = locs.length
+    ? locs.map(([name], i) => `<div class="card mt" style="background:var(--page)">
+        <div class="row"><b>${esc(name)}</b><span class="spacer"></span><button data-rm="${esc(name)}">${t("settings.tariff.loc_remove")}</button></div>
+        <div id="loc-rule-${i}" class="mt"></div></div>`).join("")
+    : `<div class="muted small">${t("settings.tariff.loc_empty")}</div>`;
+  locs.forEach(([name, rule], i) =>
+    ruleEditor(`loc-rule-${i}`, rule, (r, quiet) => { plan.locations[name] = r; if (!quiet) renderPlan(); }));
+  document.querySelectorAll("[data-rm]").forEach(b => b.addEventListener("click", () => {
+    delete plan.locations[b.dataset.rm]; renderPlan();
+  }));
+
+  const used = new Set(Object.keys(plan.locations || {}));
+  const opts = geofences.filter(g => !used.has(g));
+  document.getElementById("new-loc").innerHTML = opts.length
+    ? opts.map(g => `<option>${esc(g)}</option>`).join("")
+    : `<option value="">${t("settings.tariff.no_geofences")}</option>`;
+}
+
+document.getElementById("add-loc").addEventListener("click", () => {
+  const name = document.getElementById("new-loc").value;
+  if (!name) return;
+  plan.locations = plan.locations || {};
+  plan.locations[name] = { type: "flat", rate: 0.6 };
+  renderPlan();
+});
+document.getElementById("save-plan").addEventListener("click", async () => {
+  plan.currency = document.getElementById("currency").value || "CNY";
+  plan.timezone = document.getElementById("tariff-tz").value.trim();
+  plan.free_supercharging = document.getElementById("free-sc").checked;
+  try {
+    const r = await apiPost("/api/tariff/plan", plan);
+    document.getElementById("tariff-status").textContent = t("settings.tariff.saved");
+    showWarnings(r.warnings);
+  } catch (e) {
+    document.getElementById("tariff-status").textContent =
+      t("settings.tariff.save_failed", { message: e.message });
+  }
+});
+
+function showWarnings(list) {
+  document.getElementById("plan-warnings").innerHTML =
+    (list && list.length) ? list.map(w => " " + esc(w)).join("<br>") : "";
+}
+document.getElementById("recompute").addEventListener("click", async () => {
+  const st = document.getElementById("tariff-status");
+  st.textContent = t("settings.tariff.recomputing");
+  try {
+    const r = await apiPost("/api/tariff/recompute");
+    let msg = t("settings.tariff.recompute_done",
+      { sessions: r.sessions, total_cost: r.total_cost, currency: esc(r.currency) });
+    if (r.written_back) msg += t("settings.tariff.written_back", { written_back: r.written_back });
+    if (r.protected) msg += t("settings.tariff.protected", { protected: r.protected });
+    if (r.uncovered_sessions) msg += t("settings.tariff.uncovered", { uncovered_sessions: r.uncovered_sessions });
+    if (r.unconfigured) msg = t("settings.tariff.unconfigured");
+    st.innerHTML = msg;
+    showWarnings(r.warnings);
+  } catch (e) { st.textContent = t("settings.tariff.recompute_failed", { message: e.message }); }
+});
+
+/* ---------------- 实时哨兵流桥接 ---------------- */
+async function loadBridge() {
+  const el = document.getElementById("bridge-status");
+  const help = document.getElementById("bridge-help");
+  const actions = document.getElementById("bridge-actions");
+  let st;
+  try { st = await apiGet("/api/fleet/bridge/status"); }
+  catch (e) { el.textContent = t("settings.bridge.status_failed", { message: e.message }); return; }
+
+  if (!st.enabled) {
+    el.innerHTML = `<span class="chip plain">${t("settings.bridge.off_chip")}</span> ${t("settings.bridge.off_text")}`;
+    help.innerHTML = `${t("settings.bridge.off_help")}<br>
+      <a href="https://github.com/teslamotors/fleet-telemetry" target="_blank">${t("settings.bridge.docs_link")}</a>`;
+    actions.style.display = "none";
+    return;
+  }
+
+  const badge = st.verified_protocol
+    ? `<span class="chip good">${t("settings.bridge.verified_chip")}</span>`
+    : `<span class="chip warn">${t("settings.bridge.experimental_chip")}</span>`;
+  const vehicles = st.vehicles || [];
+  const provider = t("settings.bridge.provider", { provider: `<b>${esc(st.provider)}</b>` });
+  let html = `${badge} ${provider} · ${esc(st.transport || "")}` +
+             (st.token_set ? "" : ` <span class="chip critical">${t("settings.bridge.no_token_chip")}</span>`);
+  if (!vehicles.length) {
+    html += `<div class="mt">${t("settings.bridge.no_vehicles")}</div>`;
+  } else {
+    html += `<table class="data mt"><thead><tr><th>${t("common.vehicle")}</th><th>${t("settings.bridge.col_connection")}</th><th>${t("settings.bridge.col_last_event")}</th><th class="num">${t("settings.bridge.col_events")}</th><th class="num">${t("settings.bridge.col_dropped")}</th><th class="num">${t("settings.bridge.col_reconnects")}</th></tr></thead><tbody>` +
+      vehicles.map(v => `<tr>
+        <td>${esc(v.vin)}</td>
+        <td>${v.connected ? `<span class="chip good">${t("settings.bridge.connected")}</span>` : `<span class="chip critical">${t("settings.bridge.disconnected")}</span>`}</td>
+        <td>${v.last_event_at ? new Date(v.last_event_at * 1000).toLocaleString(localeTag()) + (v.last_state ? " · " + esc(v.last_state) : "") : "—"}</td>
+        <td class="num">${v.events}</td>
+        <td class="num">${v.dropped_cache + v.dropped_stale}</td>
+        <td class="num">${v.reconnects}</td>
+      </tr>${v.last_error ? `<tr><td colspan="6" class="small" style="color:var(--status-critical)">${esc(v.last_error)}</td></tr>` : ""}`).join("") +
+      '</tbody></table>';
+    const noEvents = vehicles.every(v => v.connected && !v.events);
+    if (noEvents) {
+      html += `<div class="mt small" style="color:var(--status-serious)">${t("settings.bridge.no_events")}</div>`;
+    }
+  }
+  el.innerHTML = html;
+  actions.style.display = st.provider === "teslemetry" ? "block" : "none";
+  help.innerHTML = st.verified_protocol
+    ? t("settings.bridge.help_verified")
+    : t("settings.bridge.help_experimental");
+}
+
+document.getElementById("bridge-enable-field").addEventListener("click", async (e) => {
+  const btn = e.target, msg = document.getElementById("bridge-field-msg");
+  btn.disabled = true; msg.textContent = t("settings.bridge.configuring");
+  try {
+    const r = await apiPost("/api/fleet/bridge/enable-sentry");
+    msg.innerHTML = r.ok
+      ? t("settings.bridge.enable_ok", { configured: r.configured })
+      : t("settings.bridge.enable_failed", { error: esc(r.error || t("player.jobs.failed")) });
+    setTimeout(loadBridge, 1500);
+  } catch (err) { msg.textContent = t("settings.bridge.enable_failed", { error: err.message }); }
+  btn.disabled = false;
+});
+
+
+setInterval(loadBridge, 20000);
+
+/* ---------------- Token ---------------- */
+async function loadToken() {
+  const st = await apiGet("/api/tesla/status");
+  const srcText = { teslamate: t("token.src_teslamate"),
+                    manual: t("token.src_manual"),
+                    env: t("token.src_env"),
+                    none: t("token.src_none") };
+  const host = t("settings.token.api_host", { api_host: `<code>${esc(st.api_host)}</code>` });
+  document.getElementById("token-info").innerHTML =
+    `${srcText[st.token_source]}<br>${host}${st.proxy ? t("token.proxy_suffix") : ""}`;
+}
+document.getElementById("token-save").addEventListener("click", async () => {
+  await apiPost("/api/tesla/token", { token: document.getElementById("token-input").value });
+  loadToken();
+});
+
+async function loadTariff() {
+  const data = await apiGet("/api/tariff/plan");
+  plan = data.plan; geofences = data.geofences;
+  document.getElementById("tariff-tz").value = plan.timezone || "";
+  showWarnings(data.warnings);
+  if (data.dirty) document.getElementById("tariff-status").textContent = t("settings.tariff.dirty");
+  document.getElementById("writeback-note").textContent = data.write_back
+    ? t("settings.tariff.writeback_on")
+    : t("settings.tariff.writeback_off");
+  renderPlan();
+  pushState();
+}
+
+/* 所有初次取数都在词表就绪之后：这些渲染函数都调 t()，
+   早一步就会把 "settings.places_none" 这种原始 key 显示给用户。 */
+/* 折叠标题右侧带各组当前状态：不展开也能一眼看到配置到哪了 */
+function paintSummaries() {
+  const set = (id, v) => { const n = document.getElementById(id); if (n) n.textContent = v; };
+  set("v-appearance", t("settings.summary_units", {
+    lang: i18n.state.locale === "zh" ? "中文" : "English",
+    length: U.distLabel(), temp: U.tempLabel(),
+  }));
+  apiGet("/api/alerts/push/key").then((k) =>
+    set("v-push", k.devices ? t("settings.push_on", { n: k.devices }) : t("settings.push_off"))).catch(() => {});
+  apiGet("/api/setup/geofences").then((g) =>
+    set("v-places", t("settings.n_places", { n: g.length }))).catch(() => {});
+  apiGet("/api/setup/cars").then((c) =>
+    set("v-vehicles", t("settings.n_vehicles", { n: c.length }))).catch(() => {});
+  apiGet("/api/tariff/plan").then((p) =>
+    set("v-rates", (p.rules && p.rules.length) || p.default_rate
+        ? t("settings.rates_set") : t("settings.rates_unset"))).catch(() => {});
+}
+window.addEventListener("omt:locale", paintSummaries);
+
+i18nReady.catch(() => {}).then(() => {
+  paintIcons();
+  paintSummaries();
+  apiGet("/api/prefs").then(paintPrefs).catch(() => {});
+  loadGeofences();
+  loadCarSettings();
+  loadBridge();
+  loadToken();
+  loadTariff().catch(() => {});
+});
+</script>
+{% endblock %}

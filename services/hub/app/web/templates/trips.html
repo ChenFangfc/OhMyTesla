@@ -1,0 +1,240 @@
+{% extends "shell.html" %}
+{% block title %}{{ t('trips.page_title') }}{% endblock %}
+
+{% block head %}<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">{% endblock %}
+
+{% block content %}
+<div class="page" style="padding-bottom:96px">
+
+  <div class="page-head">
+    <h1 data-i18n="nav.trips">Trips</h1>
+    <div class="sub" id="trips-sub">&nbsp;</div>
+  </div>
+
+  {# List first, route second: you pick a trip and the map answers. The map
+     stays quiet until then rather than showing a meaningless world view. #}
+  <div class="grid" style="grid-template-columns:minmax(0,1fr) minmax(0,420px)">
+    <div>
+      <div id="map-wrap" class="card" style="padding:0;overflow:hidden;position:relative">
+        <div id="map" style="height:min(52vh,460px)"></div>
+        <div id="map-idle" class="empty" style="position:absolute;inset:0;display:grid;place-items:center;
+             background:var(--bg-secondary);pointer-events:none"
+             data-i18n="trips.pick_hint">Select a trip to see its route</div>
+      </div>
+
+      <div id="trip-detail" class="mt2" style="display:none">
+        <div class="metrics" id="trip-metrics" style="gap:40px"></div>
+        <details class="disclose mt2" id="d-clips" style="display:none">
+          <summary><span data-i18n="trips.clips_title">Dashcam clips from this trip</span><span class="value" id="v-clips"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+          </summary>
+          <div class="body"><div id="clip-list" class="grid cols-3" style="gap:12px"></div></div>
+        </details>
+      </div>
+    </div>
+
+    <div>
+      <div class="table-scroll" style="max-height:min(72vh,720px);overflow-y:auto">
+        <table class="data" id="trip-list">
+          <thead><tr>
+            <th data-i18n="common.time">Time</th>
+            <th data-i18n="common.route">Route</th>
+            <th class="num" id="th-dist">km</th>
+          </tr></thead>
+          <tbody><tr><td colspan="3" class="empty small" data-i18n="common.loading">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <select id="car-picker" hidden></select>
+    </div>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/vendor/leaflet/leaflet.js"></script>
+<script src="/static/js/geo.js"></script>
+<script>
+let map, trackLayer, marker, datum = "wgs84", drives = [], ghosts = null, curId = null;
+
+async function initMap() {
+  const cfg = await apiGet("/api/config");
+  map = L.map("map", { zoomControl: true, attributionControl: true }).setView([39, -98], 3);
+  datum = cfg.tile_datum || "wgs84";
+  const opts = { maxZoom: 19, attribution: datum === "gcj02" ? t("drives.map.attrib_amap") : t("drives.map.attrib_osm") };
+  if (cfg.tile_url.includes("{s}"))
+    opts.subdomains = cfg.tile_url.includes("cartocdn") ? ["a","b","c","d"] : ["1","2","3","4"];
+  L.tileLayer(cfg.tile_url, opts).addTo(map);
+}
+
+function metric(label, value, unit) {
+  return `<div class="metric"><div class="label">${esc(label)}</div>
+    <div class="metric-value">${value}${unit ? `<span class="unit">${esc(unit)}</span>` : ""}</div></div>`;
+}
+
+async function loadTrips(carId) {
+  const tb = document.querySelector("#trip-list tbody");
+  try {
+    drives = await apiGet(`/api/drives?car_id=${carId}&limit=100`);
+  } catch (e) {
+    tb.innerHTML = `<tr><td colspan="3" class="empty small">${esc(e.message)}</td></tr>`;
+    return;
+  }
+  if (!drives.length) {
+    // 一辆没开过的车配一张世界地图毫无意义，直接收起（§23）
+    tb.innerHTML = `<tr><td colspan="3" class="empty small">${t("drives.empty")}</td></tr>`;
+    document.getElementById("trips-sub").textContent = t("trips.none");
+    document.getElementById("map-wrap").style.display = "none";
+    return;
+  }
+  document.getElementById("map-wrap").style.display = "";
+
+  /* 落地时地图不该是一张空的世界地图。把最近的轨迹全铺出来当底，
+     再自动选中最新一段 —— "我去过哪" 应该一眼看到，而不是先点一下。 */
+  drawGhosts(carId);
+
+  const total = drives.reduce((a, d) => a + (d.km || 0), 0);
+  document.getElementById("trips-sub").textContent =
+    t("trips.summary", { n: drives.length, distance: fmt.num(U.dist(total, 0), 0) + " " + U.distLabel() });
+
+  tb.innerHTML = drives.map((d) => `
+    <tr class="tappable" data-id="${d.id}">
+      <td class="dim nowrap">${fmt.dt(d.start)}</td>
+      <td>${esc(d.from || "?")} → ${esc(d.to || "?")}</td>
+      <td class="num">${U.dist(d.km, 1)}</td>
+    </tr>`).join("");
+  tb.querySelectorAll("tr").forEach((tr) => tr.addEventListener("click", () => {
+    select(+tr.dataset.id);
+  }));
+  select(drives[0].id, true);          // 最新一段默认选中
+}
+
+function select(id, quiet) {
+  curId = id;
+  const tb = document.querySelector("#trip-list tbody");
+  tb.querySelectorAll("tr").forEach((x) => x.classList.toggle("on", +x.dataset.id === id));
+  if (!quiet) tb.querySelector("tr.on")?.scrollIntoView({ block: "nearest" });
+  paintGhosts();
+  showTrip(drives.find((d) => d.id === id));
+}
+
+/* 背景轨迹：一次取回，抽稀过，只作为"去过哪"的底图 */
+async function drawGhosts(carId) {
+  let all;
+  try { all = await apiGet(`/api/drives/tracks?car_id=${carId}&limit=20`); }
+  catch (e) { return; }
+  if (ghosts) map.removeLayer(ghosts);
+  ghosts = L.layerGroup();
+  all.forEach((t) => {
+    const line = L.polyline(omtGeo.project(t.points, datum),
+      { color: "#5B7FD4", weight: 1.6, opacity: .34, interactive: true });
+    line._driveId = t.id;
+    line.on("click", () => select(t.id));
+    ghosts.addLayer(line);
+  });
+  ghosts.addTo(map);
+  const b = ghosts.getBounds ? null : null;
+  const group = L.featureGroup(ghosts.getLayers());
+  if (group.getBounds().isValid()) map.fitBounds(group.getBounds(), { padding: [30, 30] });
+  paintGhosts();
+}
+
+function paintGhosts() {
+  if (!ghosts) return;
+  ghosts.getLayers().forEach((l) =>
+    l.setStyle({ opacity: l._driveId === curId ? 0 : .34 }));   // 选中的那条由高亮层画
+}
+
+async function showTrip(d) {
+  if (!d) return;
+  document.getElementById("map-idle").style.display = "none";
+  const detail = document.getElementById("trip-detail");
+  detail.style.display = "block";
+
+  let track = [];
+  try { track = await apiGet(`/api/drives/${d.id}/track`); } catch (e) { /* 无轨迹 */ }
+
+  if (trackLayer) map.removeLayer(trackLayer);
+  if (marker) map.removeLayer(marker);
+
+  let maxSpeed = null, socStart = null, socEnd = null;
+  if (track.length) {
+    // 数据库存 WGS-84；国内地图源是 GCJ-02，必须在渲染时偏移，
+    // 绝不能在入库时转（会永久污染地理围栏且无法回退）
+    const latlngs = omtGeo.project(track.map((p) => [p.lat, p.lon]), datum);
+    trackLayer = L.polyline(latlngs, {
+      color: getComputedStyle(document.body).getPropertyValue("--series-1").trim() || "#3E6AE1",
+      weight: 3.5, opacity: 1,
+    }).addTo(map);
+    map.fitBounds(trackLayer.getBounds(), { padding: [40, 40] });
+    maxSpeed = Math.max(...track.map((p) => p.speed || 0));
+    socStart = track[0].soc; socEnd = track[track.length - 1].soc;
+    trackLayer.on("mousemove", (e) => {
+      if (marker) map.removeLayer(marker);
+      marker = L.circleMarker(e.latlng, { radius: 5, color: "#7C9BFF", weight: 2 }).addTo(map);
+    });
+  } else {
+    document.getElementById("map-idle").style.display = "grid";
+    document.getElementById("map-idle").textContent = t("drives.track_none");
+  }
+
+  document.getElementById("trip-metrics").innerHTML =
+    metric(t("cmdk.distance"), U.dist(d.km, 1), U.distLabel()) +
+    metric(t("common.duration"), d.duration_min, t("trips.min")) +
+    (maxSpeed != null ? metric(t("common.top_speed"), U.speed(maxSpeed), U.speedLabel()) : "") +
+    (socStart != null ? metric(t("common.battery"), `${socStart}→${socEnd}`, "%") : "");
+
+  const dc = document.getElementById("d-clips");
+  try {
+    const { footage } = await apiGet(`/api/drives/${d.id}/footage`);
+    if (!footage.length) { dc.style.display = "none"; return; }
+    dc.style.display = "block";
+    document.getElementById("v-clips").textContent = t("trips.n_clips", { n: footage.length });
+    document.getElementById("clip-list").innerHTML = footage.map((f) => `
+      <a class="card" style="padding:0;overflow:hidden;display:block"
+         href="/dashcam/play?id=${encodeURIComponent(f.event_id)}&t=${f.seek}">
+        <img loading="lazy" src="/api/dashcam/thumb?id=${encodeURIComponent(f.event_id)}"
+             style="width:100%;aspect-ratio:16/9;object-fit:cover;display:block;background:var(--bg-elevated)"
+             onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'empty',style:'aspect-ratio:16/9;display:grid;place-items:center',innerHTML:icon('film',22)}))">
+        <div style="padding:10px 12px">
+          <div class="small">${fmt.dt(f.event_start)}</div>
+          <div class="meta">${t("drives.footage_seek", { time: fmt.ts(f.seek) })}</div>
+        </div>
+      </a>`).join("");
+    paintIcons();
+  } catch (e) { dc.style.display = "none"; }
+}
+
+window.addEventListener("omt:locale", () => {
+  document.title = t("trips.page_title");
+  const th = document.getElementById("th-dist");
+  if (th) th.textContent = U.distLabel();
+});
+
+i18nReady.catch(() => {}).then(async () => {
+  document.getElementById("th-dist").textContent = U.distLabel();
+  await initMap();
+  const carId = await initCarPicker("#car-picker", loadTrips);
+  loadTrips(carId);
+});
+</script>
+<style>
+  #trip-list tr.on { background: var(--bg-hover); }
+  #map { background: var(--bg-secondary); }
+  /* Leaflet 的图层 z-index 是 400+，空态提示要压在它上面 */
+  #map-idle { z-index: 500; }
+  .leaflet-container { background: var(--bg-secondary); font: inherit; }
+  .leaflet-control-attribution {
+    background: rgba(15,15,16,.72) !important; color: var(--text-tertiary) !important;
+    font-size: 10px !important;
+  }
+  .leaflet-control-attribution a { color: var(--text-secondary) !important; }
+  .leaflet-bar a {
+    background: var(--bg-elevated) !important; color: var(--text-primary) !important;
+    border-color: var(--border-subtle) !important;
+  }
+  .leaflet-bar a:hover { background: var(--bg-hover) !important; }
+  @media (max-width: 900px) {
+    .page .grid[style*="minmax"] { grid-template-columns: 1fr !important; }
+  }
+</style>
+{% endblock %}

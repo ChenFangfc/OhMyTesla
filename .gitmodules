@@ -1,0 +1,3 @@
+[submodule "teslamate"]
+	path = teslamate
+	url = https://github.com/teslamate-org/teslamate.git

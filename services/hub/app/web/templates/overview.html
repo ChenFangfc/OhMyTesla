@@ -1,0 +1,342 @@
+{% extends "shell.html" %}
+{% block title %}{{ t('overview.page_title') }}{% endblock %}
+
+{# The vehicle sits above the navigation: you land on your car, and the nav
+   catches you as you scroll (§9, §11). #}
+{% block hero %}
+<section class="hero">
+  <div id="hero-model" class="hero-model skeleton" style="width:110px;height:14px">&nbsp;</div>
+
+  <div class="vehicle-stage">{% include "_vehicle.html" %}</div>
+
+  <div class="hero-readout">
+    <div id="hero-soc" class="hero-soc"><span class="skeleton" style="display:inline-block;width:150px;height:64px">&nbsp;</span>
+    </div>
+    <div id="hero-range" class="hero-range">&nbsp;</div>
+    <div id="hero-status" class="hero-status">&nbsp;</div>
+  </div>
+
+  <div id="controls" class="controls"></div>
+</section>
+{% endblock %}
+
+{% block content %}
+{# The hero is centred, so the content under it shares that axis. A status row
+   spanning 1150px makes the eye travel the whole viewport to connect a label
+   to its value; a reading measure keeps the pair together. #}
+<div class="page" style="padding-top:44px;padding-bottom:80px">
+  <div style="max-width:680px;margin:0 auto">
+
+  <div id="greeting" class="stack gap-1" style="margin-bottom:28px">
+    <div class="display-sm" id="greet-line">&nbsp;</div>
+    <div class="body-sm" id="greet-sub">&nbsp;</div>
+  </div>
+
+  {# At most three summaries — one line each (§46). Health is the fourth, and
+     it expands in place rather than sending you somewhere to read "Normal". #}
+  <div id="charge" class="charge-panel" style="display:none">
+    <div class="charge-track"><div class="fill"></div><div class="limit"></div><div class="head"></div></div>
+    <div class="ends"><span id="charge-now"></span><span id="charge-target"></span></div>
+  </div>
+
+  <div id="summary" class="card flat"></div>
+
+  <details class="disclose" id="health">
+    <summary>
+      <span data-i18n="overview.health">Vehicle health</span>
+      <span class="value" id="health-value">–</span>
+      <span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+    </summary>
+    <div class="body" id="health-body"></div>
+  </details>
+
+  <div style="margin-top:36px">
+    <div class="assistant" data-cmdk-open role="button" tabindex="0">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--text-tertiary)"
+           stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1"/>
+      </svg><span class="ph" id="assistant-ph"></span>
+      <kbd>⌘K</kbd>
+    </div>
+  </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+
+window.ownsOverviewFetch = true;   // 本页自己轮询，外壳不必重复拉
+let snap = null, busy = new Set();
+
+
+/* ------------------------------------------------------------ rendering -- */
+
+/* 图片拿不到就落回自绘 SVG —— hero 是这一页的全部，绝不能空着 */
+(function () {
+  const img = document.getElementById("veh-img");
+  if (!img) return;
+  const fallback = () => {
+    img.hidden = true;
+    const svg = document.getElementById("veh-svg");
+    if (svg) svg.hidden = false;
+  };
+  img.addEventListener("error", fallback);
+  if (img.complete && img.naturalWidth === 0) fallback();
+})();
+
+function paintHero(d) {
+  const veh = document.getElementById("veh");
+  veh.classList.toggle("is-charging", d.state === "charging");
+  veh.classList.toggle("is-driving",  d.state === "driving");
+  veh.classList.toggle("is-sentry",   d.sentry === true);
+  veh.classList.toggle("is-climate",  d.climate === true);
+  veh.classList.toggle("is-idle",     d.state === "asleep" || d.state === "offline");
+
+  const model = document.getElementById("hero-model");
+  model.classList.remove("skeleton");
+  model.style.width = "";
+  model.textContent = d.name || d.model || t("vehicle.default_name");
+
+  const soc = document.getElementById("hero-soc");
+  soc.innerHTML = d.soc != null
+    ? `${Math.round(d.soc)}<span class="unit">%</span>`
+    : `<span class="tertiary">–</span>`;
+
+  document.getElementById("hero-range").textContent =
+    d.range_km != null ? `${U.dist(d.range_km, 0)} ${U.distLabel()}` : "";
+
+  /* Status reads like a person wrote it (§13): "Parked · Home · 2 min ago" */
+  const bits = [];
+  if (d.state === "charging" && d.charging?.active) {
+    const p = d.charging.power_kw;
+    bits.push(t("state.charging") + (p ? ` · ${fmt.num(p, 1)} kW` : ""));
+    if (d.charging.minutes_remaining) bits.push(t("overview.ready_in", { time: readyAt(d.charging.minutes_remaining) }));
+  } else {
+    bits.push(stateLabel(d.state));
+  }
+  if (d.place) bits.push(d.place);
+  if (d.stale_seconds) bits.push(fmt.ago(d.stale_seconds));
+  document.getElementById("hero-status").innerHTML =
+    bits.map(esc).join('<span class="sep">·</span>');
+}
+
+function readyAt(minutes) {
+  const at = new Date(Date.now() + minutes * 60000);
+  return at.toLocaleTimeString(localeTag(), { hour: "numeric", minute: "2-digit" });
+}
+
+/* Only the four most-used controls live here; the rest are a ⌘K away (§12). */
+function paintControls(d) {
+  const on = (v) => v === true;
+  const defs = [
+    // locked === null 表示我们不知道锁没锁。此时给「锁车」而不是「解锁」：
+    // 重复上锁无害，而在未知状态下把解锁摆在默认位既是断言又是风险。
+    // 图标表示当前状态，文字表示按下会发生什么 —— 这是特斯拉自己的约定。
+    // 但不加高亮色：蓝色留给"正在运行的系统"（空调、充电），车锁着是常态不是运行中。
+    d.locked === true
+      ? { id: "door_unlock", ico: "lock",   label: t("cmd.door_unlock"), risky: true }
+      : { id: "door_lock",   ico: "unlock", label: t("cmd.door_lock") },
+    on(d.climate)
+      ? { id: "climate_off", ico: "climate", label: t("cmd.climate_off"), on: true }
+      : { id: "climate_on",  ico: "climate", label: t("cmd.climate_on") },
+    d.charging?.active
+      ? { id: "charge_stop",  ico: "bolt", label: t("cmd.charge_stop"), risky: true, on: true }
+      : { id: "charge_start", ico: "bolt", label: t("cmd.charge_start") },
+    on(d.sentry)
+      ? { id: "sentry_off", ico: "shield", label: t("cmd.sentry_off"), risky: true, armed: true }
+      : { id: "sentry_on",  ico: "shield", label: t("cmd.sentry_on") },
+  ];
+
+  const el = document.getElementById("controls");
+  el.innerHTML = defs.map((c) => `
+    <button class="control${c.on ? " on" : ""}${c.armed ? " armed" : ""}${busy.has(c.id) ? " busy" : ""}"
+            data-cmd="${c.id}" data-risky="${c.risky ? 1 : 0}" data-label="${esc(c.label)}"
+            ${busy.has(c.id) ? "disabled" : ""}>
+      ${icon(c.ico, 24)}<span>${esc(c.label)}</span>
+    </button>`).join("") + `
+    <button class="control" data-cmdk-open>${icon("dots")}<span>${esc(t("overview.more"))}</span></button>`;
+
+  el.querySelectorAll("[data-cmd]").forEach((b) =>
+    b.addEventListener("click", () => run(b.dataset.cmd, b.dataset.risky === "1", b.dataset.label)));
+  el.querySelectorAll("[data-cmdk-open]").forEach((b) => b.addEventListener("click", () => cmdk.open()));
+}
+
+async function run(id, risky, label) {
+  if (risky && !confirm(t("overview.confirm", { command: label }))) return;
+  busy.add(id);
+  paintControls(snap);
+  try {
+    await apiPost("/api/tesla/command", { car_id: snap.car_id, command: id, confirm: true });
+  } catch (e) {
+    alert(e.message);
+  } finally {
+    busy.delete(id);
+    setTimeout(load, 1200);
+  }
+}
+
+
+/* While plugged in, the track carries the session: where you are, where it
+   stops, and that it is actually moving. Hidden entirely when not charging —
+   an empty track is worse than no track. */
+function paintCharge(d) {
+  const box = document.getElementById("charge");
+  const c = d.charging;
+  if (!c || !c.active || d.soc == null) { box.style.display = "none"; return; }
+  box.style.display = "flex";
+
+  const soc = Math.round(d.soc);
+  const limit = Math.round(c.limit_soc || 100);
+  const track = box.querySelector(".charge-track");
+  track.classList.add("live");
+  track.querySelector(".fill").style.width = soc + "%";
+  track.querySelector(".head").style.left = soc + "%";
+  track.querySelector(".limit").style.left = limit + "%";
+
+  document.getElementById("charge-now").textContent =
+    `${soc}%` + (c.power_kw ? ` · ${fmt.num(c.power_kw, 1)} kW` : "");
+  document.getElementById("charge-target").textContent = c.minutes_remaining
+    ? t("overview.to_limit", { soc: limit, time: readyAt(c.minutes_remaining) })
+    : `${limit}%`;
+}
+
+/* One section can carry several related values — never a card per metric. */
+function paintSummary(d) {
+  const rows = [];
+
+  // 正在充电时上面的进度轨道已经说清楚了，这里不重复一遍
+  if (!d.charging?.active && d.charging) {
+    rows.push({
+      label: t("overview.last_charge"),
+      value: `${fmt.num(d.charging.added_kwh, 1)} kWh`,
+      sub: d.charging.cost != null ? fmt.money(d.charging.cost) : "",
+      href: "/energy",
+    });
+  }
+
+  if (d.today && d.today.drives) {
+    rows.push({
+      label: t("overview.energy_today"),
+      value: `${fmt.num(d.today.kwh, 1)} kWh`,
+      sub: d.today.wh_per_km ? `${U.cons(d.today.wh_per_km)} ${U.consLabel()}` : "",
+      href: "/trips",
+    });
+  }
+
+  document.getElementById("summary").innerHTML = rows.map((r) => `
+    <div class="stat-line tappable" data-href="${esc(r.href)}"><span class="label">${esc(r.label)}</span><span class="spacer"></span><span class="stat-value">${esc(r.value)}</span>
+      ${r.sub ? `<span class="stat-sub">${esc(r.sub)}</span>` : ""}
+    </div>`).join("");
+  document.querySelectorAll("#summary [data-href]").forEach((n) =>
+    n.addEventListener("click", () => location.href = n.dataset.href));
+
+  paintCharge(d);
+  paintHealth(d);
+}
+
+
+/* Vehicle health opens in place instead of navigating. It is exception-driven
+   (§36): on a normal day it is one line, so sending someone to a whole page to
+   read "Normal" wastes the trip. The detail is one click away, right here. */
+async function paintHealth(d) {
+  const h = d.health || { ok: true, issues: [] };
+  const box = document.getElementById("health");
+  const sum = document.getElementById("health-summary");
+  const val = document.getElementById("health-value");
+
+  val.textContent = h.ok ? t("overview.health_ok") : t("overview.health_issues", { n: h.issues.length });
+  val.style.color = h.ok ? "" : "var(--warning-orange)";
+  box.classList.toggle("has-issues", !h.ok);
+  if (!h.ok) box.open = true;          // 有异常就默认展开，不让人去找
+
+  const body = document.getElementById("health-body");
+  let html = "";
+
+  if (h.issues.length) {
+    html += `<div class="stack gap-2" style="margin-bottom:22px">` + h.issues.map((i) =>
+      i.kind === "update"
+        ? `<div class="row"><span class="pill info">${esc(t("overview.update_available"))}</span>
+             <span class="body-sm">${esc(i.version || "")}</span></div>`
+        : `<div class="row"><span class="pill warning">${esc(t("tire." + i.corner))}</span>
+             <span class="body-sm">${i.value_bar != null
+               ? esc(U.press(i.value_bar) + " " + U.pressLabel() + " · " +
+                     t("health.expected", { value: U.press(i.expected_bar) + " " + U.pressLabel() }))
+               : esc(t("cmdk.check_pressure"))}</span></div>`).join("") + `</div>`;
+  }
+
+  try {
+    const tp = await apiGet(`/api/insights/tpms?car_id=${d.car_id}`);
+    if (tp.latest) {
+      html += `<div class="eyebrow" style="margin-bottom:12px">${esc(t("health.tires"))}</div>
+        <div class="metrics" style="gap:44px">` +
+        ["fl", "fr", "rl", "rr"].map((w) => `
+          <div class="metric"><div class="label">${esc(t("tire." + w))}</div>
+            <div class="metric-value">${U.press(tp.latest[w]) ?? "–"}<span class="unit">${esc(U.pressLabel())}</span></div>
+          </div>`).join("") + `</div>
+        <div class="meta" style="margin-top:10px">${esc(t("health.measured", { time: fmt.dt(tp.latest.date) }))}</div>`;
+    }
+  } catch (e) { /* 没有胎压数据就不显示这一段 */ }
+
+  html += `<div class="row mt3" style="gap:10px">
+      <a class="btn ghost" href="/energy">${esc(t("health.battery_link"))}</a>
+      <a class="btn ghost" href="/security">${esc(t("health.alerts_link"))}</a>
+    </div>`;
+
+  body.innerHTML = html || `<div class="body-sm">${esc(t("cmdk.a_healthy"))}</div>`;
+  paintIcons(body);
+}
+
+function paintGreeting(d) {
+  const h = new Date().getHours();
+  const part = h < 5 ? "night" : h < 12 ? "morning" : h < 18 ? "afternoon" : "evening";
+  document.getElementById("greet-line").textContent = t("greet." + part);
+
+  let sub;
+  if (d.state === "charging") sub = t("greet.charging");
+  else if (d.state === "driving") sub = t("greet.driving");
+  else if (!(d.health || { ok: true }).ok) sub = t("greet.attention");
+  else if (d.soc != null && d.soc < 20) sub = t("greet.low_battery");
+  else sub = t("greet.ready", { name: d.name || d.model || t("vehicle.default_name") });
+  document.getElementById("greet-sub").textContent = sub;
+}
+
+/* ---------------------------------------------------------------- load -- */
+
+async function load() {
+  let d;
+  try {
+    d = await apiGet(`/api/overview?tz_offset_min=${-new Date().getTimezoneOffset()}`);
+  } catch (e) {
+    return;
+  }
+  if (!d.connected) {
+    document.querySelector(".hero").innerHTML =
+      `<div class="empty">${esc(t("overview.no_cars"))}
+       <div style="margin-top:16px"><a class="btn primary" href="/welcome">${esc(t("setup.title"))}</a></div></div>`;
+    document.getElementById("summary").innerHTML = "";
+    return;
+  }
+  snap = d;
+  cmdk.setContext(d);
+  paintConnection(d);
+  paintHero(d);
+  paintControls(d);
+  paintSummary(d);
+  paintGreeting(d);
+}
+
+i18nReady.catch(() => {}).then(() => {
+  document.getElementById("assistant-ph").textContent = t("cmdk.placeholder");
+  document.querySelectorAll("[data-cmdk-open]").forEach((n) => {
+    n.addEventListener("click", () => cmdk.open());
+    n.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); cmdk.open(); } });
+  });
+  load();
+  setInterval(load, 20000);
+  // Live pushes land between polls, so state changes feel immediate.
+  liveConnect(() => { clearTimeout(window._ovDebounce); window._ovDebounce = setTimeout(load, 600); });
+});
+</script>
+{% endblock %}

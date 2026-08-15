@@ -1,0 +1,16 @@
+.env
+data/
+config/fleet-telemetry.json
+config/certs/
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/
+dist/
+*.log
+.venv/
+.omx/
+tools/
+data/vehicle/
+vehical_img/
+services/hub/app/web/static/vehicle/

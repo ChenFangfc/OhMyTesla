@@ -1,0 +1,105 @@
+"""TeslaMate Postgres 只读连接池。
+
+TeslaMate 首次启动时才建表，因此这里对连接失败保持容错：
+拿不到池子时抛出 DbUnavailable，由 API 层转成友好提示。
+"""
+
+import asyncio
+import logging
+
+import asyncpg
+
+from .config import settings
+
+log = logging.getLogger(__name__)
+
+_pool: asyncpg.Pool | None = None
+_lock = asyncio.Lock()
+
+
+class DbUnavailable(Exception):
+    pass
+
+
+async def get_pool() -> asyncpg.Pool:
+    global _pool
+    if _pool is not None:
+        return _pool
+    async with _lock:
+        if _pool is not None:
+            return _pool
+        try:
+            _pool = await asyncpg.create_pool(
+                host=settings.tm_db_host,
+                port=settings.tm_db_port,
+                user=settings.tm_db_user,
+                password=settings.tm_db_pass,
+                database=settings.tm_db_name,
+                min_size=1,
+                max_size=5,
+                command_timeout=30,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning("TeslaMate database not reachable yet: %s", e)
+            raise DbUnavailable(str(e)) from e
+        return _pool
+
+
+# 连接层面的故障（数据库重启/网络断开），区别于 SQL 本身出错
+_CONN_ERRORS = (
+    asyncpg.InterfaceError,          # 含 ConnectionDoesNotExistError 等
+    asyncpg.PostgresConnectionError,
+    ConnectionError,
+    OSError,
+)
+
+
+async def _run(method: str, query: str, *args):
+    """统一入口：把"连不上数据库"归一成 DbUnavailable，交给上层出友好提示。
+
+    连接池建立后数据库才挂掉时，asyncpg 抛的是 InterfaceError 一系，
+    不走 get_pool 的那条路——不归一的话用户看到的是 500 Internal Server Error。
+    """
+    global _pool
+    pool = await get_pool()
+    try:
+        async with pool.acquire() as conn:
+            return await getattr(conn, method)(query, *args)
+    except _CONN_ERRORS as e:
+        # 让下次调用重建连接池，数据库恢复后自动自愈
+        broken, _pool = _pool, None
+        if broken is not None:
+            asyncio.create_task(_close_quietly(broken))
+        log.warning("database connection lost: %s", e)
+        raise DbUnavailable(str(e)) from e
+
+
+async def _close_quietly(pool: asyncpg.Pool) -> None:
+    try:
+        await pool.close()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+async def fetch(query: str, *args):
+    return await _run("fetch", query, *args)
+
+
+async def fetchrow(query: str, *args):
+    return await _run("fetchrow", query, *args)
+
+
+async def fetchval(query: str, *args):
+    return await _run("fetchval", query, *args)
+
+
+async def execute(query: str, *args):
+    """写操作。仅用于电价回写 charging_processes.cost（TeslaMateAgile 同款做法）。"""
+    return await _run("execute", query, *args)
+
+
+async def close() -> None:
+    global _pool
+    if _pool is not None:
+        await _pool.close()
+        _pool = None

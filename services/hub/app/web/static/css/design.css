@@ -1,0 +1,1067 @@
+/* ============================================================================
+   OhmyTesla — Design System
+   Tesla (50%) × Linear (35%) × xAI (15%)
+
+   Tokens come straight from TESLA_ASSISTANT_DESIGN.md §4–§8. The rules that
+   are easy to violate later, in one place:
+     · Tesla red is for brand mark / critical / destructive ONLY.
+     · Separate things with space and background, not borders.
+     · Numbers dominate, labels support.
+     · No shadow bigger than a whisper. No gradients on UI surfaces.
+   ========================================================================= */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces — graphite, never pure black (§56.7) */
+  --bg-primary:   #0F0F10;
+  --bg-secondary: #151516;
+  --bg-elevated:  #1A1A1C;
+  --bg-hover:     #202023;
+
+  /* Text */
+  --text-primary:   #F5F5F5;
+  --text-secondary: #A0A0A5;
+  --text-tertiary:  #6F6F74;
+
+  /* Borders — used sparingly (§8) */
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-medium: rgba(255, 255, 255, 0.12);
+
+  /* Brand + semantic */
+  --tesla-red:       #E82127;
+  --tesla-blue:      #3E6AE1;
+  --charging-green:  #30D158;
+  --warning-orange:  #FF9F0A;
+  --critical-red:    #FF453A;
+
+  /* Spacing scale (§6) */
+  --s-1:  4px;  --s-2:  8px;  --s-3: 12px; --s-4: 16px;
+  --s-6: 24px;  --s-8: 32px;  --s-12: 48px; --s-16: 64px; --s-24: 96px;
+
+  /* Radius (§7) */
+  --r-sm: 8px; --r-md: 10px; --r-lg: 12px; --r-xl: 16px; --r-2xl: 20px;
+
+  /* Motion.
+     The built-in CSS easings are too weak — they lack the punch that makes
+     motion read as intentional. These are the strong variants.
+     ease-in is never used on UI: it delays the first frame, which is exactly
+     the moment the user is watching, so it *feels* slower at equal duration. */
+  --ease:        cubic-bezier(0.23, 1, 0.32, 1);      /* out — enter/exit */
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);     /* on-screen movement */
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);      /* iOS drawer feel */
+
+  /* Durations by element. Anything a user sees often stays under 300ms. */
+  --t-press:  120ms;   /* button press feedback */
+  --t-hover:  140ms;
+  --t-button: 160ms;
+  --t-panel:  200ms;   /* dropdowns, disclosures */
+  --t-modal:  240ms;   /* sheets */
+
+  --content-max: 1280px;
+  --page-pad: 64px;
+}
+
+@media (max-width: 1080px) { :root { --page-pad: 32px; } }
+@media (max-width: 640px)  { :root { --page-pad: 20px; } }
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
+               "SF Pro Display", "SF Pro Text", "Segoe UI",
+               "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* Digits must line up wherever they're compared or stacked. */
+.num, .metric-value, .hero-soc, .hero-range, table.data td, .stat-value {
+  font-variant-numeric: tabular-nums;
+}
+
+::selection { background: rgba(62, 106, 225, 0.32); }
+
+:focus-visible {
+  outline: 2px solid var(--tesla-blue);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+a { color: inherit; text-decoration: none; }
+
+/* ---------------------------------------------------------------- type ---
+   Display sizes carry negative tracking (Linear/xAI signature); body sits
+   at 0. Weights stay in 400–600 — Tesla never bolds past medium.          */
+
+.display-xl { font-size: 72px; font-weight: 500; line-height: 1.02; letter-spacing: -2.4px; }
+.display-lg { font-size: 48px; font-weight: 500; line-height: 1.08; letter-spacing: -1.4px; }
+.display-md { font-size: 32px; font-weight: 500; line-height: 1.15; letter-spacing: -0.8px; }
+.display-sm { font-size: 24px; font-weight: 500; line-height: 1.25; letter-spacing: -0.4px; }
+
+.title      { font-size: 18px; font-weight: 550; letter-spacing: -0.2px; }
+.body       { font-size: 15px; font-weight: 400; }
+.body-sm    { font-size: 13.5px; font-weight: 400; color: var(--text-secondary); }
+.meta       { font-size: 12px; font-weight: 400; color: var(--text-tertiary); }
+
+/* Section eyebrow — mono, uppercase, positive tracking. Reads as taxonomy,
+   the deliberate counterpoint to the negative-tracked display sizes. */
+.eyebrow {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 11px; font-weight: 400;
+  letter-spacing: 1.3px; text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.secondary { color: var(--text-secondary); }
+.tertiary  { color: var(--text-tertiary); }
+
+h1, h2, h3, h4 { margin: 0; font-weight: 500; letter-spacing: -0.3px; }
+
+/* -------------------------------------------------------------- layout --- */
+
+.page {
+  max-width: var(--content-max);
+  margin: 0 auto;
+  padding: 0 var(--page-pad);
+}
+
+.stack   { display: flex; flex-direction: column; }
+.row     { display: flex; align-items: center; gap: var(--s-3); }
+.spacer  { flex: 1; }
+
+.gap-1 { gap: var(--s-1); } .gap-2 { gap: var(--s-2); } .gap-3 { gap: var(--s-3); }
+.gap-4 { gap: var(--s-4); } .gap-6 { gap: var(--s-6); } .gap-8 { gap: var(--s-8); }
+
+.divider { height: 1px; background: var(--border-subtle); border: 0; margin: 0; }
+
+/* --------------------------------------------------------------- shell --- */
+
+.masthead {
+  display: flex; align-items: center; gap: var(--s-4);
+  height: 56px;
+  padding: 0 var(--page-pad);
+  max-width: var(--content-max);
+  margin: 0 auto;
+}
+
+.wordmark {
+  font-size: 13px; font-weight: 500;
+  letter-spacing: 3.4px; text-transform: uppercase;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+.wordmark .mark { color: var(--text-tertiary); }   /* 红色留给关键状态，不长期占用（§4.2） */
+
+/* Connection dot — filled when live, hollow when asleep/offline (§32) */
+.conn { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--text-secondary); }
+.conn .dot { width: 7px; height: 7px; border-radius: 50%; }
+.conn.live    .dot { background: var(--charging-green); }
+.conn.syncing .dot { background: var(--tesla-blue); animation: pulse 1.6s var(--ease) infinite; }
+.conn.idle    .dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--text-tertiary); }
+.conn.down    .dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--critical-red); }
+
+@keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+
+/* Vehicle picker / profile chip */
+.chip-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 10px;
+  background: transparent; color: var(--text-secondary);
+  border: 0; border-radius: var(--r-sm);
+  font: inherit; font-size: 13px; cursor: pointer;
+  transition: background var(--t-hover) var(--ease), color var(--t-hover) var(--ease);
+}
+.chip-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* Nav sits below the hero on Overview and sticks to the top once scrolled —
+   the vehicle is what you land on, navigation catches you afterwards. */
+.navbar {
+  position: sticky; top: 0; z-index: 40;
+  background: rgba(15, 15, 16, 0.82);
+  backdrop-filter: saturate(160%) blur(14px);
+  -webkit-backdrop-filter: saturate(160%) blur(14px);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.navbar-inner {
+  display: flex; align-items: center; gap: var(--s-2);
+  height: 48px;
+  max-width: var(--content-max); margin: 0 auto;
+  padding: 0 var(--page-pad);
+  overflow-x: auto; scrollbar-width: none;
+}
+.navbar-inner::-webkit-scrollbar { display: none; }
+
+.navlink {
+  position: relative;
+  padding: 0 12px; height: 48px;
+  display: inline-flex; align-items: center;
+  font-size: 13.5px; font-weight: 450;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+  transition: color var(--t-hover) var(--ease);
+}
+.navlink:hover { color: var(--text-secondary); }
+.navlink.active { color: var(--text-primary); }
+.navlink.active::after {
+  content: ""; position: absolute; left: 12px; right: 12px; bottom: 0;
+  height: 1.5px; background: var(--text-primary);
+}
+
+/* --------------------------------------------------------------- cards ---
+   Reach for these only when a group of values genuinely belongs together
+   (§14). A card per metric is the failure mode this system is guarding
+   against.                                                                */
+
+.card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  padding: var(--s-6);
+}
+.card.flat { background: transparent; border-color: transparent; padding: 0; }
+
+/* A row of label → value. The workhorse of the overview summary. */
+.stat-line {
+  display: flex; align-items: baseline; gap: var(--s-4);
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.stat-line:last-child { border-bottom: 0; }
+.stat-line .label { font-size: 14.5px; color: var(--text-secondary); }
+.stat-line .spacer { flex: 1; }
+.stat-line .stat-value { font-size: 17px; font-weight: 500; letter-spacing: -0.2px; }
+.stat-line .stat-sub { font-size: 12.5px; color: var(--text-tertiary); margin-left: 8px; }
+.stat-line.tappable { cursor: pointer; transition: opacity var(--t-hover) var(--ease); }
+.stat-line.tappable:hover { opacity: .72; }
+
+/* ------------------------------------------------------------- buttons --- */
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  height: 36px; padding: 0 16px;
+  border-radius: var(--r-sm); border: 1px solid var(--border-medium);
+  background: transparent; color: var(--text-primary);
+  font: inherit; font-size: 13.5px; font-weight: 500;
+  cursor: pointer; white-space: nowrap;
+  transition: background var(--t-button) var(--ease),
+              border-color var(--t-button) var(--ease),
+              color var(--t-button) var(--ease);
+}
+.btn:hover { background: var(--bg-hover); }
+.btn:disabled { opacity: .4; cursor: default; }
+
+/* Primary on a dark UI is light-on-dark inverted (§30) — not red. */
+.btn.primary { background: var(--text-primary); color: #0B0B0C; border-color: transparent; }
+.btn.primary:hover { background: #FFFFFF; }
+
+.btn.ghost { border-color: transparent; color: var(--text-secondary); }
+.btn.ghost:hover { color: var(--text-primary); background: var(--bg-hover); }
+
+.btn.danger { border-color: rgba(232, 33, 39, .45); color: #FF6B6F; }
+.btn.danger:hover { background: rgba(232, 33, 39, .12); border-color: var(--tesla-red); }
+
+/* ------------------------------------------------------ status pills ----- */
+
+.pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 24px; padding: 0 10px;
+  border-radius: 999px;
+  font-size: 12px; font-weight: 500; letter-spacing: -0.1px;
+  background: var(--bg-elevated); color: var(--text-secondary);
+}
+.pill.good     { color: var(--charging-green); background: rgba(48, 209, 88, .10); }
+.pill.info     { color: #7C9BFF;              background: rgba(62, 106, 225, .12); }
+.pill.warning  { color: var(--warning-orange); background: rgba(255, 159, 10, .11); }
+.pill.critical { color: var(--critical-red);   background: rgba(255, 69, 58, .12); }
+
+/* --------------------------------------------------------------- hero ---
+   The vehicle defines the visual center. It is never inside a card (§11).  */
+
+.hero {
+  display: flex; flex-direction: column; align-items: center;
+  padding: clamp(24px, 5vh, 56px) var(--page-pad) clamp(20px, 4vh, 40px);
+  max-width: var(--content-max); margin: 0 auto;
+  text-align: center;
+}
+
+.hero-model {
+  font-size: 12px; font-weight: 450;
+  letter-spacing: 2.6px; text-transform: uppercase;
+  color: var(--text-tertiary);
+  margin-bottom: clamp(8px, 2vh, 20px);
+}
+
+.vehicle-stage {
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+}
+.vehicle-stage svg { width: 100%; height: auto; display: block; }
+
+.hero-readout { margin-top: clamp(4px, 2vh, 18px); }
+
+.hero-soc {
+  font-size: clamp(52px, 8vw, 76px);
+  font-weight: 500; line-height: 1;
+  letter-spacing: -3px;
+}
+.hero-soc .unit { font-size: .42em; font-weight: 450; letter-spacing: -1px; color: var(--text-secondary); margin-left: 2px; }
+
+.hero-range {
+  margin-top: 6px;
+  font-size: 19px; font-weight: 400; letter-spacing: -0.2px;
+  color: var(--text-secondary);
+}
+
+.hero-status {
+  margin-top: 14px;
+  font-size: 14.5px; color: var(--text-secondary);
+}
+.hero-status .sep { color: var(--text-tertiary); margin: 0 7px; }
+
+/* ------------------------------------------------------ quick controls --- */
+
+.controls {
+  display: flex; justify-content: center; flex-wrap: wrap;
+  gap: clamp(12px, 4vw, 44px);
+  margin-top: clamp(20px, 4vh, 40px);
+}
+
+.control {
+  display: flex; flex-direction: column; align-items: center; gap: 9px;
+  min-width: 68px; padding: 10px 6px;
+  background: none; border: 0; border-radius: var(--r-md);
+  color: var(--text-secondary);
+  font: inherit; font-size: 12.5px;
+  cursor: pointer;
+  transition: color var(--t-button) var(--ease), background var(--t-button) var(--ease);
+}
+.control svg { width: 24px; height: 24px; stroke: currentColor; fill: none;
+               stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.control:hover { color: var(--text-primary); background: var(--bg-hover); }
+.control:disabled { opacity: .32; cursor: default; }
+.control:disabled:hover { background: none; color: var(--text-secondary); }
+.control.on { color: var(--text-primary); }
+.control.on svg { stroke: var(--tesla-blue); }
+.control.armed svg { stroke: var(--tesla-red); }
+.control.busy { opacity: .5; }
+
+/* ----------------------------------------------------- assistant bar ----- */
+
+.assistant {
+  display: flex; align-items: center; gap: 10px;
+  height: 52px; padding: 0 8px 0 18px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-xl);
+  cursor: text;
+  transition: border-color var(--t-panel) var(--ease), background var(--t-panel) var(--ease);
+}
+.assistant:hover { border-color: var(--border-medium); background: var(--bg-elevated); }
+.assistant .ph { flex: 1; color: var(--text-tertiary); font-size: 14.5px; }
+.assistant kbd {
+  font-family: inherit; font-size: 11px; color: var(--text-tertiary);
+  border: 1px solid var(--border-medium); border-radius: 5px;
+  padding: 2px 6px; letter-spacing: .4px;
+}
+
+/* --------------------------------------------------- command palette ----- */
+
+.cmdk-scrim {
+  position: fixed; inset: 0; z-index: 200;
+  background: rgba(0, 0, 0, .62);
+  backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding: 12vh 20px 20px;
+}
+
+.cmdk {
+  width: min(620px, 100%);
+  max-height: 62vh;
+  display: flex; flex-direction: column;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-medium);
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .55);
+}
+
+/* No open/close animation, deliberately. This surface is opened by keyboard
+   dozens of times a day; at that frequency any entrance reads as latency
+   between the keystroke and the caret. Raycast ships none for the same
+   reason. Everything else in the product animates — this doesn't. */
+
+.cmdk input {
+  height: 54px; padding: 0 18px;
+  background: transparent; border: 0; border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary); font: inherit; font-size: 16px;
+  outline: none;
+}
+.cmdk input::placeholder { color: var(--text-tertiary); }
+
+.cmdk-list { overflow-y: auto; padding: 6px; }
+.cmdk-group { padding: 12px 12px 5px; }
+
+.cmdk-item {
+  display: flex; align-items: center; gap: 11px;
+  padding: 9px 12px; border-radius: var(--r-sm);
+  cursor: pointer; font-size: 14px;
+  transition: background var(--t-hover) var(--ease);
+}
+.cmdk-item[aria-selected="true"] { background: var(--bg-hover); }
+.cmdk-item .ico { width: 17px; text-align: center; color: var(--text-tertiary); flex: none; }
+.cmdk-item .hint { margin-left: auto; font-size: 11.5px; color: var(--text-tertiary); }
+.cmdk-item.risky .ico { color: var(--warning-orange); }
+
+.cmdk-answer { padding: 18px; border-top: 1px solid var(--border-subtle); }
+.cmdk-empty  { padding: 26px 18px; color: var(--text-tertiary); font-size: 13.5px; text-align: center; }
+
+/* -------------------------------------------------------------- misc ----- */
+
+.banner {
+  display: flex; align-items: center; gap: 10px;
+  padding: 11px var(--page-pad);
+  background: rgba(255, 69, 58, .12);
+  border-bottom: 1px solid rgba(255, 69, 58, .28);
+  color: #FF8A85; font-size: 13.5px;
+}
+
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-secondary) 25%, var(--bg-hover) 50%, var(--bg-secondary) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+  border-radius: 6px; color: transparent;
+}
+@keyframes shimmer { from { background-position: 200% 0 } to { background-position: -200% 0 } }
+
+.empty {
+  padding: var(--s-12) var(--s-6);
+  text-align: center; color: var(--text-tertiary); font-size: 14px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+/* Mobile: bottom navigation instead of the desktop rail (§28). */
+@media (max-width: 720px) {
+  .navbar { position: fixed; top: auto; bottom: 0; border-bottom: 0; border-top: 1px solid var(--border-subtle); }
+  .navbar-inner { justify-content: space-around; height: 56px; padding: 0 6px; }
+  .navlink { flex-direction: column; gap: 3px; height: 56px; font-size: 10.5px; padding: 0 6px; }
+  .navlink.active::after { top: 0; bottom: auto; left: 6px; right: 6px; }
+  body { padding-bottom: 56px; }
+  .controls { gap: 4px; }
+  .control { min-width: 0; flex: 1; }
+}
+
+/* ==========================================================================
+   Components
+   Added as the rest of the product moved onto this system. Everything here
+   follows the same rules as above: separate with space, not lines; numbers
+   dominate; detail hides until asked for.
+   ========================================================================== */
+
+/* ------------------------------------------------------------- sections --- */
+
+.section { margin-top: var(--s-12); }
+.section-head {
+  display: flex; align-items: baseline; gap: var(--s-3);
+  margin-bottom: var(--s-4);
+}
+.section-head h2 { font-size: 19px; font-weight: 500; letter-spacing: -0.3px; }
+.section-head .note { font-size: 13px; color: var(--text-tertiary); }
+
+/* Page title block: one big number is allowed to carry the whole header. */
+.page-head { padding: var(--s-8) 0 var(--s-6); }
+.page-head h1 { font-size: 28px; font-weight: 500; letter-spacing: -0.7px; }
+.page-head .sub { margin-top: 6px; font-size: 14px; color: var(--text-secondary); }
+
+/* ------------------------------------------------------------- metrics --- */
+
+.metrics { display: flex; flex-wrap: wrap; gap: var(--s-12); }
+.metric { min-width: 0; }
+.metric .label { font-size: 13px; color: var(--text-secondary); margin-bottom: 4px; }
+.metric .metric-value {
+  font-size: 30px; font-weight: 500; letter-spacing: -1px; line-height: 1.1;
+}
+.metric .metric-value .unit {
+  font-size: .46em; font-weight: 400; color: var(--text-secondary);
+  letter-spacing: 0; margin-left: 3px;
+}
+.metric .delta { margin-top: 5px; font-size: 12.5px; color: var(--text-tertiary); }
+.metric .delta.up   { color: var(--warning-orange); }
+.metric .delta.down { color: var(--charging-green); }
+
+/* -------------------------------------------------------------- tables ---
+   No vertical rules, hairline horizontals, numbers right, rows hoverable. */
+
+table.data { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+table.data th {
+  text-align: left; font-weight: 400; padding: 0 14px 10px 0;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 10.5px; letter-spacing: 1.1px; text-transform: uppercase;
+  color: var(--text-tertiary); white-space: nowrap;
+  border-bottom: 1px solid var(--border-subtle);
+}
+table.data td {
+  padding: 12px 14px 12px 0;
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+table.data th:last-child, table.data td:last-child { padding-right: 0; }
+table.data th.num, table.data td.num { text-align: right; font-variant-numeric: tabular-nums; }
+table.data tbody tr { transition: background var(--t-hover) var(--ease); }
+table.data tbody tr:hover { background: var(--bg-secondary); }
+table.data tbody tr.tappable { cursor: pointer; }
+table.data td.dim { color: var(--text-secondary); }
+table.data tr:last-child td { border-bottom: 0; }
+
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.table-scroll::-webkit-scrollbar { height: 6px; }
+.table-scroll::-webkit-scrollbar-thumb { background: var(--bg-hover); border-radius: 3px; }
+
+/* --------------------------------------------------- progressive detail ---
+   The default view never shows every data point (§47). */
+
+details.disclose { border-bottom: 1px solid var(--border-subtle); }
+details.disclose > summary {
+  display: flex; align-items: center; gap: 10px;
+  padding: 15px 0; cursor: pointer; list-style: none;
+  font-size: 14.5px; color: var(--text-secondary);
+  transition: color var(--t-hover) var(--ease);
+}
+details.disclose > summary::-webkit-details-marker { display: none; }
+details.disclose > summary:hover { color: var(--text-primary); }
+details.disclose > summary .chev {
+  margin-left: auto; color: var(--text-tertiary);
+  transition: transform var(--t-panel) var(--ease);
+}
+details.disclose[open] > summary { color: var(--text-primary); }
+details.disclose[open] > summary .chev { transform: rotate(90deg); }
+details.disclose > .body { padding: 4px 0 22px; }
+details.disclose > summary .value {
+  margin-left: auto; font-size: 15px; font-weight: 500;
+  color: var(--text-primary); font-variant-numeric: tabular-nums;
+}
+details.disclose > summary .value + .chev { margin-left: 12px; }
+
+/* ---------------------------------------------------- segmented control --- */
+
+.segmented {
+  display: inline-flex; padding: 2px; gap: 2px;
+  background: var(--bg-secondary); border-radius: var(--r-sm);
+}
+.segmented button {
+  height: 28px; padding: 0 12px;
+  background: transparent; border: 0; border-radius: 6px;
+  color: var(--text-tertiary); font: inherit; font-size: 12.5px; font-weight: 450;
+  cursor: pointer; white-space: nowrap;
+  transition: background var(--t-hover) var(--ease), color var(--t-hover) var(--ease);
+}
+.segmented button:hover { color: var(--text-secondary); }
+.segmented button.active { background: var(--bg-hover); color: var(--text-primary); }
+
+/* -------------------------------------------------------------- inputs --- */
+
+.field { display: flex; flex-direction: column; gap: 6px; }
+.field > label { font-size: 12.5px; color: var(--text-secondary); }
+
+input[type="text"], input[type="number"], input[type="password"],
+input[type="time"], input[type="email"], select, textarea {
+  height: 36px; padding: 0 11px;
+  background: var(--bg-secondary); color: var(--text-primary);
+  border: 1px solid var(--border-subtle); border-radius: var(--r-sm);
+  font: inherit; font-size: 13.5px; outline: none;
+  transition: border-color var(--t-hover) var(--ease), background var(--t-hover) var(--ease);
+}
+textarea { height: auto; padding: 9px 11px; line-height: 1.5; resize: vertical; }
+input:focus, select:focus, textarea:focus {
+  border-color: var(--border-medium); background: var(--bg-elevated);
+}
+input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
+select {
+  appearance: none; padding-right: 30px; cursor: pointer;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236F6F74' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
+  background-repeat: no-repeat; background-position: right 10px center;
+}
+input[type="range"] { accent-color: var(--tesla-blue); }
+
+/* toggle */
+.switch { position: relative; display: inline-block; width: 38px; height: 22px; flex: none; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch .slider {
+  position: absolute; inset: 0; cursor: pointer; border-radius: 999px;
+  background: var(--bg-hover); box-shadow: inset 0 0 0 1px var(--border-subtle);
+  transition: background var(--t-button) var(--ease);
+}
+.switch .slider::before {
+  content: ""; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px;
+  background: var(--text-tertiary); border-radius: 50%;
+  transition: transform var(--t-button) var(--ease), background var(--t-button) var(--ease);
+}
+.switch input:checked + .slider { background: var(--tesla-blue); box-shadow: none; }
+.switch input:checked + .slider::before { transform: translateX(16px); background: #fff; }
+.switch input:focus-visible + .slider { outline: 2px solid var(--tesla-blue); outline-offset: 2px; }
+
+/* a labelled row with a control on the right — the settings workhorse */
+.setting-row {
+  display: flex; align-items: center; gap: var(--s-4);
+  padding: 13px 0; border-bottom: 1px solid var(--border-subtle);
+}
+.setting-row:last-child { border-bottom: 0; }
+.setting-row .info { min-width: 0; flex: 1; }
+.setting-row .info .name { font-size: 14.5px; }
+.setting-row .info .desc { font-size: 12.5px; color: var(--text-tertiary); margin-top: 2px; }
+
+/* -------------------------------------------------------------- charts --- */
+
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; }
+.chart .grid-line { stroke: var(--border-subtle); stroke-width: 1; }
+.chart .axis-label {
+  font-size: 10.5px; fill: var(--text-tertiary);
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+}
+.chart .series { fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.chart .bar { rx: 3; }
+.chart-tip {
+  position: absolute; pointer-events: none; z-index: 5;
+  background: var(--bg-elevated); border: 1px solid var(--border-medium);
+  border-radius: var(--r-sm); padding: 8px 11px; font-size: 12.5px;
+  white-space: nowrap; box-shadow: 0 8px 24px rgba(0,0,0,.5);
+  opacity: 0; transition: opacity var(--t-hover) var(--ease);
+}
+.chart-tip.on { opacity: 1; }
+
+/* --------------------------------------------------------------- sheet --- */
+
+.sheet-scrim {
+  position: fixed; inset: 0; z-index: 150;
+  background: rgba(0,0,0,.55); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center; padding: 24px;
+  animation: scrimIn var(--t-modal) var(--ease);
+}
+@keyframes scrimIn { from { opacity: 0 } to { opacity: 1 } }
+.sheet {
+  width: min(560px, 100%); max-height: 82vh; overflow-y: auto;
+  background: var(--bg-elevated); border: 1px solid var(--border-medium);
+  border-radius: var(--r-xl); padding: var(--s-6);
+  box-shadow: 0 24px 64px rgba(0,0,0,.55);
+  animation: sheetRise var(--t-modal) var(--ease);
+}
+@keyframes sheetRise { from { transform: translateY(8px) scale(.985); opacity: 0 } to { transform: none; opacity: 1 } }
+@media (max-width: 640px) {
+  .sheet-scrim { align-items: flex-end; padding: 0; }
+  .sheet { max-width: 100%; border-radius: var(--r-xl) var(--r-xl) 0 0; max-height: 88vh; }
+}
+
+/* --------------------------------------------------------------- misc ---- */
+
+.grid { display: grid; gap: var(--s-6); }
+.grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 900px) { .grid.cols-2, .grid.cols-3 { grid-template-columns: 1fr; } }
+
+.toast {
+  position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+  z-index: 300; padding: 11px 18px;
+  background: var(--bg-elevated); border: 1px solid var(--border-medium);
+  border-radius: var(--r-sm); font-size: 13.5px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.5);
+  animation: sheetRise var(--t-panel) var(--ease);
+}
+.toast.bad { border-color: rgba(255,69,58,.45); color: #FF8A85; }
+
+.mt  { margin-top: var(--s-4); }
+.mt2 { margin-top: var(--s-6); }
+.mt3 { margin-top: var(--s-8); }
+.small { font-size: 12.5px; }
+.muted { color: var(--text-secondary); }
+.right { text-align: right; }
+.nowrap { white-space: nowrap; }
+
+/* --------------------------------------------------------- chart tokens ---
+   §26: dark ground, minimal grid, one or two accents. The series ramp stays
+   inside the blue family wherever the series are just facets of one measure;
+   green/orange are reserved for their semantic meaning and never used as
+   "series 3" for decoration. */
+:root {
+  --grid:     var(--border-subtle);
+  --baseline: var(--border-medium);
+  --muted:    var(--text-tertiary);
+  --series-1: #3E6AE1;
+  --series-2: #7C9BFF;
+  --series-3: #A8BEFF;
+  --series-4: #5B7FD4;
+  --series-5: #8E93A0;
+}
+
+.chart-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg);
+  padding: var(--s-6);
+}
+.chart-title { font-size: 15px; font-weight: 500; letter-spacing: -0.2px; }
+.chart-sub   { font-size: 12.5px; color: var(--text-tertiary); margin-top: 3px; margin-bottom: var(--s-4); }
+
+.legend { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; }
+.legend .item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.legend .swatch { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+
+.tooltip {
+  display: none;            /* charts.js 悬停时才置为 block；不给默认值就是一个空盒子挂在图下 */
+  position: absolute; pointer-events: none; z-index: 5;
+  background: var(--bg-elevated); border: 1px solid var(--border-medium);
+  border-radius: var(--r-sm); padding: 8px 11px; font-size: 12.5px;
+  white-space: nowrap; box-shadow: 0 8px 24px rgba(0,0,0,.5);
+}
+
+/* tile: a compact label+value block used inside disclosure bodies */
+.tile { padding: 2px 0; }
+.tile .label { font-size: 12.5px; color: var(--text-secondary); }
+.tile .value {
+  font-size: 24px; font-weight: 500; letter-spacing: -0.6px; line-height: 1.2;
+  margin-top: 3px; font-variant-numeric: tabular-nums;
+}
+.tile .value small { font-size: .46em; font-weight: 400; color: var(--text-secondary); margin-left: 3px; }
+.tile .sub { font-size: 11.5px; color: var(--text-tertiary); margin-top: 3px; }
+
+/* ==========================================================================
+   Dashcam surfaces
+   The player and the USB browser are the only places in the product where a
+   dense control layout is right — you're scrubbing video, not reading. They
+   still draw from the same tokens.
+   ========================================================================== */
+
+.player-wrap {
+  display: grid; gap: var(--s-6);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 320px);
+  align-items: start;
+}
+@media (max-width: 980px) { .player-wrap { grid-template-columns: 1fr; } }
+
+.video-stage {
+  position: relative; background: #000;
+  border: 1px solid var(--border-subtle); border-radius: var(--r-lg);
+  overflow: hidden;
+}
+.video-stage video { width: 100%; display: block; background: #000; }
+
+.pip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.pip-row video {
+  width: 148px; border-radius: var(--r-sm); background: #000;
+  border: 1px solid var(--border-subtle); cursor: pointer;
+  transition: border-color var(--t-hover) var(--ease);
+}
+.pip-row video:hover { border-color: var(--border-medium); }
+.pip-row video.active { border-color: var(--tesla-blue); }
+
+/* Telemetry overlay: reads as instrumentation, never as a gaming HUD. */
+.hud {
+  position: absolute; left: 12px; bottom: 12px; right: 12px;
+  display: flex; align-items: flex-end; gap: 18px; flex-wrap: wrap;
+  padding: 12px 14px;
+  background: rgba(10, 10, 11, .72);
+  backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: var(--r-md);
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+.hud .item { display: flex; flex-direction: column; gap: 2px; }
+.hud .l { font-size: 10px; letter-spacing: .8px; text-transform: uppercase; color: var(--text-tertiary);
+          font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+.hud .v { font-size: 17px; font-weight: 500; letter-spacing: -.3px; }
+.hud .speed .v { font-size: 30px; letter-spacing: -1px; }
+.hud .clock { margin-left: auto; text-align: right; }
+
+.seg-list { display: flex; flex-direction: column; gap: 2px; max-height: 340px; overflow-y: auto; }
+.seg-list .item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 10px; border-radius: var(--r-sm);
+  font-size: 13px; color: var(--text-secondary); cursor: pointer;
+  transition: background var(--t-hover) var(--ease), color var(--t-hover) var(--ease);
+}
+.seg-list .item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.seg-list .item.active { background: var(--bg-hover); color: var(--text-primary); }
+.seg-list .item .t { font-variant-numeric: tabular-nums; }
+.seg-list .item .sub { margin-left: auto; font-size: 11px; color: var(--text-tertiary); }
+
+.event-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(232px, 1fr)); }
+.event-card {
+  background: var(--bg-secondary); border: 1px solid var(--border-subtle);
+  border-radius: var(--r-lg); overflow: hidden; cursor: pointer; display: block;
+  transition: border-color var(--t-hover) var(--ease);
+}
+.event-card:hover { border-color: var(--border-medium); }
+.event-card img { width: 100%; aspect-ratio: 16/9; object-fit: cover; display: block; }
+.event-card .noimg {
+  aspect-ratio: 16/9; display: grid; place-items: center;
+  background: var(--bg-elevated); color: var(--text-tertiary);
+}
+.event-card .meta { padding: 11px 13px 13px; }
+.event-card .meta .t { font-size: 13px; }
+.event-card .meta .sub { font-size: 11.5px; color: var(--text-tertiary); margin-top: 3px; }
+
+/* Legacy aliases so the remaining pages inherit the new language unchanged. */
+.tabs { display: inline-flex; padding: 2px; gap: 2px; background: var(--bg-secondary); border-radius: var(--r-sm); }
+.tabs button {
+  height: 28px; padding: 0 12px; background: transparent; border: 0; border-radius: 6px;
+  color: var(--text-tertiary); font: inherit; font-size: 12.5px; cursor: pointer;
+  transition: background var(--t-hover) var(--ease), color var(--t-hover) var(--ease);
+}
+.tabs button.active { background: var(--bg-hover); color: var(--text-primary); }
+
+.rule-row {
+  display: flex; align-items: center; gap: var(--s-4);
+  padding: 12px 0; border-bottom: 1px solid var(--border-subtle);
+}
+.rule-row:last-child { border-bottom: 0; }
+.rule-row .name { flex: 1; min-width: 0; font-size: 14px; }
+
+.chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 24px; padding: 0 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 500;
+  background: var(--bg-elevated); color: var(--text-secondary);
+}
+.chip.good     { color: var(--charging-green); background: rgba(48,209,88,.10); }
+.chip.warn     { color: var(--warning-orange); background: rgba(255,159,10,.11); }
+.chip.serious  { color: var(--warning-orange); background: rgba(255,159,10,.11); }
+.chip.critical { color: var(--critical-red);   background: rgba(255,69,58,.12); }
+
+label.check { display: inline-flex; gap: 7px; align-items: center; cursor: pointer; font-size: 13.5px; }
+label.check input[type="checkbox"] { accent-color: var(--tesla-blue); width: 15px; height: 15px; }
+
+button:not(.btn):not(.control):not(.chip-btn):not(.segmented button):not(.tabs button) {
+  height: 36px; padding: 0 16px;
+  border-radius: var(--r-sm); border: 1px solid var(--border-medium);
+  background: transparent; color: var(--text-primary);
+  font: inherit; font-size: 13.5px; font-weight: 500; cursor: pointer;
+  transition: background var(--t-button) var(--ease);
+}
+button:not(.btn):not(.control):not(.chip-btn):hover { background: var(--bg-hover); }
+button.primary { background: var(--text-primary) !important; color: #0B0B0C !important; border-color: transparent !important; }
+button:disabled { opacity: .4; cursor: default; }
+
+/* ==========================================================================
+   Tactility
+   Response is the foundation everything else sits on: the moment lag appears,
+   directness "falls off a cliff". Feedback belongs on pointer-down, not on
+   release, and it has to be instant.
+   ========================================================================== */
+
+.btn, .control, .chip-btn, .segmented button, .tabs button,
+button, [role="button"], .stat-line.tappable, .event-card, .card.clip,
+details.disclose > summary {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+/* Scale is subtle — the point is that the surface acknowledges the press,
+   not that it performs. scale() takes children with it, which is why the
+   whole control compresses rather than just its background. */
+.btn:active,
+button:not(:disabled):active,
+.chip-btn:active,
+.segmented button:active,
+.tabs button:active {
+  transform: scale(0.97);
+  transition-duration: var(--t-press);
+}
+.control:not(:disabled):active { transform: scale(0.94); transition-duration: var(--t-press); }
+.event-card:active, .card.clip:active { transform: scale(0.992); }
+.stat-line.tappable:active { transform: scale(0.995); }
+details.disclose > summary:active { transform: scale(0.996); }
+
+.btn, button, .chip-btn, .control, .event-card, .card.clip,
+.stat-line.tappable, details.disclose > summary {
+  transition-property: transform, background-color, border-color, color, opacity;
+  transition-duration: var(--t-button);
+  transition-timing-function: var(--ease);
+}
+
+/* Touch devices fire :hover on tap, so a hover-only affordance reads as a
+   stuck state. Gate every hover behind a real pointer. */
+@media (hover: hover) and (pointer: fine) {
+  .btn:hover                       { background: var(--bg-hover); }
+  .btn.primary:hover               { background: #FFFFFF; }
+  .btn.ghost:hover                 { color: var(--text-primary); background: var(--bg-hover); }
+  .btn.danger:hover                { background: rgba(232,33,39,.12); border-color: var(--tesla-red); }
+  .chip-btn:hover                  { background: var(--bg-hover); color: var(--text-primary); }
+  .control:not(:disabled):hover    { color: var(--text-primary); background: var(--bg-hover); }
+  .navlink:hover                   { color: var(--text-secondary); }
+  .segmented button:hover          { color: var(--text-secondary); }
+  .event-card:hover, .card.clip:hover { border-color: var(--border-medium); }
+  table.data tbody tr:hover        { background: var(--bg-secondary); }
+  .stat-line.tappable:hover        { background: var(--bg-secondary); }
+  .cmdk-item:hover                 { background: var(--bg-hover); }
+  details.disclose > summary:hover { color: var(--text-primary); }
+  .seg-list .item:hover            { background: var(--bg-hover); color: var(--text-primary); }
+  .pip-row video:hover             { border-color: var(--border-medium); }
+}
+
+/* The sticky nav should read as a material the page slides under, not as a
+   bar with a rule drawn beneath it. The mask fades content into the chrome
+   only where they actually overlap. */
+.navbar {
+  border-bottom: 0;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 10px), transparent 100%);
+          mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 10px), transparent 100%);
+  padding-bottom: 10px;
+}
+
+/* Lists shouldn't all land at once — a short cascade reads as arrival.
+   Decorative only: nothing waits on it to become interactive. */
+@media (prefers-reduced-motion: no-preference) {
+  .stagger > * {
+    opacity: 0;
+    animation: riseIn 320ms var(--ease) forwards;
+  }
+  .stagger > *:nth-child(1) { animation-delay: 0ms }
+  .stagger > *:nth-child(2) { animation-delay: 40ms }
+  .stagger > *:nth-child(3) { animation-delay: 80ms }
+  .stagger > *:nth-child(4) { animation-delay: 120ms }
+  .stagger > *:nth-child(5) { animation-delay: 160ms }
+  .stagger > *:nth-child(6) { animation-delay: 200ms }
+  .stagger > *:nth-child(n+7) { animation-delay: 230ms }
+}
+@keyframes riseIn { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
+
+/* Reduced motion means gentler, not none. Opacity and colour still carry
+   meaning; movement is what causes trouble, so only movement goes. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-property: opacity, background-color, border-color, color, fill, stroke !important;
+    transition-duration: 160ms !important;
+  }
+  .stagger > * { opacity: 1; animation: none }
+  .btn:active, button:active, .control:active { transform: none }
+}
+
+/* A disclosure that is hiding a problem should not look like one that isn't. */
+details.disclose.has-issues > summary .value { color: var(--warning-orange); }
+
+/* --------------------------------------------------------- charge track ---
+   §16 draws charging as a track with the limit marked on it. A number alone
+   says how full; the track says how much further this session goes, which is
+   the thing you actually want while it's plugged in. */
+
+.charge-track {
+  position: relative; height: 3px; border-radius: 2px;
+  background: var(--bg-hover); overflow: visible;
+}
+.charge-track .fill {
+  position: absolute; inset: 0 auto 0 0; border-radius: 2px;
+  background: var(--charging-green);
+  transition: width 600ms var(--ease);
+}
+.charge-track .limit {
+  position: absolute; top: -3px; width: 1.5px; height: 9px;
+  background: var(--text-tertiary); border-radius: 1px;
+  transform: translateX(-50%);
+}
+.charge-track .head {
+  position: absolute; top: 50%; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--charging-green); transform: translate(-50%, -50%);
+  box-shadow: 0 0 0 3px var(--bg-primary);
+  transition: left 600ms var(--ease);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .charge-track.live .head { animation: chargePulse 2.2s var(--ease) infinite; }
+}
+@keyframes chargePulse {
+  0%, 100% { box-shadow: 0 0 0 3px var(--bg-primary), 0 0 0 3px rgba(48,209,88,.35) }
+  50%      { box-shadow: 0 0 0 3px var(--bg-primary), 0 0 0 8px rgba(48,209,88,0) }
+}
+
+.charge-panel { display: flex; flex-direction: column; gap: 12px; padding: 4px 0 18px; }
+.charge-panel .ends {
+  display: flex; justify-content: space-between;
+  font-size: 12px; color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ----------------------------------------------------------- timeline ---
+   Events read down a spine: a dot carries severity, the body carries what
+   happened, and the clip sits with its own event instead of on another page. */
+
+.timeline { display: flex; flex-direction: column; }
+.tl-item {
+  position: relative; display: flex; align-items: flex-start; gap: 16px;
+  padding: 16px 0 16px 22px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.tl-item:last-child { border-bottom: 0; }
+.tl-item::before {           /* the spine */
+  content: ""; position: absolute; left: 4px; top: 0; bottom: 0;
+  width: 1px; background: var(--border-subtle);
+}
+.tl-item:first-child::before { top: 22px; }
+.tl-item:last-child::before  { bottom: calc(100% - 22px); }
+
+.tl-dot {
+  position: absolute; left: 0; top: 20px;
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--bg-primary);
+  box-shadow: inset 0 0 0 1.5px var(--text-tertiary);
+}
+.tl-dot.info     { box-shadow: inset 0 0 0 1.5px #7C9BFF; }
+.tl-dot.warning  { box-shadow: inset 0 0 0 1.5px var(--warning-orange); }
+.tl-dot.critical { background: var(--critical-red); box-shadow: none; }
+
+.tl-body { flex: 1; min-width: 0; }
+
+.tl-clip {
+  position: relative; flex: none;
+  width: 132px; aspect-ratio: 16/9; border-radius: var(--r-sm);
+  overflow: hidden; background: var(--bg-elevated);
+  border: 1px solid var(--border-subtle); display: block;
+}
+.tl-clip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.tl-clip .noimg { display: grid; place-items: center; height: 100%; color: var(--text-tertiary); }
+.tl-clip .tl-play {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  color: #fff; background: rgba(0,0,0,.28);
+  opacity: 0; transition: opacity var(--t-hover) var(--ease);
+}
+@media (hover: hover) and (pointer: fine) {
+  .tl-clip:hover .tl-play { opacity: 1; }
+  .tl-clip:hover { border-color: var(--border-medium); }
+}
+@media (max-width: 640px) { .tl-clip { width: 96px; } }
+
+/* -------------------------------------------------------- sub-page head ---
+   Every screen has to answer where am I, and how do I get out. A sub-page
+   states its parent, its own title, and offers the way back in one row. */
+
+.subhead {
+  display: flex; align-items: center; gap: var(--s-3);
+  padding: var(--s-8) 0 var(--s-6);
+  flex-wrap: wrap;
+}
+.subhead .back {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 11px 0 8px;
+  border-radius: var(--r-sm); color: var(--text-secondary);
+  font-size: 13px; flex: none;
+}
+.subhead .back svg { transform: rotate(180deg); }
+@media (hover: hover) and (pointer: fine) {
+  .subhead .back:hover { background: var(--bg-hover); color: var(--text-primary); }
+}
+.subhead .back:active { transform: scale(0.97); }
+.subhead .crumb { font-size: 12px; color: var(--text-tertiary); }
+.subhead h1 { font-size: 22px; font-weight: 500; letter-spacing: -0.5px; }

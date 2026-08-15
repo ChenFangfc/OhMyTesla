@@ -1,0 +1,105 @@
+{# Vehicle render — the core visual asset of the product (§11).
+
+   Tesla's own studio render, background removed with a segmentation model and
+   given a contact shadow so the vehicle sits on the page rather than floating
+   on it. The drawn SVG stays as the fallback: Tesla's configurator compositor
+   serves S/3/X/Y but returns 412 for Cybertruck, so both paths have to exist.
+
+   State reads as light on the ground the vehicle stands on, not as marks on
+   the body. On a photograph we cannot know where this car's charge port or
+   lamps actually are, and guessing would put a glowing dot on a door panel. #}
+<div class="veh" id="veh">
+  <div class="veh-ambient"></div>
+  <img class="veh-img" id="veh-img" src="/static/vehicle/cybertruck.png"
+       alt="{{ t('vehicle.alt', 'Your vehicle') }}" decoding="async" fetchpriority="high">
+  <div class="veh-svg" id="veh-svg" hidden>
+      <svg id="veh">, set by JS:
+      is-charging · is-sentry · is-climate · is-driving · is-open #}
+      <svg viewBox="0 0 1260 440" fill="none" xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true">
+      <defs>
+      <clipPath id="vehBody">
+      <path d="M 22 318 L 22 168 L 60 138 L 548 26 L 700 30 L 1212 88 L 1220 318
+      L 1114 318 L 1082 202 L 946 202 L 914 318
+      L 310 318 L 278 202 L 142 202 L 110 318 Z"/>
+      </clipPath>
+      <linearGradient id="vehTyre" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#26282C"/><stop offset="1" stop-color="#141518"/>
+      </linearGradient>
+      <radialGradient id="vehGlow">
+      <stop offset="0" stop-color="#30D158" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#30D158" stop-opacity="0"/>
+      </radialGradient>
+      </defs>
+      <ellipse cx="620" cy="406" rx="470" ry="11" fill="#000" opacity="0.5"/>
+      <g clip-path="url(#vehBody)">
+      <rect x="0" y="0"   width="1260" height="169" fill="#B9BDC2"/>
+      <rect x="0" y="169" width="1260" height="97"  fill="#8B8F95"/>
+      <rect x="0" y="266" width="1260" height="180" fill="#6B6E74"/>
+      </g>
+      <path d="M 22 318 L 22 168 L 60 138 L 548 26 L 700 30 L 1212 88 L 1220 318
+      L 1114 318 L 1082 202 L 946 202 L 914 318
+      L 310 318 L 278 202 L 142 202 L 110 318 Z"
+      fill="none" stroke="#DFE3E7" stroke-width="1.2" stroke-opacity="0.45" stroke-linejoin="round"/>
+      <path id="vehGlass" d="M 432 169 L 404 76 L 548 43 L 700 46 L 802 64 L 810 169 Z"
+      fill="#14171C" stroke="#9AA0A7" stroke-width="1" stroke-opacity="0.45" stroke-linejoin="round"/>
+      <line x1="620" y1="44" x2="620" y2="169" stroke="#9AA0A7" stroke-width="1" stroke-opacity="0.4"/>
+      <g stroke="#4C5057" stroke-width="1.1" stroke-opacity="0.6">
+      <line x1="432" y1="169" x2="432" y2="318"/>
+      <line x1="620" y1="169" x2="620" y2="318"/>
+      <line x1="810" y1="64"  x2="810" y2="318"/>
+      </g>
+      <line x1="22" y1="169" x2="1217" y2="169" stroke="#EDF0F3" stroke-width="1.1" stroke-opacity="0.35"/>
+      <line x1="22" y1="266" x2="1219" y2="266" stroke="#000" stroke-width="1" stroke-opacity="0.25"/>
+      <g class="veh-wheel">
+      <circle cx="210" cy="306" r="94" fill="url(#vehTyre)"/>
+      <circle cx="210" cy="306" r="94" fill="none" stroke="#08090B" stroke-width="2.5"/>
+      <circle cx="210" cy="306" r="56" fill="#43464C" stroke="#63676E" stroke-width="1.2"/>
+      <circle cx="210" cy="306" r="17" fill="#25272B"/>
+      </g>
+      <g class="veh-wheel">
+      <circle cx="1014" cy="306" r="94" fill="url(#vehTyre)"/>
+      <circle cx="1014" cy="306" r="94" fill="none" stroke="#08090B" stroke-width="2.5"/>
+      <circle cx="1014" cy="306" r="56" fill="#43464C" stroke="#63676E" stroke-width="1.2"/>
+      <circle cx="1014" cy="306" r="17" fill="#25272B"/>
+      </g>
+      {# The light bars run along the panel faces, inside the outline. #}
+      <path id="vehLampF" d="M 27 172 L 59 147 L 62 154 L 30 178 Z" fill="#E8ECF1" opacity="0.85"/>
+      <path id="vehLampR" d="M 1162 84 L 1208 88 L 1208 96 L 1162 92 Z" fill="#8E2226" opacity="0.9"/>
+      <circle id="vehPortGlow" cx="1136" cy="205" r="70" fill="url(#vehGlow)" opacity="0"/>
+      <rect id="vehPort" x="1122" y="196" width="28" height="19" rx="4"
+      fill="#15161A" stroke="#868B92" stroke-width="1" stroke-opacity="0.6"/>
+      </svg>
+  </div>
+</div>
+
+<style>
+  .veh { position: relative; width: 100%; }
+  .veh-img, .veh-svg svg { width: 100%; height: auto; display: block; position: relative; z-index: 1; }
+
+  /* One cue at a time. The brief asks for calm, not a light show. */
+  .veh-ambient {
+    /* 贴着地面走的一层光，不是把车泡在颜色里 */
+    position: absolute; left: 14%; right: 14%; bottom: 3%; height: 15%;
+    border-radius: 50%; opacity: 0; z-index: 0; filter: blur(26px);
+    transition: opacity 700ms var(--ease), background 700ms var(--ease);
+  }
+  .veh.is-charging .veh-ambient {
+    background: radial-gradient(ellipse at center, rgba(48,209,88,.22), transparent 68%); opacity: 1;
+  }
+  .veh.is-sentry .veh-ambient {
+    background: radial-gradient(ellipse at center, rgba(232,33,39,.24), transparent 68%); opacity: 1;
+  }
+  .veh.is-climate .veh-ambient {
+    background: radial-gradient(ellipse at center, rgba(62,106,225,.20), transparent 68%); opacity: 1;
+  }
+  /* Charging is the one state that should feel ongoing rather than static. */
+  @media (prefers-reduced-motion: no-preference) {
+    .veh.is-charging .veh-ambient { animation: vehBreathe 3.4s var(--ease) infinite; }
+  }
+  @keyframes vehBreathe { 0%, 100% { opacity: .45 } 50% { opacity: .9 } }
+
+  /* Asleep or offline: the vehicle recedes rather than disappearing. */
+  .veh-img, .veh-svg { transition: opacity var(--t-panel) var(--ease), filter var(--t-panel) var(--ease); }
+  .veh.is-idle .veh-img, .veh.is-idle .veh-svg { opacity: .58; filter: saturate(.7); }
+</style>

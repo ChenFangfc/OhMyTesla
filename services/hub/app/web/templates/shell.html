@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="{{ html_lang | default('en') }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>{% block title %}OhmyTesla{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/design.css">
+  <link rel="icon" href="/static/icon.svg">
+  <link rel="manifest" href="/manifest.json" crossorigin="use-credentials">
+  <meta name="theme-color" content="#0F0F10">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  {% block head %}{% endblock %}
+</head>
+<body>
+
+<div id="stale-banner" class="banner" style="display:none"></div>
+
+{# Masthead carries four things and nothing else: who we are, the way in
+   (⌘K), whether the vehicle is reachable, and a door to Settings. Language
+   and units are preferences — they live inside Settings, not on the chrome
+   of every page. #}
+<header class="masthead">
+  <a href="/" class="wordmark">Ohmy<span class="mark">Tesla</span></a><span class="spacer"></span>
+  <button id="cmdk-open" class="chip-btn" data-i18n-title="cmdk.title"><span class="ico-slot" data-icon="search" data-size="14"></span>
+    <kbd>⌘K</kbd>
+  </button><span id="conn" class="conn idle"><span class="dot"></span><span class="txt"></span></span>
+  <a href="/settings" class="chip-btn" data-i18n-title="nav.settings" aria-label="Settings"><span class="ico-slot" data-icon="gear" data-size="16"></span>
+  </a>
+</header>
+
+{% block hero %}{% endblock %}
+
+<nav class="navbar">
+  <div class="navbar-inner">
+    <a href="/"         class="navlink {{ 'active' if active == 'home' else '' }}"     data-i18n="nav.overview">Overview</a>
+    <a href="/energy"   class="navlink {{ 'active' if active == 'energy' else '' }}"   data-i18n="nav.energy">Energy</a>
+    <a href="/trips"    class="navlink {{ 'active' if active == 'trips' else '' }}"    data-i18n="nav.trips">Trips</a>
+    <a href="/dashcam"  class="navlink {{ 'active' if active == 'dashcam' else '' }}"  data-i18n="nav.dashcam">Dashcam</a>
+    <a href="/security" class="navlink {{ 'active' if active == 'security' else '' }}" data-i18n="nav.security">Security</a>
+  </div>
+</nav>
+
+<main>{% block content %}{% endblock %}</main>
+
+<script src="/static/js/i18n.js"></script>
+<script src="/static/js/util.js"></script>
+<script src="/static/js/icons.js"></script>
+<script src="/static/js/cmdk.js"></script>
+<script>
+  const i18nReady = i18n.load();
+
+  /* Icons are injected rather than inlined so every page draws from one set. */
+  function paintIcons(root) {
+    (root || document).querySelectorAll(".ico-slot[data-icon]").forEach((n) => {
+      n.innerHTML = icon(n.dataset.icon, +(n.dataset.size || 20));
+    });
+  }
+  paintIcons();
+
+  i18nReady.then(() => { cmdk.init(); });
+
+  /* The dangerous failure for an alerting product is silence: pages render,
+     health checks pass, and the pipeline is dead. Say so at the top. */
+  function checkDataHealth() {
+    apiGet("/api/health/detail").then((h) => {
+      const el = document.getElementById("stale-banner");
+      const d = h.data || {};
+      if (d.stale) {
+        el.textContent = t("banner.stale", { n: Math.round((d.seconds_since_data || 0) / 60) });
+        el.style.display = "flex";
+      } else {
+        el.style.display = "none";
+      }
+    }).catch(() => {});
+  }
+
+  /* Connection chip is shared chrome, so every page keeps it truthful. */
+  const KNOWN_STATES = ["parked", "asleep", "offline", "online", "driving", "charging"];
+  const stateLabel = (s) => t(KNOWN_STATES.includes(s) ? "state." + s : "state.unknown");
+
+  function paintConnection(d) {
+    const el = document.getElementById("conn");
+    if (!el) return;
+    const cls = !d || !d.connected ? "down"
+      : d.state === "driving" || d.state === "charging" ? "syncing"
+      : d.state === "online" ? "live" : "idle";
+    el.className = "conn " + cls;
+    el.querySelector(".txt").textContent =
+      d && d.connected ? stateLabel(d.state) : t("conn.down");
+  }
+
+  async function refreshConnection() {
+    try {
+      const d = await apiGet("/api/overview");
+      paintConnection(d);
+      if (window.onOverviewData) window.onOverviewData(d);
+    } catch (e) { /* leave the last known chip */ }
+  }
+
+  i18nReady.catch(() => {}).then(() => {
+    checkDataHealth(); setInterval(checkDataHealth, 60000);
+    if (!window.ownsOverviewFetch) { refreshConnection(); setInterval(refreshConnection, 30000); }
+  });
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

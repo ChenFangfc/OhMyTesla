@@ -1,0 +1,135 @@
+# OhmyTesla —— 基于 TeslaMate 的特斯拉大一统自托管套件
+# TeslaMate 官方镜像原封不动，OhmyTesla Hub 作为伴生服务通过 MQTT + 只读数据库集成。
+services:
+  teslamate:
+    image: teslamate/teslamate:latest
+    restart: always
+    depends_on:
+      - database
+    environment:
+      - ENCRYPTION_KEY=${TM_ENCRYPTION_KEY}
+      - DATABASE_USER=${TM_DB_USER}
+      - DATABASE_PASS=${TM_DB_PASS}
+      - DATABASE_NAME=${TM_DB_NAME}
+      - DATABASE_HOST=database
+      - MQTT_HOST=mosquitto
+    ports:
+      - "${TESLAMATE_PORT:-4000}:4000"
+    volumes:
+      - ./data/import:/opt/app/import
+    cap_drop:
+      - all
+
+  database:
+    image: postgres:18-trixie
+    restart: always
+    environment:
+      - POSTGRES_USER=${TM_DB_USER}
+      - POSTGRES_PASSWORD=${TM_DB_PASS}
+      - POSTGRES_DB=${TM_DB_NAME}
+    volumes:
+      - teslamate-db:/var/lib/postgresql
+
+  grafana:
+    image: teslamate/grafana:latest
+    restart: always
+    depends_on:
+      - database
+    environment:
+      - DATABASE_USER=${TM_DB_USER}
+      - DATABASE_PASS=${TM_DB_PASS}
+      - DATABASE_NAME=${TM_DB_NAME}
+      - DATABASE_HOST=database
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - teslamate-grafana-data:/var/lib/grafana
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: always
+    command: mosquitto -c /mosquitto-no-auth.conf
+    volumes:
+      - mosquitto-conf:/mosquitto/config
+      - mosquitto-data:/mosquitto/data
+
+  ohmytesla:
+    build: ./services/hub
+    restart: always
+    depends_on:
+      - database
+      - mosquitto
+    environment:
+      - TM_DB_HOST=database
+      - TM_DB_USER=${TM_DB_USER}
+      - TM_DB_PASS=${TM_DB_PASS}
+      - TM_DB_NAME=${TM_DB_NAME}
+      - MQTT_HOST=mosquitto
+      - PUBLIC_URL=${PUBLIC_URL:-}
+      - TESLACAM_ROOT=/teslacam
+      - TESLACAM_TZ=${TESLACAM_TZ:-}
+      - DATA_DIR=/data
+      - TESLAMATE_URL=http://teslamate:4000
+      - GRAFANA_URL=http://grafana:3000
+      - TESLAMATE_PUBLIC_PORT=${TESLAMATE_PORT:-4000}
+      - GRAFANA_PUBLIC_PORT=${GRAFANA_PORT:-3000}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - SMTP_TO=${SMTP_TO:-}
+      - NTFY_URL=${NTFY_URL:-}
+      - NTFY_TOPIC=${NTFY_TOPIC:-}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
+      - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL:-}
+      - APPRISE_URLS=${APPRISE_URLS:-}
+      - ALERT_QUIET_HOURS=${ALERT_QUIET_HOURS:-}
+      - ALERT_COOLDOWN_SECONDS=${ALERT_COOLDOWN_SECONDS:-300}
+      - ALERT_LANG=${ALERT_LANG:-zh}
+      - OHMYTESLA_PASSWORD=${OHMYTESLA_PASSWORD:-}
+      - TILE_URL=${TILE_URL:-}
+      - FLEET_TOPIC_PREFIX=${FLEET_TOPIC_PREFIX:-telemetry}
+      - SENTRY_DEDUP_SECONDS=${SENTRY_DEDUP_SECONDS:-15}
+      - SENTRY_ESCALATE_SECONDS=${SENTRY_ESCALATE_SECONDS:-90}
+      - SENTRY_POLLED_ALERTS=${SENTRY_POLLED_ALERTS:-true}
+      - DATA_STALE_SECONDS=${DATA_STALE_SECONDS:-1800}
+      - FLEET_BRIDGE_ENABLED=${FLEET_BRIDGE_ENABLED:-false}
+      - FLEET_BRIDGE_PROVIDER=${FLEET_BRIDGE_PROVIDER:-teslemetry}
+      - FLEET_BRIDGE_TOKEN=${FLEET_BRIDGE_TOKEN:-}
+      - FLEET_BRIDGE_URL=${FLEET_BRIDGE_URL:-}
+      - FLEET_BRIDGE_TRANSPORT=${FLEET_BRIDGE_TRANSPORT:-}
+      - FLEET_BRIDGE_VINS=${FLEET_BRIDGE_VINS:-}
+      # 与 TeslaMate 同一个密钥 —— 让 hub 能自动复用其 Tesla token 下发车辆指令
+      - ENCRYPTION_KEY=${TM_ENCRYPTION_KEY}
+      - TESLA_API_HOST=${TESLA_API_HOST:-https://owner-api.teslamotors.com}
+      - TESLA_COMMAND_PROXY=${TESLA_COMMAND_PROXY:-}
+      - TESLA_ACCESS_TOKEN=${TESLA_ACCESS_TOKEN:-}
+      - COST_WRITE_BACK=${COST_WRITE_BACK:-false}
+    ports:
+      - "${OHMYTESLA_PORT:-8800}:8800"
+    volumes:
+      - ${TESLACAM_DIR:-./data/teslacam}:/teslacam
+      - ./data/hub:/data
+
+  # 可选: 官方 Fleet Telemetry 自托管（哨兵 Aware/Panic 真实事件流）
+  # 需要 Tesla 开发者账号 + 公网域名 + mTLS 证书，配置见 docs/FLEET-TELEMETRY.md
+  # 启用: docker compose --profile fleet up -d
+  fleet-telemetry:
+    image: tesla/fleet-telemetry:latest
+    profiles: ["fleet"]
+    restart: always
+    depends_on:
+      - mosquitto
+    ports:
+      - "4443:4443"
+    volumes:
+      - ./config/fleet-telemetry.json:/etc/fleet-telemetry/config.json:ro
+      - ./config/certs:/etc/fleet-telemetry/certs:ro
+
+volumes:
+  teslamate-db:
+  teslamate-grafana-data:
+  mosquitto-conf:
+  mosquitto-data:
