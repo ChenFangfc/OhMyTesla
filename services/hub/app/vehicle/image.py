@@ -63,8 +63,7 @@ def _norm(value: str | None) -> str:
         return ""
     s = str(value)
     for prefix in ("ExteriorColor", "WheelType", "PaintColor"):
-        if s.startswith(prefix):
-            s = s[len(prefix):]
+        s = s.removeprefix(prefix)
     return s
 
 

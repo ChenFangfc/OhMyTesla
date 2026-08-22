@@ -5,9 +5,8 @@ from ..config import settings
 from ..i18n.prefs import get as get_prefs
 from ..i18n.router import t
 from ..livestate import live
-from . import notifier
+from . import notifier, webpush
 from . import sentry as sentry_mod
-from . import webpush
 from .engine import RULES, engine
 from .sentry import tracker as sentry_tracker
 from .store import store

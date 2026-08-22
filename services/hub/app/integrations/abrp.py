@@ -192,7 +192,7 @@ class AbrpRelay:
                         await self._post(client, tlm)
                 except asyncio.CancelledError:
                     raise
-                except Exception:  # noqa: BLE001 - 中继出错不该拖垮进程
+                except Exception:
                     log.exception("ABRP relay loop error")
 
 

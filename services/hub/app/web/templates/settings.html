@@ -813,23 +813,37 @@ async function loadMaintenance() {
 }
 
 /* 车速阈值。输入框跟用户单位走，后端一律存 km/h。 */
-async function loadSpeedLimit() {
+let speedLimitKmh = null;
+let speedLimitBound = false;
+
+/* 把 km/h 的真值按当前单位重绘。切换单位时必须调一次 ——
+   否则框里还是 120（km/h 时代的值），标签已经变成 mph，用户一按保存就
+   被当成 120 mph 存成 193 km/h。他没改过任何数字，阈值却变了。 */
+function paintSpeedLimit() {
   document.getElementById("speed-limit-unit").textContent = U.speedLabel();
+  const el = document.getElementById("speed-limit");
+  el.value = speedLimitKmh == null ? ""
+    : (U.distLabel() === "mi" ? Math.round(speedLimitKmh / 1.609344) : Math.round(speedLimitKmh));
+}
+window.addEventListener("omt:locale", paintSpeedLimit);
+
+async function loadSpeedLimit() {
   // 原来只写不读：存好的阈值刷新后看不见，用户会以为没保存上，
   // 再点一次保存就把空输入框当成"关闭"写回去了。
   try {
     const cur = await apiGet("/api/alerts/speed-limit");
-    if (cur && cur.kmh) {
-      document.getElementById("speed-limit").value =
-        U.distLabel() === "mi" ? Math.round(cur.kmh / 1.609344) : Math.round(cur.kmh);
-    }
-  } catch (e) { /* 没设过就留空 */ }
+    speedLimitKmh = cur && cur.kmh ? cur.kmh : null;
+  } catch (e) { speedLimitKmh = null; }
+  paintSpeedLimit();
+  if (speedLimitBound) return;      // 监听只绑一次，否则重载会叠加
+  speedLimitBound = true;
   document.getElementById("speed-limit-save").addEventListener("click", async () => {
     const raw = parseFloat(document.getElementById("speed-limit").value);
     const kmh = isFinite(raw) && raw > 0
       ? (U.distLabel() === "mi" ? raw * 1.609344 : raw) : null;
     try {
       await apiPost("/api/alerts/speed-limit", { kmh });
+      speedLimitKmh = kmh;            // 真值同步，下次切单位才重绘得对
       document.getElementById("speed-limit-msg").textContent = t("settings.ice_saved");
     } catch (e) { document.getElementById("speed-limit-msg").textContent = e.message; }
   });

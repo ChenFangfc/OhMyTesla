@@ -19,8 +19,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from ..config import settings
-from ..livestate import live
 from ..i18n.router import t
+from ..livestate import live
 from . import notifier
 from .sentry import tracker as sentry_tracker
 from .store import store
@@ -93,7 +93,8 @@ RULES: dict[str, Rule] = {
 }
 
 # 规则标题优先用字典（原生英文），字典没有的退回内置双语
-from .. i18n.router import catalog as _catalog  # noqa: E402
+from ..i18n.router import catalog as _catalog  # noqa: E402
+
 _CATALOG_KEYS = set(_catalog("en"))
 
 _BODY_LABELS = {
@@ -466,11 +467,16 @@ class AlertEngine:
         if rule.startswith(("sentry_", "possible_theft", "new_sentry")):
             import json as _json
 
+            # 载荷里要带 geofence 和 body：自动化最常见的条件就是
+            # "只在家里/不在家时才动作"，而正文里是"哪扇门被开了"这类细节。
+            # 少这两项的话，订阅方只能拿到一句标题，做不了任何判断。
             live.publish(
                 f"teslamate/cars/{car_id}/sentry_event",
                 _json.dumps(
-                    {"rule": rule, "level": level, "car": car_name,
-                     "title": title, "ts": time.time()},
+                    {"rule": rule, "level": level, "car": car_name, "car_id": car_id,
+                     "title": title, "body": full,
+                     "geofence": (live.cars.get(car_id, {}) or {}).get("geofence") or "",
+                     "ts": time.time()},
                     ensure_ascii=False,
                 ),
             )
@@ -536,14 +542,16 @@ class AlertEngine:
             live.publish(
                 f"teslamate/cars/{car_id}/sentry_event",
                 json.dumps(
-                    {"rule": rule_id, "level": rule.level, "car": car_name,
-                     "title": title, "ts": now},
+                    {"rule": rule_id, "level": rule.level, "car": car_name, "car_id": car_id,
+                     "title": title, "body": body,
+                     "geofence": (live.cars.get(car_id, {}) or {}).get("geofence") or "",
+                     "ts": now},
                     ensure_ascii=False,
                 ),
             )
         try:
             await store.add_alert(car_id, car_name, rule_id, rule.level, title, body, delivered, channels)
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("failed to persist alert")
         log.info("alert fired: %s car=%s delivered=%s", rule_id, car_id, delivered)
 

@@ -22,7 +22,9 @@
   /* Text */
   --text-primary:   #F5F5F5;
   --text-secondary: #A0A0A5;
-  --text-tertiary:  #6F6F74;
+  /* 3.83:1 不到 AA 的 4.5:1，而它用在筛选按钮、表头、图表坐标轴这些
+     正文尺寸的地方。提到 5.58:1 达标，和 secondary(7.36:1) 仍有清晰层级。 */
+  --text-tertiary:  #8A8A90;
 
   /* Borders — used sparingly (§8) */
   --border-subtle: rgba(255, 255, 255, 0.07);
@@ -60,6 +62,10 @@
 
   --content-max: 1280px;
   --page-pad: 64px;
+  /* 顶部粘性导航的实际占位高度：navbar-inner 48px + navbar 的 padding-bottom 10px。
+     页面内任何自己 sticky 的东西（时间线的日期头、表头）都要按它让位，
+     否则会被导航栏盖住。移动端导航固定在底部，那里覆盖成 0。 */
+  --navbar-h: 58px;
 }
 
 @media (max-width: 1080px) { :root { --page-pad: 32px; } }
@@ -73,9 +79,14 @@ body {
   margin: 0;
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont,
-               "SF Pro Display", "SF Pro Text", "Segoe UI",
-               "PingFang SC", "Noto Sans CJK SC", sans-serif;
+  /* 平台原生字体优先。这里原来打头的是 Inter，但仓库既没打包字体文件、
+     也没从 CDN 拉 —— 于是它只对"碰巧本机装了 Inter"的少数人生效，
+     那部分用户看到的界面和其他所有人不一样，而且没人会发现。
+     一个自托管的仪表盘不该为了字体去联网，用系统 UI 字体既统一又零依赖，
+     中文回落到各平台自己的黑体。 */
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text",
+               "Segoe UI", ui-sans-serif, system-ui, Roboto,
+               "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
   font-size: 15px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -454,11 +465,21 @@ h1, h2, h3, h4 { margin: 0; font-weight: 500; letter-spacing: -0.3px; }
 
 /* Mobile: bottom navigation instead of the desktop rail (§28). */
 @media (max-width: 720px) {
-  .navbar { position: fixed; top: auto; bottom: 0; border-bottom: 0; border-top: 1px solid var(--border-subtle); }
+  /* 导航移到底部：页面顶部不再有粘性占位 */
+  :root { --navbar-h: 0px; }
+  .navbar {
+    position: fixed; top: auto; bottom: 0;
+    border-bottom: 0; border-top: 1px solid var(--border-subtle);
+    /* 顶部那条向下渐隐的蒙版在底部导航上是反的，会把导航自己的上边缘淡掉 */
+    -webkit-mask-image: none; mask-image: none;
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
   .navbar-inner { justify-content: space-around; height: 56px; padding: 0 6px; }
   .navlink { flex-direction: column; gap: 3px; height: 56px; font-size: 10.5px; padding: 0 6px; }
   .navlink.active::after { top: 0; bottom: auto; left: 6px; right: 6px; }
-  body { padding-bottom: 56px; }
+  /* 底部导航实高是 56px + 安全区，不是 56。原来页面最后一行内容会被压在
+     导航下面 —— 在没有安全区的安卓上也差 10px，iPhone 上更多。 */
+  body { padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px)); }
   .controls { gap: 4px; }
   .control { min-width: 0; flex: 1; }
 }
@@ -572,8 +593,15 @@ details.disclose > summary .value + .chev { margin-left: 12px; }
 
 /* -------------------------------------------------------------- inputs --- */
 
+/* 表单里的「标签 + 控件」一组。结构是 <label class="field"><span>标签</span><input></label>
+   —— 用 label 包住控件，点标签就能聚焦，不需要 for/id 配对。
+   原来这里写的是 `.field > label`，但没有任何模板是那个结构，等于一条死规则。 */
 .field { display: flex; flex-direction: column; gap: 6px; }
-.field > label { font-size: 12.5px; color: var(--text-secondary); }
+.field > span { font-size: 12.5px; color: var(--text-secondary); }
+
+/* 行内的小号按钮，用在列表每一行的右侧（编辑/删除），
+   和 36px 的主按钮并排时不会把行撑高。 */
+.btn.sm { height: 28px; padding: 0 11px; font-size: 12.5px; }
 
 input[type="text"], input[type="number"], input[type="password"],
 input[type="time"], input[type="email"], select, textarea {
@@ -587,6 +615,17 @@ textarea { height: auto; padding: 9px 11px; line-height: 1.5; resize: vertical; 
 input:focus, select:focus, textarea:focus {
   border-color: var(--border-medium); background: var(--bg-elevated);
 }
+/* 上面把 outline 关掉了，必须把焦点态还回来 —— 只靠边框颜色微变，
+   键盘用户在一屏十几个输入框里根本找不到光标在哪。
+   :focus-visible 只在键盘导航时出现，鼠标点击不会看到这圈光晕。 */
+input:focus-visible, select:focus-visible, textarea:focus-visible,
+button:focus-visible, a:focus-visible, summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--tesla-blue);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+.cmdk input:focus-visible { outline-offset: -2px; }
 input::placeholder, textarea::placeholder { color: var(--text-tertiary); }
 select {
   appearance: none; padding-right: 30px; cursor: pointer;
@@ -703,6 +742,22 @@ input[type="range"] { accent-color: var(--tesla-blue); }
   --series-3: #A8BEFF;
   --series-4: #5B7FD4;
   --series-5: #8E93A0;
+
+  /* ── 旧 token 名的别名 ──────────────────────────────────────────
+     welcome / settings / usb 三个模板和 charts.js 里还留着上一套命名
+     （--page / --surface / --ink / --border / --accent / --status-*）。
+     CSS 对未定义变量不报错，只是**整条声明作废**：welcome 页那个
+     `background: var(--page)` 直接没有背景，settings 里的错误文字
+     不是红色，charts.js 拿 --surface 当描边时会写进一个非法 paint 值。
+     全都是"看起来只是有点丑"的那种坏，最难被发现。
+     一次性补成别名，比逐个模板改字符串安全 —— 漏一处又是同样的静默失效。 */
+  --page:   var(--bg-primary);
+  --surface: var(--bg-secondary);
+  --ink:    var(--text-primary);
+  --border: var(--border-subtle);
+  --accent: var(--tesla-blue);
+  --status-critical: var(--critical-red);
+  --status-serious:  var(--warning-orange);
 }
 
 .chart-card {
@@ -964,9 +1019,14 @@ details.disclose.has-issues > summary .value { color: var(--warning-orange); }
   background: var(--bg-hover); overflow: visible;
 }
 .charge-track .fill {
-  position: absolute; inset: 0 auto 0 0; border-radius: 2px;
+  /* 用 transform 而不是 width 做动画：改 width 每一帧都要重新布局，
+     而这条进度条在充电页上是每秒都在动的。scaleX 只走合成层。
+     transform-origin 必须钉在左边，否则会从中间往两头长。 */
+  position: absolute; inset: 0 auto 0 0; width: 100%; border-radius: 2px;
   background: var(--charging-green);
-  transition: width 600ms var(--ease);
+  transform-origin: left center;
+  transform: scaleX(0);
+  transition: transform 600ms var(--ease);
 }
 .charge-track .limit {
   position: absolute; top: -3px; width: 1.5px; height: 9px;
@@ -1065,3 +1125,98 @@ details.disclose.has-issues > summary .value { color: var(--warning-orange); }
 .subhead .back:active { transform: scale(0.97); }
 .subhead .crumb { font-size: 12px; color: var(--text-tertiary); }
 .subhead h1 { font-size: 22px; font-weight: 500; letter-spacing: -0.5px; }
+
+/* ── 时间线页 ─────────────────────────────────────────────────────────
+   日历热力图、事件轴、状态占比条。这三块只在 /timeline 用到，
+   但放公共表里是为了跟其余组件共用同一套 token —— 单独一份样式表
+   会让配色在两个地方各活一份，改主题时必漏一处。 */
+
+.cal-wrap { overflow-x: auto; padding: 2px 0 6px; }
+.cal-wrap svg { display: block; }
+.cal-cell { fill: var(--bg-elevated); }
+.cal-cell.l0 { fill: var(--bg-elevated); }
+.cal-cell.l1 { fill: color-mix(in srgb, var(--series-1) 28%, var(--bg-elevated)); }
+.cal-cell.l2 { fill: color-mix(in srgb, var(--series-1) 52%, var(--bg-elevated)); }
+.cal-cell.l3 { fill: color-mix(in srgb, var(--series-1) 76%, var(--bg-elevated)); }
+.cal-cell.l4 { fill: var(--series-1); }
+.cal-mon { fill: var(--text-tertiary); font-size: 9px; }
+
+/* 图例里的格子是 <span> 不是 <rect>，fill 管不着，得给 background */
+.cal-legend { display: flex; align-items: center; gap: 5px; margin-top: 8px; }
+.cal-legend .cal-cell {
+  width: 12px; height: 12px; border-radius: 2px; display: inline-block;
+  background: var(--bg-elevated);
+}
+.cal-legend .cal-cell.l1 { background: color-mix(in srgb, var(--series-1) 28%, var(--bg-elevated)); }
+.cal-legend .cal-cell.l2 { background: color-mix(in srgb, var(--series-1) 52%, var(--bg-elevated)); }
+.cal-legend .cal-cell.l3 { background: color-mix(in srgb, var(--series-1) 76%, var(--bg-elevated)); }
+.cal-legend .cal-cell.l4 { background: var(--series-1); }
+.cal-legend .body-sm { margin: 0 4px; }
+
+.evt { list-style: none; margin: 0; padding: 0; }
+.evt-day {
+  font-size: 12px; color: var(--text-tertiary); letter-spacing: 0.02em;
+  padding: 18px 0 6px;
+  position: sticky; top: var(--navbar-h); background: var(--bg-primary); z-index: 1;
+}
+.evt-day:first-child { padding-top: 2px; }
+.evt-row { position: relative; }
+/* 竖线画在行上而不是圆点上：圆点有背景色，线穿过去会被盖成两截 */
+.evt-row::before {
+  content: ""; position: absolute; left: 13px; top: 0; bottom: 0;
+  width: 1px; background: var(--border-subtle);
+}
+.evt-row:last-child::before { bottom: 50%; }
+.evt-link {
+  display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 0;
+  color: inherit; text-decoration: none; border-radius: var(--r-md);
+  transition: background var(--t-hover) var(--ease);
+}
+a.tl-link:hover { background: var(--bg-hover); }
+.evt-link.static { cursor: default; }
+.evt-dot {
+  position: relative; z-index: 1; flex: none;
+  width: 27px; height: 27px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--bg-elevated); color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+.evt-dot.k-drive  { color: var(--series-2); }
+.evt-dot.k-charge { color: var(--charging-green); }
+.evt-dot.k-update { color: var(--warning-orange); }
+.evt-dot.k-idle   { color: var(--text-tertiary); }
+.evt-body { min-width: 0; flex: 1; }
+.evt-title {
+  font-size: 14px; letter-spacing: -0.1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.evt-sub { font-size: 12.5px; color: var(--text-tertiary); margin-top: 2px; }
+.evt-time { font-size: 12.5px; color: var(--text-tertiary); flex: none; font-variant-numeric: tabular-nums; }
+
+.statebar {
+  display: flex; height: 12px; border-radius: 6px; overflow: hidden;
+  background: var(--bg-elevated);
+}
+.statebar .seg { height: 100%; }
+/* 漏采集的空档：用琥珀色和其余事件区分开——它是"数据有问题"的信号，
+   不是一件正常发生的事，视觉上不该跟停放长一样。 */
+.evt-dot.k-gap { color: var(--warning-orange); border-color: color-mix(in srgb, var(--warning-orange) 35%, transparent); }
+
+/* charts.js 的 tooltip 内部结构。这四个类之前在样式表里一条规则都没有，
+   于是悬浮提示是三行没有间距、没有对齐的裸文本，颜色点也不是圆的。 */
+.tooltip .tt-title {
+  font-size: 11.5px; color: var(--text-tertiary);
+  margin-bottom: 5px; letter-spacing: 0.02em;
+}
+.tooltip .tt-row {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 12.5px; line-height: 1.7; white-space: nowrap;
+}
+.tooltip .tt-row .dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+}
+/* 数值右对齐并用等宽数字，多行叠在一起时小数点是对齐的 */
+.tooltip .tt-row .v {
+  margin-left: auto; padding-left: 14px;
+  font-variant-numeric: tabular-nums; color: var(--text-primary);
+}

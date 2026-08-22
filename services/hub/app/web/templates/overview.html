@@ -243,7 +243,9 @@ function paintCharge(d) {
   const limit = Math.round(c.limit_soc || 100);
   const track = box.querySelector(".charge-track");
   track.classList.add("live");
-  track.querySelector(".fill").style.width = soc + "%";
+  // 配合 CSS 改成 transform 动画：宽度恒为 100%，靠 scaleX 表现进度。
+  // 还写 style.width 的话，两套机制会打架（宽度变了、缩放也变了）。
+  track.querySelector(".fill").style.transform = `scaleX(${Math.max(0, Math.min(100, +soc || 0)) / 100})`;
   track.querySelector(".head").style.left = soc + "%";
   track.querySelector(".limit").style.left = limit + "%";
 

@@ -178,7 +178,9 @@ $main.addEventListener("error", async () => {
     tip.innerHTML = t("player.preview.ready");
     if (playing) $main.play().catch(() => {});
   } catch (e) {
-    tip.innerHTML = t("player.preview.failed", { message: e.message });
+    // e.message 来自后端的 detail 字段，里面会拼进文件路径。走 innerHTML
+    // 就必须转义 —— 这些路径有一部分是用户通过 U 盘导入自己命名的。
+    tip.innerHTML = t("player.preview.failed", { message: esc(e.message || "") });
   }
 });
 $main.addEventListener("ended", () => {
@@ -308,15 +310,23 @@ async function pollJobs() {
     const div = document.getElementById("jobs");
     if (!rows.length) { div.innerHTML = `<div class="muted">${t("player.jobs.empty")}</div>`; return; }
     const S = { queued: t("player.jobs.queued"), running: t("player.jobs.running"), done: t("player.jobs.done"), failed: t("player.jobs.failed"), cancelled: t("player.jobs.cancelled") };
-    div.innerHTML = rows.map(j => `
+    // 这一段的每一个插值都要过 esc()。j.error 是 ffmpeg 的原始 stderr，
+    // 里面会带用户可控的文件名（U 盘导入的路径、事件目录名）；j.output 进
+    // href；layout 来自任务参数。任何一处漏掉，导出失败一次就能在这个
+    // 能解锁车辆的门户里执行脚本。
+    div.innerHTML = rows.map((j) => {
+      let layout = "";
+      try { layout = JSON.parse(j.params).layout || ""; } catch (e) { /* 参数损坏就不显示 */ }
+      return `
       <div class="rule-row">
-        <div class="name">#${j.id} ${JSON.parse(j.params).layout || ""} <span class="muted">${S[j.status] || j.status}</span>
-          ${j.status === "running" ? `<progress max="100" value="${j.progress}" style="width:100%"></progress>` : ""}
-          ${j.status === "failed" ? `<div class="muted" style="white-space:pre-wrap;max-height:60px;overflow:auto">${(j.error || "").slice(-300)}</div>` : ""}
+        <div class="name">#${j.id} ${esc(layout)} <span class="muted">${esc(S[j.status] || j.status)}</span>
+          ${j.status === "running" ? `<progress max="100" value="${+j.progress || 0}" style="width:100%"></progress>` : ""}
+          ${j.status === "failed" ? `<div class="muted" style="white-space:pre-wrap;max-height:60px;overflow:auto">${esc((j.error || "").slice(-300))}</div>` : ""}
         </div>
-        ${j.status === "done" ? `<a class="btn" href="${j.output}" download>${t("common.download")}</a>` : ""}
-        ${(j.status === "running" || j.status === "queued") ? `<button onclick="cancelJob(${j.id})">${t("common.cancel")}</button>` : ""}
-      </div>`).join("");
+        ${j.status === "done" ? `<a class="btn" href="${esc(j.output)}" download>${esc(t("common.download"))}</a>` : ""}
+        ${(j.status === "running" || j.status === "queued") ? `<button onclick="cancelJob(${+j.id})">${esc(t("common.cancel"))}</button>` : ""}
+      </div>`;
+    }).join("");
     if (rows.some(j => j.status === "running" || j.status === "queued")) setTimeout(pollJobs, 2000);
   } catch (e) { /* ignore */ }
 }

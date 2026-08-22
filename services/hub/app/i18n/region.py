@@ -78,7 +78,7 @@ def from_token(token: str | None) -> tuple[str | None, str | None]:
 
     iss = str(payload.get("iss") or "")
     if iss:
-        host = iss.split("//")[-1].split("/")[0]
+        host = iss.rsplit("//", maxsplit=1)[-1].split("/", maxsplit=1)[0]
         tld = host.rsplit(".", 1)[-1].lower()
         if tld == "cn":
             return "CN", acct_locale

@@ -17,6 +17,7 @@ const cmdk = (() => {
     { key: "nav.overview", href: "/",             words: "overview home car vehicle 首页 总览" },
     { key: "nav.energy",   href: "/energy",     words: "energy consumption efficiency kwh 能耗 效率 电量" },
     { key: "nav.trips",    href: "/trips",       words: "trips drives routes 行程 路线" },
+    { key: "nav.timeline", href: "/timeline",    words: "timeline history calendar places visited activity 时间线 历史 日历 足迹 地点 停放" },
     { key: "nav.dashcam",  href: "/dashcam",      words: "dashcam clips footage video 录像 行车记录仪" },
     { key: "cmdk.nav_usb", href: "/dashcam/usb",  words: "usb drive import stick u盘 导入" },
     { key: "nav.security", href: "/security",       words: "security sentry alerts notifications 哨兵 告警 安全" },

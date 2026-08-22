@@ -133,7 +133,7 @@ async def _apply_geofence(lat: float, lon: float, radius: int, except_id: int = 
             )
         except db.DbUnavailable:
             raise
-        except Exception:  # noqa: BLE001 - earthdistance 扩展缺失等，回填失败不该让 CRUD 整个失败
+        except Exception:
             log.warning("geofence backfill failed for %s.%s", table, geo_col, exc_info=True)
 
 

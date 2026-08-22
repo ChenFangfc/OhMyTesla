@@ -56,9 +56,9 @@ async def set_prefs(patch: dict) -> dict:
     # 于是「电价方案里选了 EUR」和「fmt.money 用的显示币种」可以长期不一致，
     # 同一页上两个金额跟着两种符号。
     for k in ("locale", "length", "temp", "pressure", "currency"):
-        if k in patch and patch[k]:
+        if patch.get(k):
             cur[k] = str(patch[k])
-    if "locale" in patch and patch["locale"]:
+    if patch.get("locale"):
         cur["locale_set"] = True
     if "auto" in patch:
         cur["auto"] = bool(patch["auto"])

@@ -144,13 +144,13 @@ async def send(title: str, body: str, payload: dict | None = None, attach: str |
             ok = await webpush.send(
                 title, body, url=url, level=(payload or {}).get("level", "info")
             ) or ok
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("web push send failed")
 
     if any(c in channels for c in ("email", "ntfy", "telegram", "apprise")):
         try:
             ok = await asyncio.to_thread(_send_apprise_sync, title, body, attach) or ok
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("apprise send failed")
 
     if settings.alert_webhook_url:
@@ -161,7 +161,7 @@ async def send(title: str, body: str, payload: dict | None = None, attach: str |
                     json={"title": title, "body": body, **(payload or {})},
                 )
                 ok = ok or resp.is_success
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("webhook send failed")
 
     return ok, channels

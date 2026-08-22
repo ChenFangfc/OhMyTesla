@@ -201,7 +201,7 @@ async def overview(car_id: int | None = None, tz_offset_min: int = 0):
         out["today"] = await _today_energy(cid, tz_offset_min)
     except db.DbUnavailable as e:
         log.info("overview: db unavailable (%s)", e)
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("overview aggregation failed")
 
     out["health"] = _health(c)

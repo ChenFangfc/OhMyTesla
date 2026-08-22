@@ -247,13 +247,43 @@
      / 切车都会重跑 render()，于是同一个元素被登记 N 次 —— 窗口一改大小就把
      N 份陈旧的配置依次重画一遍。用 Map 按元素覆盖，天然去重。 */
   const registry = new Map();
-  window.omtChart = {
-    line(elm, opts) { registry.set(elm, () => line(elm, opts)); line(elm, opts); },
-    bars(elm, opts) { registry.set(elm, () => bars(elm, opts)); bars(elm, opts); },
-  };
+
+  /* 折叠的 <details> 里 clientWidth 是 0，frame() 会退回 640 画完，
+     再被 `width:100%` 拉伸到容器真实宽度（常常是 1200+），于是文字和
+     线宽整体变形近两倍。窗口 resize 监听救不了这种情况 —— 展开 <details>
+     不触发 resize。ResizeObserver 盯的是元素自己的尺寸，展开、
+     侧栏收放、窗口缩放三种情况一并覆盖。 */
   let rt;
-  window.addEventListener("resize", () => {
-    clearTimeout(rt);
-    rt = setTimeout(() => registry.forEach((fn) => fn()), 200);
-  });
+  const ro = typeof ResizeObserver !== "undefined"
+    ? new ResizeObserver((entries) => {
+        clearTimeout(rt);
+        rt = setTimeout(() => {
+          for (const e of entries) {
+            const fn = registry.get(e.target);
+            // 宽度为 0 说明还是不可见，画了也是白画，等下一次
+            if (fn && e.target.clientWidth > 0) fn();
+          }
+        }, 120);
+      })
+    : null;
+
+  function register(elm, draw) {
+    const first = !registry.has(elm);
+    registry.set(elm, draw);
+    if (ro && first) ro.observe(elm);
+    draw();
+  }
+
+  window.omtChart = {
+    line(elm, opts) { register(elm, () => line(elm, opts)); },
+    bars(elm, opts) { register(elm, () => bars(elm, opts)); },
+  };
+
+  // 没有 ResizeObserver 的老浏览器退回窗口监听，至少缩放能重画
+  if (!ro) {
+    window.addEventListener("resize", () => {
+      clearTimeout(rt);
+      rt = setTimeout(() => registry.forEach((fn) => fn()), 200);
+    });
+  }
 })();
