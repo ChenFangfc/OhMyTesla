@@ -24,6 +24,7 @@ OhmyTesla，不用我们自己写客户端 —— 这是整份竞品调研里性
 import logging
 import secrets
 
+import asyncpg
 from fastapi import APIRouter, HTTPException, Request
 
 from .. import db
@@ -34,6 +35,29 @@ from ..livestate import live
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["teslamateapi-compat"])
+
+
+def _guard(fn):
+    """把"数据库还没就绪"翻译成 503，而不是 500。
+
+    insights 路由早就有这一层，这里之前漏了。后果很具体：TeslaMate 首次
+    启动要跑几分钟建表迁移，这段时间里 MateDroid 这类客户端拿到的是
+    500 Internal Server Error —— 那看起来是"这个服务坏了"而不是
+    "再等一会儿"，用户会直接卸载。
+    """
+    import functools
+
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await fn(*args, **kwargs)
+        except db.DbUnavailable as e:
+            raise HTTPException(503, f"TeslaMate database is not reachable yet: {e}") from e
+        except asyncpg.PostgresError as e:
+            # 表还不存在也归到这一类：TeslaMate 没跑完迁移时就是这个表现
+            raise HTTPException(503, f"TeslaMate database is not ready yet: {e}") from e
+
+    return wrapper
 
 
 async def _units() -> dict:
@@ -101,6 +125,7 @@ def _car_stub(row) -> dict:
 # ---------------------------------------------------------------- 车辆
 
 @router.get("/v1/cars")
+@_guard
 async def cars_v1(request: Request):
     _check_token(request)
     rows = await db.fetch(
@@ -150,6 +175,7 @@ async def cars_v1(request: Request):
 
 
 @router.get("/v1/cars/{car_id}")
+@_guard
 async def car_v1(car_id: int, request: Request):
     _check_token(request)
     all_cars = await cars_v1(request)
@@ -180,6 +206,7 @@ def _n(v):
 
 
 @router.get("/v1/cars/{car_id}/status")
+@_guard
 async def status_v1(car_id: int, request: Request):
     """实时状态。数据来自 MQTT retained 快照，和 teslamateapi 同源。"""
     _check_token(request)
@@ -275,6 +302,7 @@ async def status_v1(car_id: int, request: Request):
 # ---------------------------------------------------------------- 电池健康
 
 @router.get("/v1/cars/{car_id}/battery-health")
+@_guard
 async def battery_health_v1(car_id: int, request: Request):
     _check_token(request)
     row = await _car_row(car_id)
@@ -303,6 +331,7 @@ async def battery_health_v1(car_id: int, request: Request):
 # ---------------------------------------------------------------- 行程
 
 @router.get("/v1/cars/{car_id}/drives")
+@_guard
 async def drives_v1(car_id: int, request: Request, limit: int = 100):
     _check_token(request)
     row = await _car_row(car_id)
@@ -374,6 +403,7 @@ async def drives_v1(car_id: int, request: Request, limit: int = 100):
 
 
 @router.get("/v1/cars/{car_id}/drives/{drive_id}")
+@_guard
 async def drive_detail_v1(car_id: int, drive_id: int, request: Request):
     _check_token(request)
     all_d = await drives_v1(car_id, request, limit=100000)
@@ -430,6 +460,7 @@ async def _charges(car_id: int, limit: int, only_open: bool = False) -> list[dic
 
 
 @router.get("/v1/cars/{car_id}/charges")
+@_guard
 async def charges_v1(car_id: int, request: Request, limit: int = 100):
     _check_token(request)
     row = await _car_row(car_id)
@@ -438,6 +469,7 @@ async def charges_v1(car_id: int, request: Request, limit: int = 100):
 
 
 @router.get("/v1/cars/{car_id}/charges/current")
+@_guard
 async def charge_current_v1(car_id: int, request: Request):
     """正在进行的充电。没有就返回空列表而不是 404 —— 客户端会轮询它。"""
     _check_token(request)
@@ -447,6 +479,7 @@ async def charge_current_v1(car_id: int, request: Request):
 
 
 @router.get("/v1/cars/{car_id}/charges/{charge_id}")
+@_guard
 async def charge_detail_v1(car_id: int, charge_id: int, request: Request):
     _check_token(request)
     row = await _car_row(car_id)
@@ -460,6 +493,7 @@ async def charge_detail_v1(car_id: int, charge_id: int, request: Request):
 # ---------------------------------------------------------------- 固件更新
 
 @router.get("/v1/cars/{car_id}/updates")
+@_guard
 async def updates_v1(car_id: int, request: Request, limit: int = 100):
     _check_token(request)
     row = await _car_row(car_id)
@@ -478,17 +512,20 @@ async def updates_v1(car_id: int, request: Request, limit: int = 100):
 # ---------------------------------------------------------------- 其它
 
 @router.get("/v1/globalsettings")
+@_guard
 async def globalsettings_v1(request: Request):
     _check_token(request)
     return {"data": {"settings": await _units()}}
 
 
 @router.get("/ping")
+@_guard
 async def ping():
     return {"message": "pong"}
 
 
 @router.get("/readyz")
+@_guard
 async def readyz():
     """就绪探针：数据库连得上才算就绪。"""
     try:
@@ -506,10 +543,12 @@ _NOT_IMPLEMENTED = (
 
 
 @router.post("/v1/cars/{car_id}/command/{command}")
+@_guard
 async def command_not_implemented(car_id: int, command: str):
     raise HTTPException(501, _NOT_IMPLEMENTED)
 
 
 @router.post("/v1/cars/{car_id}/wake_up")
+@_guard
 async def wake_not_implemented(car_id: int):
     raise HTTPException(501, _NOT_IMPLEMENTED)

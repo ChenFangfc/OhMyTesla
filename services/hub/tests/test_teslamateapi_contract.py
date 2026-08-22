@@ -122,10 +122,17 @@ def dig(obj, path: str):
 
 def main() -> int:
     fails: list[str] = []
+    skipped: list[str] = []
     for path, checks in CONTRACT.items():
         try:
             status, body = fetch(path)
         except urllib.error.HTTPError as e:
+            if e.code == 503:
+                # TeslaMate 还没跑起来（CI 里就不会起它）。这是环境状态，
+                # 不是契约违约 —— 但也不能悄悄跳过，否则契约回归会被这条路径掩盖。
+                print(f"  ⏭  {path} → 503（TeslaMate 数据库未就绪，跳过）")
+                skipped.append(path)
+                continue
             print(f"  ❌ {path} → HTTP {e.code}")
             fails.append(path)
             continue
@@ -168,7 +175,15 @@ def main() -> int:
                 fails.append(path)
 
     print()
-    print("契约完全匹配" if not fails else f"失败 {len(fails)} 项: {fails[:5]}")
+    if skipped:
+        print(f"⏭  {len(skipped)} 个端点因数据库未就绪跳过（CI 不启动 TeslaMate）")
+    if fails:
+        print(f"失败 {len(fails)} 项: {fails[:5]}")
+    elif skipped and len(skipped) >= len(CONTRACT) - 1:
+        # 全都跳过等于什么都没验证。说清楚，别让它看起来像通过了。
+        print("⚠️  几乎所有端点都跳过了 —— 这一轮没有真正验证契约")
+    else:
+        print("契约完全匹配")
     return 1 if fails else 0
 
 
