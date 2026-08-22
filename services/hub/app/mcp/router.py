@@ -12,7 +12,6 @@
 不引入任何新依赖。通知类消息（notifications/*）按规范不回响应。
 """
 
-import json
 import logging
 
 from fastapi import APIRouter, Request
@@ -83,8 +82,23 @@ async def _handle(msg: dict) -> dict | None:
     return _err(rid, -32601, f"method not found: {method}")
 
 
+# JSON-RPC 只接受 JSON。这一条不是洁癖：`await request.json()` 绕过了
+# pydantic，于是 FastAPI 平时那道 content-type 闸门在这里根本不存在，
+# text/plain 也能进来 —— 而 text/plain 属于 CORS 安全列表，跨站发送不触发
+# 预检。配合浏览器自动附带的 Basic 凭据，任意一个网页就能驱动 run_sql；
+# 即使读不到响应体，也能用 pg_sleep 把查询结果一位一位地测出来。
+_JSON_CT = frozenset({"application/json", "application/json-rpc"})
+
+
 @router.post("/mcp")
 async def mcp_endpoint(request: Request):
+    ct = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if ct not in _JSON_CT:
+        return JSONResponse(
+            _err(None, -32600, "Content-Type must be application/json"),
+            status_code=415,
+        )
+
     try:
         payload = await request.json()
     except Exception:  # noqa: BLE001

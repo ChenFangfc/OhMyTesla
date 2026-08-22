@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Response  # noqa: F401
+from fastapi import APIRouter, HTTPException, Response
 
 from .. import db
 from ..config import settings
@@ -61,9 +61,18 @@ def _bundled_path(model: str) -> Path | None:
     return p if p.is_file() else None
 
 
+# Tesla compositor 认得的视角。必须白名单：view 会原样进 compositor 的请求
+# 参数、也会进本地缓存文件名，不卡的话页面上一个
+# `<img src="/api/vehicle/render?view=xxx1">` 循环就能既撑爆缓存目录、
+# 又替用户把 IP 打到被 Tesla 限流。
+_VIEWS = frozenset({"STUD_3QTR", "STUD_SIDE", "STUD_REAR", "STUD_SEAT", "STUD_WHEEL"})
+
+
 @router.get("/render")
 async def render(car_id: int | None = None, view: str = "STUD_3QTR"):
     """按优先级给车图：官方 compositor → 自带素材 → 404（前端落回自绘 SVG）。"""
+    if view not in _VIEWS:
+        raise HTTPException(400, f"unknown view; expected one of {sorted(_VIEWS)}")
     cfg = await _config(car_id)
     if cfg is None:
         raise HTTPException(404, "no vehicle")

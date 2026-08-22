@@ -14,7 +14,7 @@ services:
       - DATABASE_HOST=database
       - MQTT_HOST=mosquitto
     ports:
-      - "${TESLAMATE_PORT:-4000}:4000"
+      - "${BIND_ADDR:-0.0.0.0}:${TESLAMATE_PORT:-4000}:4000"
     volumes:
       - ./data/import:/opt/app/import
     cap_drop:
@@ -40,13 +40,27 @@ services:
       - DATABASE_PASS=${TM_DB_PASS}
       - DATABASE_NAME=${TM_DB_NAME}
       - DATABASE_HOST=database
-      # 不设就是镜像默认的 admin/admin。只在 grafana 数据卷首次初始化时生效；
-      # 已经跑过的装机改这个没用，得用 ./omt grafana-password
-      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:-admin}
+      # 以前这里是 ${GF_SECURITY_ADMIN_PASSWORD:-admin}，而 .env.example 里
+      # 这一项是空的 —— 出厂即 admin/admin，端口又绑在所有网卡上，而这个
+      # Grafana 的数据源用的是 TeslaMate 那个 Postgres 超级用户。
+      # `:?` 让 compose 在变量为空时直接报错退出，而不是悄悄退回弱口令。
+      # 只在 grafana 数据卷首次初始化时生效；已跑过的装机要用 ./omt grafana-password
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:?set GF_SECURITY_ADMIN_PASSWORD in .env (./omt up generates one for you)}
+      # 匿名访问和用户注册默认就该关死：这个面板能看到全部行车轨迹
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_USERS_ALLOW_SIGN_UP=false
     ports:
-      - "${GRAFANA_PORT:-3000}:3000"
+      # 绑定地址可配。默认保持 0.0.0.0（多数人从别的设备看面板），
+      # 但想锁到本机的人不必去改 compose：在 .env 里设 BIND_ADDR=127.0.0.1。
+      - "${BIND_ADDR:-0.0.0.0}:${GRAFANA_PORT:-3000}:3000"
     volumes:
       - teslamate-grafana-data:/var/lib/grafana
+      # 社区面板包的挂载点。teslamate/grafana 镜像里已经配好了
+      # provisioning，往这个目录里丢 dashboard JSON 就会被自动加载，
+      # 不需要改镜像、也不影响官方那 22 张面板的升级。
+      # 我们**不往仓库里塞第三方 JSON**（各家 license 不同、还要跟着上游更新），
+      # 只留口子 + 一份说明，见 grafana/community/README.md。
+      - ./grafana/community:/etc/grafana/provisioning/dashboards/community:ro
 
   mosquitto:
     image: eclipse-mosquitto:2
@@ -78,6 +92,9 @@ services:
       - PUBLIC_URL=${PUBLIC_URL:-}
       - TESLACAM_ROOT=/teslacam
       - TESLACAM_TZ=${TESLACAM_TZ:-}
+      # 统计按天/周/月分桶要用本地时区。不设的话按 UTC 分，
+      # 东八区凌晨的行程会落到前一天、西半球晚上的会落到后一天。
+      - TZ=${TZ:-}
       - DATA_DIR=/data
       - TESLAMATE_URL=http://teslamate:4000
       - GRAFANA_URL=http://grafana:3000
@@ -118,7 +135,7 @@ services:
       - TESLA_ACCESS_TOKEN=${TESLA_ACCESS_TOKEN:-}
       - COST_WRITE_BACK=${COST_WRITE_BACK:-false}
     ports:
-      - "${OHMYTESLA_PORT:-8800}:8800"
+      - "${BIND_ADDR:-0.0.0.0}:${OHMYTESLA_PORT:-8800}:8800"
     volumes:
       - ${TESLACAM_DIR:-./data/teslacam}:/teslacam
       - ./data/hub:/data

@@ -46,14 +46,65 @@ async def public_key() -> str:
     return (await keys())["public_key"]
 
 
+MAX_DEVICES = 20
+
+
+def _validate_endpoint(endpoint: str) -> None:
+    """推送端点必须是公网 https。
+
+    这个地址会被服务端主动 POST，等于把 hub 变成一个受控的 HTTP 客户端：
+    不校验的话，任何能调到这个接口的人都可以让 hub 去打 http://127.0.0.1:...
+    或内网地址，用返回耗时/错误码探测内网 —— 而 hub 恰好和 Postgres、
+    mosquitto、TeslaMate 在同一个 compose 网络里。
+    """
+    from ipaddress import ip_address
+    from urllib.parse import urlparse
+
+    u = urlparse(endpoint)
+    if u.scheme != "https":
+        raise ValueError("push endpoint must use https")
+    host = u.hostname
+    if not host:
+        raise ValueError("push endpoint has no host")
+    try:
+        ip = ip_address(host)
+    except ValueError:
+        # 是域名。真实的推送服务（FCM / Mozilla / Apple）都是公网域名，
+        # 这里不做 DNS 解析：解析结果可能在校验后变化（DNS rebinding），
+        # 拿它当安全依据是假的安全感。域名一律放行，IP 字面量才卡。
+        return
+    if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+        raise ValueError("push endpoint must not point at a private address")
+
+
 async def subscribe(subscription: dict) -> None:
-    subs = await store.get_setting("push_subs", []) or []
     endpoint = subscription.get("endpoint")
     if not endpoint:
         raise ValueError("subscription missing endpoint")
-    subs = [s for s in subs if s.get("endpoint") != endpoint]
-    subs.append(subscription)
-    await store.set_setting("push_subs", subs[-20:])  # 最多记 20 台设备
+    _validate_endpoint(endpoint)
+
+    # 两台设备同时订阅时，不持锁的读-改-写会让其中一台悄悄消失 ——
+    # 而"没收到告警"是这个产品最不该有的失败方式。
+    err: list[str] = []
+
+    def apply(subs):
+        subs = list(subs or [])
+        # 先判断这台设备是不是已经在册。不能先移除再判满 —— 那样一台已注册
+        # 的设备在满员时重新订阅（换了浏览器、清了缓存都会触发），会被先删掉
+        # 再因为"满了"拒绝加回来，等于把自己踢下线。
+        known = any(x.get("endpoint") == endpoint for x in subs)
+        if not known and len(subs) >= MAX_DEVICES:
+            err.append("full")
+            return subs
+        return [*(x for x in subs if x.get("endpoint") != endpoint), subscription]
+
+    await store.mutate_setting("push_subs", apply, [])
+    if err:
+        # 原来是 `subs[-20:]` 静默淘汰最旧的。那意味着攻击者（或一个循环
+        # 调用的脚本）灌 20 条就能把车主自己的手机悄悄挤掉，之后所有告警
+        # 都推给别人而车主毫无察觉。满了就明确拒绝，让人自己去删。
+        raise ValueError(
+            f"already at {MAX_DEVICES} registered devices; remove one before adding another")
 
 
 async def unsubscribe(endpoint: str) -> None:

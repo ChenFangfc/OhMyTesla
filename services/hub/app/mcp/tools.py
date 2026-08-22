@@ -24,6 +24,13 @@ SQL_TIMEOUT_MS = 8000
 _SQL_FORBIDDEN = (
     "insert", "update", "delete", "drop", "alter", "create", "truncate",
     "grant", "revoke", "copy", "vacuum", "reindex", "call", "do ",
+    # 纵深防御：即使降权角色的读权限出了纰漏，也不让模型碰到 token 表。
+    "tokens",
+    # pg_sleep 不改数据，但它是时序侧信道的燃料：跨站发起的查询即使读不到
+    # 响应体，也能靠"这次请求花了 3 秒还是 0 秒"把结果一位一位问出来。
+    # statement_timeout 给的 8 秒预算正好够用。
+    "pg_sleep", "pg_read_file", "pg_ls_dir", "lo_import", "lo_export",
+    "dblink", "pg_stat_file",
 )
 
 
@@ -159,9 +166,18 @@ async def _ensure_role(conn) -> bool:
         await conn.execute(
             f'ALTER DEFAULT PRIVILEGES IN SCHEMA public '
             f'GRANT SELECT ON TABLES TO "{_RO_ROLE}"')
+        # 上面那条 GRANT ALL TABLES 是按 schema 一把授的，装过旧版 TeslaMate
+        # 的库里 tokens 表还留在 public（新版才搬进 private schema），
+        # 于是这个"只读角色"顺带拿到了加密 token 报文的读权限。
+        # 逐张收回，表不存在就跳过。
+        for leaky in ("public.tokens", "public.oauth_tokens"):
+            try:
+                await conn.execute(f'REVOKE ALL ON TABLE {leaky} FROM "{_RO_ROLE}"')
+            except Exception:  # noqa: BLE001 - 表不存在是正常情况
+                pass
         _role_ready = True
         return True
-    except Exception:  # noqa: BLE001
+    except Exception:
         log.exception("could not prepare the restricted SQL role")
         return False
 
@@ -303,15 +319,22 @@ TOOLS: dict[str, tuple] = {
 }
 
 
+def _all_tools() -> dict:
+    """只读工具 + （开关打开时的）写工具。"""
+    from .write_tools import available
+
+    return {**TOOLS, **available()}
+
+
 def list_tools() -> list[dict]:
     return [
         {"name": name, "description": desc, "inputSchema": schema}
-        for name, (_, desc, schema) in TOOLS.items()
+        for name, (_, desc, schema) in _all_tools().items()
     ]
 
 
 async def call_tool(name: str, args: dict) -> str:
-    entry = TOOLS.get(name)
+    entry = _all_tools().get(name)
     if entry is None:
         return json.dumps({"error": f"unknown tool: {name}"}, ensure_ascii=False)
     handler = entry[0]
@@ -321,7 +344,7 @@ async def call_tool(name: str, args: dict) -> str:
         result = {"error": f"TeslaMate 数据库暂不可用：{e}"}
     except TypeError as e:
         result = {"error": f"参数不对：{e}"}
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         log.exception("mcp tool %s failed", name)
         result = {"error": str(e)[:300]}
     return json.dumps(result, ensure_ascii=False, default=str)

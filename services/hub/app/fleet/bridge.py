@@ -117,6 +117,21 @@ def _created_at(frame: dict) -> float:
     return 0.0
 
 
+def _scrub(msg: str) -> str:
+    """把报错原文里的 token 抹掉再往外送。
+
+    httpx 的异常消息里带完整请求 URL，而中转桥接的鉴权就在 query string 上。
+    这段文本既进日志、也进 /api/fleet/bridge/status 的响应体 —— 后者是
+    界面直接展示的，等于把长期有效的凭据印在页面上。
+    在赋值处统一脱敏，比指望每个调用点都记得小心可靠。
+    """
+    tok = settings.fleet_bridge_token
+    if tok and len(tok) > 4:
+        msg = msg.replace(tok, f"…{tok[-4:]}")
+    return re.sub(r"([?&](?:token|api_key|access_token|key)=)[^&\s'\"]+",
+                  r"\1<redacted>", msg)
+
+
 class VinBridge:
     """一辆车一条连接。"""
 
@@ -208,7 +223,9 @@ class VinBridge:
             except asyncio.CancelledError:
                 raise
             except Exception as e:  # noqa: BLE001
-                msg = str(e)[:200]
+                # 先脱敏再截断：截断可能正好把 token 切成半截仍然可读，
+                # 而且 last_error 是要直接显示在界面上的。
+                msg = _scrub(str(e))[:200]
                 self.last_error = msg
                 fatal_auth = "401" in msg or "403" in msg
                 # 长连接断开的常态就是抛异常（读超时、连接被重置）。退避重置原本
