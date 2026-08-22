@@ -164,12 +164,22 @@ ALTER TABLE clip_sei ADD COLUMN readable INTEGER NOT NULL DEFAULT 1;
 """
 
 
+# ---------------------------------------------------------------- 第 5 版
+# 再分出一类：读不出来是因为**加密**，还是因为**损坏**。
+# 固件 2026.20+ 默认加密，那有明确解法（车机里关掉，或用账号换密钥解开）；
+# 文件损坏没有解法，只能重新录。把两者混在一起报，等于让一半用户白折腾。
+V5_CLIP_ENCRYPTED = """
+ALTER TABLE clip_sei ADD COLUMN encrypted INTEGER NOT NULL DEFAULT 0;
+"""
+
+
 # (版本号, 名称, SQL)。**只能往后追加，永远不要改已发布的条目。**
 MIGRATIONS: list[tuple[int, str, str]] = [
     (1, "baseline", V1_BASELINE),
     (2, "sei_index", V2_SEI_INDEX),
     (3, "clip_sei_segment_key", V3_CLIP_SEI_SEGMENT_KEY),
     (4, "clip_readable", V4_CLIP_READABLE),
+    (5, "clip_encrypted", V5_CLIP_ENCRYPTED),
 ]
 
 SCHEMA_VERSION = max(v for v, _, _ in MIGRATIONS)

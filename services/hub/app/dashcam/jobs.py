@@ -95,7 +95,7 @@ class JobManager:
                 await self._run(job_id, job)
             except asyncio.CancelledError:
                 raise
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 log.exception("compose job %s failed", job_id)
                 if job_id is not None:
                     with contextlib.suppress(Exception):

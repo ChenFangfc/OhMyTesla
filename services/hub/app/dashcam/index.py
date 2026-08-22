@@ -166,14 +166,20 @@ async def index_event(ev: Event, base: Path, force: bool = False) -> int:
         # 帧率探不出来 = 文件读不出来（损坏、截断、加密）。和"能读但没有 SEI"
         # 是两回事，界面要给出不同的排查方向。
         readable = await asyncio.to_thread(sei.probe_fps_exact, full) is not None
+        # 读不出来时再分一层：是加密（有解法）还是损坏（没解法）
+        encrypted = False
+        if not readable:
+            from . import decrypt as _dec
+
+            encrypted = await asyncio.to_thread(_dec.is_encrypted, full)
         agg, events = _analyse(samples, seg_epoch)
 
         await store.db.execute(
             """INSERT INTO clip_sei
                (path, event_id, camera, seg_start, mtime, indexed_at, duration_s, samples,
                 fsd_s, ap_s, tacc_s, manual_s, dist_km, speed_max, speed_avg, disengage,
-                lat, lon, readable)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                lat, lon, readable, encrypted)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(event_id, seg_start) DO UPDATE SET
                  path=excluded.path, camera=excluded.camera,
                  mtime=excluded.mtime, indexed_at=excluded.indexed_at,
@@ -182,11 +188,11 @@ async def index_event(ev: Event, base: Path, force: bool = False) -> int:
                  manual_s=excluded.manual_s, dist_km=excluded.dist_km,
                  speed_max=excluded.speed_max, speed_avg=excluded.speed_avg,
                  disengage=excluded.disengage, lat=excluded.lat, lon=excluded.lon,
-                 readable=excluded.readable""",
+                 readable=excluded.readable, encrypted=excluded.encrypted""",
             (rel, ev.id, cam, seg_epoch, mtime, time.time(),
              agg["duration_s"], agg["samples"], agg["fsd_s"], agg["ap_s"], agg["tacc_s"],
              agg["manual_s"], agg["dist_km"], agg["speed_max"], agg["speed_avg"],
-             agg["disengage"], agg["lat"], agg["lon"], int(readable)),
+             agg["disengage"], agg["lat"], agg["lon"], int(readable), int(encrypted)),
         )
         # 重解时先清掉这一段的旧事件。按 event_id + 时间窗删而不是按 path：
         # 上一轮可能是用另一路摄像头入的库，按 path 删会把旧记录留下来。
@@ -340,7 +346,8 @@ async def index_status() -> dict:
         """SELECT COUNT(*) clips, COALESCE(SUM(samples),0) samples,
                   COALESCE(SUM(duration_s),0) secs, MAX(indexed_at) last,
                   COUNT(*) FILTER (WHERE samples = 0 AND readable = 1) without_sei,
-                  COUNT(*) FILTER (WHERE readable = 0) unreadable
+                  COUNT(*) FILTER (WHERE readable = 0 AND encrypted = 0) unreadable,
+                  COUNT(*) FILTER (WHERE encrypted = 1) encrypted
            FROM clip_sei"""))[0]
     ev = (await store.db.execute_fetchall(
         "SELECT COUNT(*) n, COUNT(DISTINCT kind) kinds FROM sei_event"))[0]
@@ -352,6 +359,9 @@ async def index_status() -> dict:
         # 读不出来的片段。原因通常是文件损坏/截断，或者固件 2026.20+ 的加密。
         # 和"没有 SEI"分开报：前者查 U 盘，后者查固件版本。
         "clips_unreadable": row["unreadable"],
+        # 加密单独一类：车机里 控制 > 安全 可以关，或者用账号换密钥解开。
+        # 和"文件坏了"混在一起报的话，一半用户会去做完全无用的排查。
+        "clips_encrypted": row["encrypted"],
         "samples": row["samples"],
         "seconds": round(row["secs"]),
         "events": ev["n"],

@@ -42,8 +42,17 @@ SAFE_COMMANDS = frozenset({
     "door_lock", "sentry_on", "sentry_off",
     "flash_lights", "honk_horn", "vent_windows", "close_windows",
     "wake_up",
+    # 补齐的那批里，语义安全的都放进来。boombox 归到高危：
+    # 它会在车外放声音，半夜被一条规则触发是扰民。
+    "seat_heater_left", "seat_heater_right",
+    "steering_heater_on", "steering_heater_off",
+    "defrost_on", "defrost_off", "set_charge_amps",
+    "dog_mode_on", "camp_mode_on", "keeper_off",
+    "cabin_overheat_on", "cabin_overheat_off",
+    "media_toggle", "media_next", "media_prev",
+    "schedule_charge", "schedule_charge_off",
 })
-RISKY_COMMANDS = frozenset({"door_unlock", "trunk", "frunk"})
+RISKY_COMMANDS = frozenset({"door_unlock", "trunk", "frunk", "boombox"})
 
 # 支持的触发类型
 TRIGGERS = {

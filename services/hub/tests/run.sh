@@ -15,7 +15,7 @@ TESTS_DIR="services/hub/tests"
 MODE="${1:-host}"
 
 # 需要 app 包依赖（aiosqlite 等）的测试只能在容器里跑
-NEEDS_RUNTIME="test_migrations.py test_sentry_escalation.py test_automation.py test_compose_layouts.py"
+NEEDS_RUNTIME="test_migrations.py test_sentry_escalation.py test_automation.py test_compose_layouts.py test_decrypt.py"
 # 需要服务真的在跑的契约测试（只用标准库，宿主机上跑更方便）
 NEEDS_SERVER="test_teslamateapi_contract.py"
 

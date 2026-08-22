@@ -48,6 +48,53 @@ COMMANDS: dict[str, dict] = {
                            "body": {"on": True}},
     "sentry_off":         {"ep": "command/set_sentry_mode", "risky": True,  "key": "cmd.sentry_off", "icon": "🛡️",
                            "body": {"on": False}},
+
+    # ── 以下为补齐的指令。选取标准是"车主真的会用、且语义无歧义"，
+    #    不是把 Fleet API 的 74 条全塞进来 —— 那里面有一半是给车队管理和
+    #    第三方司机用的（valet PIN、guest mode、驾驶员邀请），
+    #    对单车主是噪声，而每多一条就多一条要维护和翻译的东西。
+    "seat_heater_left":   {"ep": "command/remote_seat_heater_request", "risky": False,
+                           "key": "cmd.seat_heater_left", "icon": "🔥",
+                           "param": "level", "body": {"heater": 0}},
+    "seat_heater_right":  {"ep": "command/remote_seat_heater_request", "risky": False,
+                           "key": "cmd.seat_heater_right", "icon": "🔥",
+                           "param": "level", "body": {"heater": 1}},
+    "steering_heater_on": {"ep": "command/remote_steering_wheel_heater_request", "risky": False,
+                           "key": "cmd.steering_heater_on", "icon": "🔥", "body": {"on": True}},
+    "steering_heater_off": {"ep": "command/remote_steering_wheel_heater_request", "risky": False,
+                            "key": "cmd.steering_heater_off", "icon": "🔥", "body": {"on": False}},
+    "defrost_on":         {"ep": "command/set_preconditioning_max", "risky": False,
+                           "key": "cmd.defrost_on", "icon": "🌨️", "body": {"on": True}},
+    "defrost_off":        {"ep": "command/set_preconditioning_max", "risky": False,
+                           "key": "cmd.defrost_off", "icon": "🌨️", "body": {"on": False}},
+    "set_charge_amps":    {"ep": "command/set_charging_amps", "risky": False,
+                           "key": "cmd.set_charge_amps", "icon": "🔋", "param": "charging_amps"},
+    "dog_mode_on":        {"ep": "command/set_climate_keeper_mode", "risky": False,
+                           "key": "cmd.dog_mode_on", "icon": "🐕", "body": {"climate_keeper_mode": 2}},
+    "camp_mode_on":       {"ep": "command/set_climate_keeper_mode", "risky": False,
+                           "key": "cmd.camp_mode_on", "icon": "🏕️", "body": {"climate_keeper_mode": 3}},
+    "keeper_off":         {"ep": "command/set_climate_keeper_mode", "risky": False,
+                           "key": "cmd.keeper_off", "icon": "🌡️", "body": {"climate_keeper_mode": 0}},
+    "cabin_overheat_on":  {"ep": "command/set_cabin_overheat_protection", "risky": False,
+                           "key": "cmd.cabin_overheat_on", "icon": "☀️",
+                           "body": {"on": True, "fan_only": False}},
+    "cabin_overheat_off": {"ep": "command/set_cabin_overheat_protection", "risky": False,
+                           "key": "cmd.cabin_overheat_off", "icon": "☀️",
+                           "body": {"on": False, "fan_only": False}},
+    "media_toggle":       {"ep": "command/media_toggle_playback", "risky": False,
+                           "key": "cmd.media_toggle", "icon": "⏯️"},
+    "media_next":         {"ep": "command/media_next_track", "risky": False,
+                           "key": "cmd.media_next", "icon": "⏭️"},
+    "media_prev":         {"ep": "command/media_prev_track", "risky": False,
+                           "key": "cmd.media_prev", "icon": "⏮️"},
+    "boombox":            {"ep": "command/remote_boombox", "risky": True,
+                           "key": "cmd.boombox", "icon": "📻", "body": {"sound": 0}},
+    "schedule_charge":    {"ep": "command/set_scheduled_charging", "risky": False,
+                           "key": "cmd.schedule_charge", "icon": "🕐",
+                           "param": "time", "body": {"enable": True}},
+    "schedule_charge_off": {"ep": "command/set_scheduled_charging", "risky": False,
+                            "key": "cmd.schedule_charge_off", "icon": "🕐",
+                            "body": {"enable": False, "time": 0}},
 }
 
 
@@ -55,6 +102,10 @@ COMMANDS: dict[str, dict] = {
 _PARAM_RANGE = {
     "percent": (50, 100),        # 充电上限：低于 50% 特斯拉不接受
     "driver_temp": (15, 28),     # 车内空调设定温度（摄氏）
+    "level": (0, 3),             # 座椅加热档位：0 关，1-3 由弱到强
+    "charging_amps": (0, 48),    # 充电电流。0 = 暂停；上限随车型和线缆而定，
+                                 # 给到 48 是家用壁挂充电桩的常见上限
+    "time": (0, 1439),           # 定时充电：从当天 00:00 起的分钟数
 }
 
 

@@ -67,7 +67,7 @@ def _works(name: str, extra: list[str]) -> bool:
         log.debug("hwaccel %s unavailable: %s", name,
                   (r.stderr or b"").decode(errors="replace").strip()[:160])
         return False
-    except Exception:  # noqa: BLE001 - 超时、二进制缺失，都算不可用
+    except Exception:
         log.debug("hwaccel %s probe failed", name, exc_info=True)
         return False
 

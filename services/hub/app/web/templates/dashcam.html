@@ -211,9 +211,15 @@ async function loadFsd() {
     document.getElementById("fsd-section").style.display = "block";
     // 读不出来 和 能读但没 SEI，排查方向完全不同：前者查 U 盘/加密，
     // 后者查固件版本。谁占多数就先说谁。
-    const msg = st.clips_unreadable > st.clips_without_sei
-      ? t("fsd.unreadable", { n: st.clips_unreadable })
-      : t("fsd.no_sei", { n: st.clips_without_sei || st.clips_indexed });
+    // 三种情况的排查方向完全不同：加密（车机里能关）、损坏（只能重录）、
+    // 没有 SEI（固件太老或停车片段）。谁占多数就先说谁。
+    const msg = st.clips_encrypted > 0
+        && st.clips_encrypted >= st.clips_unreadable
+        && st.clips_encrypted >= st.clips_without_sei
+      ? t("fsd.encrypted", { n: st.clips_encrypted })
+      : st.clips_unreadable > st.clips_without_sei
+        ? t("fsd.unreadable", { n: st.clips_unreadable })
+        : t("fsd.no_sei", { n: st.clips_without_sei || st.clips_indexed });
     document.getElementById("fsd-metrics").innerHTML =
       `<div class="empty small" style="padding:24px 0;max-width:70ch;margin:0 auto">${esc(msg)}</div>`;
     document.getElementById("fsd-trend").style.display = "none";
