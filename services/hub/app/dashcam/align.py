@@ -9,7 +9,7 @@ TeslaCam 文件名时间与 TeslaMate 遥测时间可能存在数秒到数十秒
 import asyncio
 import bisect
 import logging
-from datetime import timedelta, timezone, datetime
+from datetime import datetime, timezone
 
 from . import sei, telemetry
 from .scanner import Event

@@ -63,6 +63,25 @@
       <div class="body"><div id="rules"></div></div>
     </details>
 
+    {# 自动化和告警规则放在一起：两者都是"事件发生时按规则做一件事"，
+       区别只在做的是"通知我"还是"操作车"。分到两个页面会让用户在
+       "为什么我的规则没生效"时不知道该去哪儿找。 #}
+    <details class="disclose" id="d-automations">
+      <summary><span data-i18n="auto.title">Automations</span><span class="value" id="v-auto">–</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+      </summary>
+      <div class="body">
+        <p class="body-sm" style="margin:0 0 16px;max-width:64ch" data-i18n="auto.help"></p>
+        <div id="auto-list"></div>
+        <div class="row mt" style="gap:10px">
+          <button class="btn" id="auto-new" data-i18n="auto.new">New automation</button>
+          <span class="spacer"></span>
+          <button class="btn ghost" id="auto-history-btn" data-i18n="auto.history">Recent triggers</button>
+        </div>
+        <div id="auto-editor" style="display:none" class="card mt"></div>
+        <div id="auto-history" style="display:none" class="mt"></div>
+      </div>
+    </details>
+
     <details class="disclose">
       <summary><span data-i18n="security.d_how">How detection works</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
       </summary>
@@ -277,7 +296,8 @@ function loadRules() { return apiGet("/api/alerts/rules").then((rules) => {
   $("#rules").innerHTML = rules.map((r) => `
     <div class="setting-row"><span class="pill ${r.level}">${esc(t("level." + r.level))}</span>
       <div class="info"><div class="name">${esc(plain(i18n.state.locale === "en" ? r.title_en : r.title_zh))}</div></div>
-      <label class="switch"><input type="checkbox" data-id="${r.id}" ${r.enabled ? "checked" : ""}><span class="slider"></span></label>
+      <label class="switch"><input type="checkbox" data-id="${r.id}" ${r.enabled ? "checked" : ""}
+             aria-label="${esc(plain(i18n.state.locale === "en" ? r.title_en : r.title_zh))}"><span class="slider"></span></label>
     </div>`).join("");
   $("#rules").querySelectorAll("input").forEach((i) =>
     i.addEventListener("change", () => apiPost(`/api/alerts/rules/${i.dataset.id}`, { enabled: i.checked })));
@@ -386,10 +406,221 @@ $("#snooze-off").addEventListener("click", async () => {
 
 i18nReady.catch(() => {}).then(() => {
   paintRich(); paintIcons();
-  loadChannels(); loadPolicies(); loadRules(); loadHistory();
-  loadSnooze(); setInterval(loadSnooze, 60000);
-  loadCommands();
-  loadSentry(); setInterval(loadSentry, 30000);
+
+  /* 每个加载函数都要有失败分支。原来这几个是"发出去就不管了"：
+     接口 503 时容器里那句硬编码的 "Loading…" 会永远留在屏幕上，
+     看起来像网络慢，实际上永远不会好。 */
+  const guard = (fn, sel) => Promise.resolve().then(fn).catch((e) => {
+    const el = document.querySelector(sel);
+    if (el) {
+      el.innerHTML = `<div class="empty small">${esc(t("common.load_failed", { msg: e.message || "" }))}</div>`;
+    }
+    console.warn("load failed:", sel, e);
+  });
+
+/* ---------------- 自动化 ----------------
+   规则的形状由后端 /api/automations 的 triggers/commands 一并下发，
+   这里不再抄一份常量 —— 抄的那份迟早和后端对不上，而对不上的表现是
+   "保存时报 400 但界面上看不出哪里错"。 */
+
+let autoMeta = { triggers: {}, commands: [], risky_commands: [] };
+let autoRules = [];
+
+const TRIG_FIELDS = {
+  state:      [["to", "auto.f_state", "select", ["online", "asleep", "offline", "driving", "charging"]]],
+  geofence:   [["place", "auto.f_place", "text"], ["direction", "auto.f_dir", "select", ["enter", "leave"]]],
+  battery:    [["threshold", "auto.f_threshold", "number"], ["direction", "auto.f_dir2", "select", ["below", "above"]]],
+  plugged_in: [["to", "auto.f_to", "select", ["true", "false"]]],
+  sentry:     [["to", "auto.f_to", "select", ["true", "false"]]],
+  climate:    [["to", "auto.f_to", "select", ["true", "false"]]],
+  locked:     [["to", "auto.f_to", "select", ["true", "false"]]],
+  schedule:   [["at", "auto.f_at", "time"]],
+};
+
+async function loadAutomations() {
+  const d = await apiGet("/api/automations");
+  autoMeta = { triggers: d.triggers, commands: d.commands, risky_commands: d.risky_commands };
+  autoRules = d.rules || [];
+  const on = autoRules.filter((r) => r.enabled).length;
+  $("#v-auto").textContent = autoRules.length
+    ? t("auto.n_rules", { n: autoRules.length, on }) : t("auto.none_yet");
+
+  $("#auto-list").innerHTML = autoRules.length ? autoRules.map((r) => `
+    <div class="setting-row">
+      <div class="info">
+        <div class="name">${esc(r.name || r.id)}</div>
+        <div class="meta">${esc(describeRule(r))}</div>
+      </div>
+      <button class="btn ghost sm" data-edit="${esc(r.id)}" data-i18n="common.edit">Edit</button>
+      <label class="switch" title="${esc(t("auto.toggle"))}">
+        <input type="checkbox" data-toggle="${esc(r.id)}" ${r.enabled ? "checked" : ""}
+               aria-label="${esc(r.name || r.id)}"><span class="slider"></span></label>
+    </div>`).join("") : `<div class="empty small">${esc(t("auto.none_yet"))}</div>`;
+
+  $("#auto-list").querySelectorAll("[data-toggle]").forEach((el) =>
+    el.addEventListener("change", async () => {
+      const r = autoRules.find((x) => x.id === el.dataset.toggle);
+      if (!r) return;
+      try {
+        await apiPost("/api/automations", { ...r, enabled: el.checked });
+        loadAutomations();
+      } catch (e) { alert(e.message); el.checked = !el.checked; }
+    }));
+  $("#auto-list").querySelectorAll("[data-edit]").forEach((el) =>
+    el.addEventListener("click", () => openEditor(autoRules.find((x) => x.id === el.dataset.edit))));
+  paintIcons($("#auto-list"));
+}
+
+/* 一句话把规则读出来。列表里只显示名字的话，"为什么它没触发"永远查不清。 */
+function describeRule(r) {
+  const tr = r.trigger || {};
+  const bits = [t("auto.trig." + tr.type, {
+    to: tr.to || "", place: tr.place || "", at: tr.at || "",
+    threshold: tr.threshold ?? "", dir: t("auto.dir." + (tr.direction || "enter")),
+  })];
+  const c = r.conditions || {};
+  if (c.only_at) bits.push(t("auto.c_only_at", { place: c.only_at }));
+  if (c.not_at) bits.push(t("auto.c_not_at", { place: c.not_at }));
+  if (c.time_window) bits.push(c.time_window);
+  if (c.min_battery) bits.push(t("auto.c_min_batt", { n: c.min_battery }));
+  const acts = (r.actions || []).map((a) =>
+    a.type === "notify" ? t("auto.a_notify") : t("auto.a_cmd", { cmd: a.command })).join(" + ");
+  return `${bits.join(" · ")} → ${acts}`;
+}
+
+function openEditor(rule) {
+  const r = rule || { id: "", name: "", enabled: false, trigger: { type: "state", to: "online" },
+                      conditions: {}, actions: [{ type: "notify" }], cooldown_s: 300 };
+  const box = $("#auto-editor");
+  box.style.display = "block";
+
+  const trigOpts = Object.entries(autoMeta.triggers)
+    .map(([k, v]) => `<option value="${esc(k)}" ${r.trigger.type === k ? "selected" : ""}>${esc(v)}</option>`).join("");
+  const cmdOpts = autoMeta.commands
+    .map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
+
+  box.innerHTML = `
+    <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
+      <label class="field"><span data-i18n="auto.f_name">Name</span>
+        <input id="ae-name" type="text" value="${esc(r.name || "")}" style="width:210px"></label>
+      <label class="field"><span data-i18n="auto.f_trigger">Trigger</span>
+        <select id="ae-trig">${trigOpts}</select></label>
+      <span id="ae-trigfields" class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end"></span>
+    </div>
+    <div class="row mt" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
+      <label class="field"><span data-i18n="auto.f_action">Action</span>
+        <select id="ae-act">
+          <option value="notify" ${(r.actions[0] || {}).type === "notify" ? "selected" : ""}>${esc(t("auto.a_notify"))}</option>
+          <option value="command" ${(r.actions[0] || {}).type === "command" ? "selected" : ""}>${esc(t("auto.a_command"))}</option>
+        </select></label>
+      <label class="field" id="ae-cmdwrap" style="display:none"><span data-i18n="auto.f_command">Command</span>
+        <select id="ae-cmd">${cmdOpts}</select></label>
+      <label class="field"><span data-i18n="auto.f_cooldown">Cooldown (s)</span>
+        <input id="ae-cool" type="number" min="0" step="30" value="${+r.cooldown_s || 300}" style="width:110px"></label>
+    </div>
+    <div class="row mt" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
+      <label class="field"><span data-i18n="auto.f_only_at">Only at</span>
+        <input id="ae-onlyat" type="text" value="${esc((r.conditions || {}).only_at || "")}" style="width:150px"></label>
+      <label class="field"><span data-i18n="auto.f_window">Time window</span>
+        <input id="ae-window" type="text" placeholder="22:00-06:00" value="${esc((r.conditions || {}).time_window || "")}" style="width:130px"></label>
+      <label class="field"><span data-i18n="auto.f_minbatt">Min battery %</span>
+        <input id="ae-minbatt" type="number" min="0" max="100" value="${(r.conditions || {}).min_battery ?? ""}" style="width:110px"></label>
+    </div>
+    <p class="body-sm mt" style="margin-bottom:0" data-i18n="auto.save_note"></p>
+    <div class="row mt" style="gap:10px">
+      <button class="btn" id="ae-save" data-i18n="common.save">Save</button>
+      <button class="btn ghost" id="ae-cancel" data-i18n="common.cancel">Cancel</button>
+      <span class="spacer"></span>
+      ${r.id ? `<button class="btn ghost" id="ae-del" style="color:var(--critical-red)" data-i18n="common.delete">Delete</button>` : ""}
+      <span class="small" id="ae-msg"></span>
+    </div>`;
+
+  const paintTrigFields = () => {
+    const kind = $("#ae-trig").value;
+    $("#ae-trigfields").innerHTML = (TRIG_FIELDS[kind] || []).map(([key, label, type, opts]) => {
+      const cur = r.trigger.type === kind ? (r.trigger[key] ?? "") : "";
+      if (type === "select") {
+        return `<label class="field"><span data-i18n="${label}"></span><select data-tf="${key}">` +
+          opts.map((o) => `<option value="${esc(o)}" ${String(cur) === o ? "selected" : ""}>${esc(o)}</option>`).join("") +
+          `</select></label>`;
+      }
+      return `<label class="field"><span data-i18n="${label}"></span>` +
+             `<input data-tf="${key}" type="${type}" value="${esc(String(cur))}" style="width:130px"></label>`;
+    }).join("");
+    i18n.apply($("#ae-trigfields"));
+  };
+  const paintCmd = () => {
+    $("#ae-cmdwrap").style.display = $("#ae-act").value === "command" ? "" : "none";
+    if ((r.actions[0] || {}).command) $("#ae-cmd").value = r.actions[0].command;
+  };
+  $("#ae-trig").addEventListener("change", paintTrigFields);
+  $("#ae-act").addEventListener("change", paintCmd);
+  paintTrigFields(); paintCmd();
+  i18n.apply(box);
+
+  $("#ae-cancel").addEventListener("click", () => { box.style.display = "none"; });
+  if ($("#ae-del")) {
+    $("#ae-del").addEventListener("click", async () => {
+      await apiPost(`/api/automations/${encodeURIComponent(r.id)}`, undefined, "DELETE");
+      box.style.display = "none"; loadAutomations();
+    });
+  }
+  $("#ae-save").addEventListener("click", async () => {
+    const trigger = { type: $("#ae-trig").value };
+    box.querySelectorAll("[data-tf]").forEach((el) => {
+      const v = el.value.trim();
+      if (v !== "") trigger[el.dataset.tf] = el.type === "number" ? +v : v;
+    });
+    const act = $("#ae-act").value === "command"
+      ? { type: "command", command: $("#ae-cmd").value } : { type: "notify" };
+    const conditions = {};
+    if ($("#ae-onlyat").value.trim()) conditions.only_at = $("#ae-onlyat").value.trim();
+    if ($("#ae-window").value.trim()) conditions.time_window = $("#ae-window").value.trim();
+    if ($("#ae-minbatt").value) conditions.min_battery = +$("#ae-minbatt").value;
+
+    const payload = {
+      // 没有 id 就用名字派生一个稳定的 slug；重名会被后端的重复 id 校验挡住
+      id: r.id || ($("#ae-name").value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40)
+                   || `rule-${Date.now()}`),
+      name: $("#ae-name").value.trim(),
+      enabled: !!r.enabled,        // 新规则保持停用，由列表里的开关来开
+      trigger, conditions, actions: [act],
+      cooldown_s: +$("#ae-cool").value || 0,
+    };
+    try {
+      await apiPost("/api/automations", payload);
+      box.style.display = "none";
+      loadAutomations();
+    } catch (e) { $("#ae-msg").textContent = e.message; }
+  });
+}
+
+async function loadAutoHistory() {
+  const box = $("#auto-history");
+  box.style.display = box.style.display === "none" ? "block" : "none";
+  if (box.style.display === "none") return;
+  const d = await apiGet("/api/automations/history");
+  box.innerHTML = (d.history || []).length
+    ? `<table class="data"><thead><tr>
+         <th>${esc(t("common.time"))}</th><th>${esc(t("auto.h_rule"))}</th><th>${esc(t("auto.h_why"))}</th>
+       </tr></thead><tbody>` +
+      d.history.map((h) => `<tr><td>${esc(fmt.dt(new Date(h.ts * 1000).toISOString()))}</td>
+        <td>${esc(h.rule)}</td><td class="meta">${esc(h.why)}</td></tr>`).join("") + "</tbody></table>"
+    : `<div class="empty small">${esc(t("auto.no_history"))}</div>`;
+}
+
+  guard(loadChannels, "#delivery");
+
+  guard(loadPolicies, "#policies");
+  guard(loadRules,    "#rules");
+  guard(loadHistory,  "#history tbody");
+  guard(loadCommands, "#commands");
+  guard(loadAutomations, "#auto-list");
+  $("#auto-new").addEventListener("click", () => openEditor(null));
+  $("#auto-history-btn").addEventListener("click", () => loadAutoHistory().catch((e) => alert(e.message)));
+  guard(loadSentry,   "#sentry-feed"); setInterval(() => guard(loadSentry, "#sentry-feed"), 30000);
+  // 静音状态只是个开关，失败时没有容器可写，静默重试即可
+  loadSnooze().catch(() => {}); setInterval(() => loadSnooze().catch(() => {}), 60000);
 });
 </script>
 {% endblock %}

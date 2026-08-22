@@ -183,32 +183,51 @@ def _iter_mdat_nals(path: Path):
                 fp.seek(nal_size - 3, 1)
 
 
-def probe_fps(path: Path) -> float:
+def probe_fps_exact(path: Path) -> float | None:
+    """真实帧率；探测不出来返回 None。
+
+    区分"探测不出来"和"就是 30"很重要：SEI 采样的时间轴是 `idx / fps` 算出来的，
+    fps 猜错的话，由它派生的减速度（Δv/Δt）和里程（∫v·dt）全都是错的，
+    但看上去和正确的数字一模一样。
+    """
     try:
         out = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
              "-show_entries", "stream=avg_frame_rate,codec_name",
              "-of", "json", str(path)],
-            capture_output=True, timeout=30, check=True,
+            capture_output=True, timeout=10, check=True,
         )
         stream = json.loads(out.stdout)["streams"][0]
-        num, _, den = stream.get("avg_frame_rate", "30/1").partition("/")
+        num, _, den = stream.get("avg_frame_rate", "").partition("/")
         fps = float(num) / float(den or 1)
-        return fps if 1 < fps < 120 else 30.0
-    except Exception:  # noqa: BLE001
-        return 30.0
+        return fps if 1 < fps < 120 else None
+    except Exception:  # noqa: BLE001 - 文件损坏 / 没有 ffprobe / 超时，都算探测不到
+        return None
+
+
+def probe_fps(path: Path) -> float:
+    """给**播放**用的帧率，探测不到就猜 30。
+
+    播放器猜错帧率最多是叠加层的时间轴略有偏移，用户还是能看到画面；
+    索引不能用这个 —— 走 probe_fps_exact，拿不到就别入库。
+    """
+    fps = probe_fps_exact(path)
+    return fps if fps is not None else 30.0
 
 
 _cache: dict[str, list[dict]] = {}
 
 
-def extract(path: Path, step: float = 0.5) -> list[dict]:
+def extract(path: Path, step: float = 0.5, strict: bool = False) -> list[dict]:
     """提取单个片段的 SEI 序列，按 step 秒抽样，t 为片段内相对秒数。
 
     没有 SEI（旧固件/停车片段/加密片段）时返回空列表。
+
+    strict=True 时额外要求帧率能被 ffprobe 确定；确定不了就返回空。
+    索引走严格模式，播放走宽松模式 —— 详见 probe_fps 的说明。
     """
     try:
-        key = f"{path}:{path.stat().st_mtime}:{step}"
+        key = f"{path}:{path.stat().st_mtime}:{step}:{strict}"
     except OSError:
         return []  # 文件已消失（U 盘拔出等）
     if key in _cache:
@@ -234,7 +253,12 @@ def extract(path: Path, step: float = 0.5) -> list[dict]:
         _cache[key] = []
         return []
 
-    fps = probe_fps(path)
+    fps = probe_fps_exact(path) if strict else probe_fps(path)
+    if fps is None:
+        # 严格模式下宁可不给数据，也不给一份基于猜测帧率的"分析结果"
+        log.warning("SEI: cannot determine fps for %s, refusing to guess", path.name)
+        _cache[key] = []
+        return []
     samples: list[dict] = []
     stride = max(int(round(step * fps)), 1)
     for idx in range(0, len(frames), stride):

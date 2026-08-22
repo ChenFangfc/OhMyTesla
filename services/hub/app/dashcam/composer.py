@@ -37,6 +37,7 @@ class ComposePlan:
     cameras: list[str]
     dropped_segments: int
     segments: list           # 实际参与合成的 Segment 列表（按时间序）
+    encoder: str = "libx264"  # 实际用的编码器，界面上要说清楚快慢是从哪来的
 
 
 def _ordered_cameras(event: Event, requested: list[str] | None) -> list[str]:
@@ -167,13 +168,20 @@ def build_plan(
         final = compose_out
 
     crf, preset = QUALITY.get(quality, QUALITY["standard"])
+    # 有可用的硬件编码器就用，没有退回 libx264。探测是真编一帧试出来的，
+    # 不是看 `ffmpeg -encoders` 那张表 —— 那张表列的是编译进去的，
+    # 不是这台机器上能跑的。详见 hwaccel.py。
+    from .hwaccel import encoder_args
+
+    hw_global, enc_args, enc_name = encoder_args(crf, preset)
     cmd = [
         "ffmpeg", "-hide_banner", "-nostats", "-y",
+        *hw_global,
         *inputs,
         "-filter_complex", ";".join(filters),
         "-map", f"[{final}]",
         "-an",
-        "-c:v", "libx264", "-preset", preset, "-crf", crf,
+        *enc_args,
         "-movflags", "+faststart",
         "-progress", "pipe:1",
         str(out_path),
@@ -181,4 +189,5 @@ def build_plan(
     return ComposePlan(
         cmd=cmd, width=width, height=height, duration=duration,
         cameras=cams, dropped_segments=dropped, segments=segs,
+        encoder=enc_name,
     )

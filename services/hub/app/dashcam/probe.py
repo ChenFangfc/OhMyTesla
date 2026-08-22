@@ -12,7 +12,6 @@
 import asyncio
 import json
 import logging
-import time
 from pathlib import Path
 
 log = logging.getLogger(__name__)

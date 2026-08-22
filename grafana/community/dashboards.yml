@@ -1,0 +1,18 @@
+# Grafana 面板 provisioning。放在这个目录里的 .json 会被自动加载。
+#
+# 独立成一个 provider 而不是塞进官方那份：官方面板由 teslamate/grafana
+# 镜像自己管理，升级时会被覆盖。社区面板放这里，升级互不影响。
+apiVersion: 1
+providers:
+  - name: community
+    orgId: 1
+    folder: Community
+    type: file
+    disableDeletion: false
+    # 允许在 Grafana 界面里改这些面板（官方那批是只读的）。
+    # 改完记得导出回文件，容器重建时界面上的改动不会保留。
+    allowUiUpdates: true
+    updateIntervalSeconds: 60
+    options:
+      path: /etc/grafana/provisioning/dashboards/community
+      foldersFromFilesStructure: false

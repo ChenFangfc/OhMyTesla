@@ -1,15 +1,13 @@
-from datetime import datetime, timezone
-
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import Response
-from pydantic import BaseModel
-
 import asyncio
+import contextlib
 import hashlib
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import File, Form, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import Response
+from pydantic import BaseModel
 
 from .. import db
 from ..config import settings
@@ -76,7 +74,7 @@ async def thumb(id: str = Query(...)):
     没有就自己从第一个能解码的片段抽一帧 —— 否则整页只剩胶片图标，
     看起来就像"有条目、没画面"。
     """
-    from fastapi.responses import FileResponse, Response
+    from fastapi.responses import FileResponse
 
     ev = scanner.get(id)
     base = scanner.base_path()
@@ -269,7 +267,7 @@ async def telemetry_csv(
                         f"{m.group(1)}T{m.group(2)}:{m.group(3)}:{m.group(4)}")
                     # 片段起点比请求起点晚多少秒
                     shift = (clip_start - t0_local).total_seconds()
-                for s in sei.extract(target, step=step):
+                for s in await asyncio.to_thread(sei.extract, target, step=step):
                     idx = int(round((s["t"] + shift) / step))
                     if idx >= 0:
                         sei_by_bucket[idx] = s
@@ -397,8 +395,7 @@ async def import_files(
     for f, rel in zip(files, paths):
         rel = rel.replace("\\", "/").lstrip("/")
         # 兼容传来的路径带 TeslaCam/ 前缀
-        if rel.startswith("TeslaCam/"):
-            rel = rel[len("TeslaCam/"):]
+        rel = rel.removeprefix("TeslaCam/")
         if not _IMPORT_RE.match(rel):
             skipped.append(rel)
             continue
@@ -411,11 +408,14 @@ async def import_files(
         dest = base / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with open(dest, "wb") as out:
+            # 写盘走线程池。uvicorn 是单进程的，直接在协程里 out.write() 会让
+            # 事件循环在每个 4MB 块上停住 —— 导一个几 GB 的素材库时整个门户
+            # （包括实时状态 SSE 和告警扇出）全程卡死。
+            with open(dest, "wb") as out:  # noqa: ASYNC230 - 写操作已转入线程池
                 while chunk := await f.read(4 * 1024 * 1024):
-                    out.write(chunk)
+                    await asyncio.to_thread(out.write, chunk)
         except OSError as e:
-            with __import__("contextlib").suppress(OSError):
+            with contextlib.suppress(OSError):
                 dest.unlink()  # 别留半截文件，扫描器会当成有效分段
             raise HTTPException(507, f"写入失败: {e}") from e
         imported += 1
@@ -531,3 +531,62 @@ async def get_job(job_id: int):
 async def cancel_job(job_id: int):
     ok = await jobs.cancel(job_id)
     return {"ok": ok}
+
+
+# ---------------- SEI 遥测入库与驾驶分析 ----------------
+#
+# 这一组回答的是"整个素材库里"的问题（这个月自驾占多少、所有急刹在哪），
+# 上面那组 /telemetry /sei 回答的是"这一段里"的问题。两者数据同源，
+# 区别只在解析结果有没有落库。
+
+@router.get("/encoder")
+async def encoder_status():
+    """当前用的视频编码器。导出很慢时第一件事就是看这里是不是退回了 libx264。"""
+    from .hwaccel import status
+
+    return await asyncio.to_thread(status)
+
+
+@router.get("/index/status")
+async def index_status():
+    from . import index as sei_index
+
+    return await sei_index.index_status()
+
+
+@router.post("/index/rebuild")
+async def index_rebuild(force: bool = False, limit: int | None = None):
+    """把素材库过一遍解析入库。
+
+    单段的 NAL 遍历在 index_event 内部走 asyncio.to_thread，所以整库重建
+    期间事件循环仍然能响应其它请求 —— uvicorn 是单进程的，解析要是占着
+    事件循环，重建时整个门户都会卡死。
+    """
+    from . import index as sei_index
+
+    return await sei_index.reindex(force, limit)
+
+
+@router.get("/fsd/summary")
+async def fsd_summary(days: int = 90):
+    """自驾使用总览。数据只来自本地录像的 SEI，不花任何 API 费用。"""
+    from . import index as sei_index
+
+    return await sei_index.fsd_summary(days)
+
+
+@router.get("/fsd/trend")
+async def fsd_trend(days: int = 180, bucket_days: int = 7):
+    from . import index as sei_index
+
+    return await sei_index.fsd_trend(days, bucket_days)
+
+
+@router.get("/driving-events")
+async def driving_events(kind: str | None = None, days: int = 90, limit: int = 200):
+    """检出的驾驶事件（急刹 / 自驾退出）。"""
+    from . import index as sei_index
+
+    if kind and kind not in ("hard_brake", "disengage"):
+        raise HTTPException(422, "kind must be hard_brake or disengage")
+    return await sei_index.driving_events(kind, days, limit)

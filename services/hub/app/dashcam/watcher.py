@@ -49,7 +49,7 @@ class ClipWatcher:
         while True:
             try:
                 await self._tick()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("clip watcher tick failed")
             await asyncio.sleep(SCAN_INTERVAL_S)
 

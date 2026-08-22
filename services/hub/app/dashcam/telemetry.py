@@ -129,8 +129,7 @@ def resample(samples: list[dict], t0: float, t1: float, step: float = 0.5, max_g
 # ---------------------------------------------------------------- ASS 生成
 
 def _ass_time(seconds: float) -> str:
-    if seconds < 0:
-        seconds = 0
+    seconds = max(seconds, 0)
     h = int(seconds // 3600)
     m = int(seconds % 3600 // 60)
     s = seconds % 60

@@ -1,0 +1,91 @@
+[
+  {
+    "id": "omt_sentry_flow",
+    "type": "tab",
+    "label": "OhmyTesla 哨兵告警",
+    "disabled": false,
+    "info": "订阅 OhmyTesla 回发的哨兵事件，按级别分流。\n\n主题：teslamate/cars/+/sentry_event\n载荷：{level, title, body, geofence, car_id, ts}\n\nlevel = info | warning | critical\ncritical 表示车辆警报真的拉响。\n\n用之前把 mosquitto 节点的地址改成你的 broker，\n并把 Telegram 节点换成你自己的通知渠道。"
+  },
+  {
+    "id": "omt_mqtt_in",
+    "type": "mqtt in",
+    "z": "omt_sentry_flow",
+    "name": "哨兵事件",
+    "topic": "teslamate/cars/+/sentry_event",
+    "qos": "1",
+    "datatype": "json",
+    "broker": "omt_broker",
+    "x": 130, "y": 120,
+    "wires": [["omt_split"]]
+  },
+  {
+    "id": "omt_split",
+    "type": "switch",
+    "z": "omt_sentry_flow",
+    "name": "按级别分流",
+    "property": "payload.level",
+    "propertyType": "msg",
+    "rules": [
+      { "t": "eq", "v": "critical", "vt": "str" },
+      { "t": "eq", "v": "warning", "vt": "str" },
+      { "t": "else" }
+    ],
+    "checkall": "false",
+    "outputs": 3,
+    "x": 330, "y": 120,
+    "wires": [["omt_fmt_crit"], ["omt_fmt_warn"], ["omt_log"]]
+  },
+  {
+    "id": "omt_fmt_crit",
+    "type": "function",
+    "z": "omt_sentry_flow",
+    "name": "警报拉响",
+    "func": "// 车辆警报真的响了。这一条要吵，别和普通活动混在一起。\nconst p = msg.payload || {};\nmsg.payload = `🚨 ${p.title || '哨兵警报'}\\n${p.body || ''}` +\n  (p.geofence ? `\\n📍 ${p.geofence}` : '');\nreturn msg;",
+    "outputs": 1,
+    "x": 540, "y": 80,
+    "wires": [["omt_notify"]]
+  },
+  {
+    "id": "omt_fmt_warn",
+    "type": "function",
+    "z": "omt_sentry_flow",
+    "name": "持续活动",
+    "func": "const p = msg.payload || {};\nmsg.payload = `⚠️ ${p.title || '哨兵活动'}\\n${p.body || ''}` +\n  (p.geofence ? `\\n📍 ${p.geofence}` : '');\nreturn msg;",
+    "outputs": 1,
+    "x": 540, "y": 140,
+    "wires": [["omt_notify"]]
+  },
+  {
+    "id": "omt_log",
+    "type": "debug",
+    "z": "omt_sentry_flow",
+    "name": "info 只记日志",
+    "active": true,
+    "complete": "payload",
+    "x": 560, "y": 200,
+    "wires": []
+  },
+  {
+    "id": "omt_notify",
+    "type": "debug",
+    "z": "omt_sentry_flow",
+    "name": "→ 换成你的通知节点",
+    "active": true,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 800, "y": 110,
+    "wires": [],
+    "info": "把这个 debug 节点替换成 telegram sender / ntfy / pushover 等。\n之所以出厂给的是 debug 而不是 Telegram：Telegram 节点需要额外安装\nnode-red-contrib-telegrambot，直接给会让导入失败。"
+  },
+  {
+    "id": "omt_broker",
+    "type": "mqtt-broker",
+    "name": "OhmyTesla mosquitto",
+    "broker": "localhost",
+    "port": "1883",
+    "clientid": "node-red-ohmytesla",
+    "autoConnect": true,
+    "cleansession": true,
+    "keepalive": "60"
+  }
+]

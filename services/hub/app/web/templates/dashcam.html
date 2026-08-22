@@ -23,12 +23,61 @@
 
   <div id="clip-warning" class="card" style="display:none;gap:12px;align-items:flex-start;margin-bottom:24px"></div>
 
+  {# 驾驶分析。数据全部来自录像里内嵌的 SEI 遥测，不花任何 API 费用、
+     也不需要联网 —— 自驾占比和接管次数在 Owner API 和 TeslaMate 里都没有。
+     素材库没解析过时这一整块隐藏，不摆一排空指标假装有内容。 #}
+  <div class="section" id="fsd-section" style="display:none">
+    <div class="section-head">
+      <h2 data-i18n="fsd.title">Driving analysis</h2>
+      <span class="note" id="fsd-note"></span>
+    </div>
+    <div class="metrics" id="fsd-metrics"></div>
+    <div class="chart" id="fsd-trend" style="min-height:180px;margin-top:8px"></div>
+
+    <details class="disclose" id="d-events">
+      <summary><span data-i18n="fsd.d_events">Detected events</span><span class="value" id="v-fsdev">–</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+      </summary>
+      <div class="body">
+        <div class="row" style="gap:10px;margin-bottom:12px">
+          <div class="segmented" id="ev-pick">
+            <button data-kind="" class="active" data-i18n="fsd.e_all">All</button>
+            <button data-kind="hard_brake" data-i18n="fsd.e_brake">Hard braking</button>
+            <button data-kind="disengage" data-i18n="fsd.e_disengage">Disengagements</button>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="data" id="t-fsdev">
+            <thead><tr>
+              <th data-i18n="common.time">Time</th>
+              <th data-i18n="fsd.th_kind">Event</th>
+              <th class="num" data-i18n="fsd.th_mag">Magnitude</th>
+              <th class="num" data-i18n="fsd.th_speed">Speed</th>
+              <th data-i18n="fsd.th_mode">Mode</th>
+              <th></th>
+            </tr></thead><tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+  </div>
+
+  {# 没解析过素材时给一个明确的入口，而不是让这一块凭空消失 #}
+  <div id="fsd-cta" class="card" style="display:none;margin-bottom:24px">
+    <div>
+      <div class="name" data-i18n="fsd.cta_title">Analyse your footage</div>
+      <div class="body-sm mt" style="max-width:64ch" data-i18n="fsd.cta_body"></div>
+    </div>
+    <span class="spacer"></span>
+    <button class="btn" id="fsd-index" data-i18n="fsd.cta_btn">Build index</button>
+  </div>
+
   <div id="events" class="grid cols-3"><div class="empty" style="grid-column:1/-1" data-i18n="common.loading">Loading…</div></div>
 
 </div>
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/charts.js"></script>
 <script>
 /* Reason codes carry an icon name plus a catalog key — text is resolved at
    render time because the catalog may still be loading when this parses. */
@@ -128,7 +177,127 @@ document.getElementById("rescan").addEventListener("click", async (e) => {
   e.target.disabled = false;
 });
 
-i18nReady.catch(() => {}).then(load);
+/* ---------------- 驾驶分析（来自录像 SEI） ---------------- */
+
+let evKind = "";
+
+function metric(label, value, unit, sub) {
+  return `<div class="metric">
+    <div class="label">${esc(label)}</div>
+    <div class="metric-value">${value}${unit ? `<span class="unit">${esc(unit)}</span>` : ""}</div>
+    ${sub ? `<div class="delta">${esc(sub)}</div>` : ""}
+  </div>`;
+}
+
+async function loadFsd() {
+  let st, sum;
+  try {
+    [st, sum] = await Promise.all([
+      apiGet("/api/dashcam/index/status"),
+      apiGet("/api/dashcam/fsd/summary?days=180"),
+    ]);
+  } catch (e) { return; }
+
+  // 一段都没解析过 → 只给入口，不摆空指标
+  if (!st.clips_indexed) {
+    document.getElementById("fsd-cta").style.display = "flex";
+    return;
+  }
+  document.getElementById("fsd-cta").style.display = "none";
+
+  if (!sum.has_data) {
+    // 解析过但一条 SEI 都没有：停车哨兵片段和 2025.44.25 之前的固件本来就没有。
+    // 这不是错误，要说清楚，否则用户会以为功能坏了。
+    document.getElementById("fsd-section").style.display = "block";
+    // 读不出来 和 能读但没 SEI，排查方向完全不同：前者查 U 盘/加密，
+    // 后者查固件版本。谁占多数就先说谁。
+    const msg = st.clips_unreadable > st.clips_without_sei
+      ? t("fsd.unreadable", { n: st.clips_unreadable })
+      : t("fsd.no_sei", { n: st.clips_without_sei || st.clips_indexed });
+    document.getElementById("fsd-metrics").innerHTML =
+      `<div class="empty small" style="padding:24px 0;max-width:70ch;margin:0 auto">${esc(msg)}</div>`;
+    document.getElementById("fsd-trend").style.display = "none";
+    return;
+  }
+
+  document.getElementById("fsd-section").style.display = "block";
+  const hrs = (s) => (s / 3600).toFixed(1);
+  document.getElementById("fsd-metrics").innerHTML =
+    metric(t("fsd.m_auto"), sum.share.autonomous ?? "–", "%",
+           t("fsd.m_auto_sub", { h: hrs(sum.seconds.fsd + sum.seconds.ap) })) +
+    metric(t("fsd.m_fsd"), sum.share.fsd ?? "–", "%", `FSD ${hrs(sum.seconds.fsd)}h`) +
+    metric(t("fsd.m_disengage"), sum.disengagements, "",
+           sum.minutes_per_disengagement
+             ? t("fsd.m_dis_sub", { m: sum.minutes_per_disengagement }) : "") +
+    metric(t("fsd.m_dist"), fmt.num(U.dist(sum.dist_km, 0), 0), U.distLabel());
+
+  document.getElementById("fsd-note").textContent = t("fsd.note", {
+    clips: st.clips_indexed, secs: Math.round(st.seconds / 60), nosei: st.clips_without_sei });
+
+  const tr = await apiGet("/api/dashcam/fsd/trend?days=180&bucket_days=7").catch(() => []);
+  const pts = (tr || []).filter((p) => p.autonomous_pct != null);
+  const trendEl = document.getElementById("fsd-trend");
+  if (pts.length >= 2) {
+    trendEl.style.display = "";
+    omtChart.line(trendEl, {
+      series: [{ name: t("fsd.m_auto"), color: "--series-1",
+                 data: pts.map((p) => [p.start * 1000, p.autonomous_pct]) }],
+      xFmt: (v) => fmt.date(new Date(v).toISOString().slice(0, 10)),
+      yFmt: (v) => Math.round(v) + "%",
+      zeroBase: true,
+    });
+  } else {
+    trendEl.style.display = "none";
+  }
+}
+
+async function loadFsdEvents() {
+  const q = evKind ? `&kind=${evKind}` : "";
+  const evs = await apiGet(`/api/dashcam/driving-events?days=180&limit=200${q}`);
+  const tb = document.querySelector("#t-fsdev tbody");
+  document.getElementById("v-fsdev").textContent = t("fsd.n_events", { n: evs.length });
+  tb.innerHTML = evs.length ? evs.map((e) => `<tr>
+    <td>${esc(fmt.dt(new Date(e.ts * 1000).toISOString()))}</td>
+    <td>${esc(t("fsd.k_" + e.kind))}</td>
+    <td class="num">${e.kind === "hard_brake" ? esc(e.magnitude + " m/s²") : "–"}</td>
+    <td class="num">${e.speed_kmh != null ? esc(fmt.num(U.speed(e.speed_kmh), 0) + " " + U.speedLabel()) : "–"}</td>
+    <td>${esc(e.mode || "–")}</td>
+    <td><a class="btn ghost sm" href="/dashcam/play?id=${encodeURIComponent(e.event_id)}&seek=${e.seek}"
+           data-i18n="fsd.watch">Watch</a></td>
+  </tr>`).join("") : `<tr><td colspan="6" class="empty small">${esc(t("insights.empty"))}</td></tr>`;
+  i18n.apply();
+}
+
+document.getElementById("fsd-index").addEventListener("click", async (e) => {
+  e.target.disabled = true;
+  e.target.textContent = t("fsd.indexing");
+  try {
+    const r = await apiPost("/api/dashcam/index/rebuild", undefined);
+    alert(t("fsd.indexed", { n: r.segments_indexed ?? 0 }));
+    await loadFsd();
+  } catch (err) { alert(err.message); }
+  e.target.disabled = false;
+  e.target.textContent = t("fsd.cta_btn");
+});
+
+document.getElementById("ev-pick").addEventListener("click", (e) => {
+  const b = e.target.closest("button"); if (!b) return;
+  document.querySelectorAll("#ev-pick button").forEach((x) => x.classList.remove("active"));
+  b.classList.add("active");
+  evKind = b.dataset.kind;
+  loadFsdEvents().catch(() => {});
+});
+
+// 事件列表按需加载：展开之前不拉
+(() => {
+  const d = document.getElementById("d-events");
+  let once = false;
+  d.addEventListener("toggle", () => {
+    if (d.open && !once) { once = true; loadFsdEvents().catch(() => {}); }
+  });
+})();
+
+i18nReady.catch(() => {}).then(() => { load(); loadFsd(); });
 </script>
 <style>
   .clip { transition: border-color var(--t-hover) var(--ease), transform var(--t-hover) var(--ease); }

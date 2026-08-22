@@ -1,0 +1,56 @@
+blueprint:
+  name: OhmyTesla — 哨兵事件联动 / Sentry event response
+  description: >
+    OhmyTesla 检测到哨兵活动时做点什么：开车库灯、响蜂鸣器、推手机通知。
+
+    数据来源是 OhmyTesla 回发到 MQTT 的 `teslamate/cars/<id>/sentry_event`。
+    TeslaMate 本身从不把哨兵事件写进任何地方 —— 这条主题是 OhmyTesla 产生的。
+
+    载荷是 JSON：{level, title, body, geofence, car_id, ts}
+      level = info      刚检测到活动
+            = warning   活动持续到升级阈值
+            = critical  车辆警报真的拉响（Panic）
+  domain: automation
+  input:
+    car_id:
+      name: 车辆 ID
+      description: TeslaMate 里的 car id（多车时在门户设置页能看到）。留 0 表示不限车辆。
+      default: 0
+      selector:
+        number: { min: 0, max: 20, mode: box }
+    min_level:
+      name: 最低触发级别
+      description: 低于这个级别的事件不动作
+      default: warning
+      selector:
+        select:
+          options: [info, warning, critical]
+    actions:
+      name: 要做的事
+      selector: { action: {} }
+
+# MQTT trigger 的 topic 支持 + 通配，但不支持模板。所以订阅所有车，
+# 在 condition 里按 car_id 过滤 —— 这也让"不限车辆"变成一个自然的选项。
+trigger:
+  - platform: mqtt
+    topic: "teslamate/cars/+/sentry_event"
+
+variables:
+  want_level: !input min_level
+  want_car: !input car_id
+  rank: { info: 0, warning: 1, critical: 2 }
+  ev_level: "{{ trigger.payload_json.level | default('info') }}"
+  ev_car: "{{ trigger.topic.split('/')[2] }}"
+
+condition:
+  - condition: template
+    value_template: >
+      {{ rank[ev_level] >= rank[want_level]
+         and (want_car | int == 0 or want_car | int == ev_car | int) }}
+
+action: !input actions
+
+# queued：一次入侵会连着来好几条（Aware → 升级 → Panic），
+# 用 single 会把后面最严重的那条丢掉。
+mode: queued
+max: 10
