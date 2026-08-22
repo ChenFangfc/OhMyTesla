@@ -547,6 +547,15 @@ table.data td.dim { color: var(--text-secondary); }
 table.data tr:last-child td { border-bottom: 0; }
 
 .table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+/* 表头在纵向滚动容器里要粘住。行程列表最多 100 行、装在一个 72vh 的框里，
+   往下滚三行之后就不知道哪一列是里程、哪一列是能耗了。
+   背景必须显式给：sticky 元素默认透明，滚上来的行会从字底下穿过去。 */
+.table-scroll table.data thead th {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--bg-primary);
+  /* 用 box-shadow 而不是 border-bottom：sticky 元素的边框会跟着滚动裁切 */
+  box-shadow: inset 0 -1px 0 var(--border-subtle);
+}
 .table-scroll::-webkit-scrollbar { height: 6px; }
 .table-scroll::-webkit-scrollbar-thumb { background: var(--bg-hover); border-radius: 3px; }
 

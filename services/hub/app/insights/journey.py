@@ -71,6 +71,10 @@ async def timeline(car_id: int, days: int | None = 30, limit: int = 300) -> dict
     把一次行程切成好几段 online；所以这里以"事件"为单位（drives、
     charging_processes、updates），停放由相邻事件的空档反推。
     """
+    # limit 夹到合理区间。负数会让 Postgres 报语法错，而 _guard 把所有
+    # PostgresError 都翻译成"数据库尚未就绪"——一个参数错误被说成服务没起来，
+    # 排查方向直接跑偏。
+    limit = max(1, min(int(limit), 5000))
     window = ""
     args: list = [car_id]
     if days and days > 0:
@@ -373,6 +377,7 @@ async def places(car_id: int, limit: int = 30) -> list[dict]:
       493.6 公里 —— 那是一趟没被记录的长途。「家」的总停留
       15342 分钟里有 38% 是这么来的。阈值 0.5 km 与 timeline 的空档判定一致。
     """
+    limit = max(1, min(int(limit), 500))
     rows = await db.fetch(
         f"""
         SELECT {_LBL_PLACE} AS label,
@@ -426,6 +431,7 @@ async def statistics(car_id: int, bucket: str = "month", limit: int = 36) -> dic
     而 08-10 那行显示「0 次充电」——那天库里其实有两次充电，只是被 charges
     那条的 LIMIT 切掉了。用户看到的是一个凭空捏造的零。
     """
+    limit = max(1, min(int(limit), 500))
     if bucket not in _BUCKETS:
         bucket = "month"
     tz = local_tz()

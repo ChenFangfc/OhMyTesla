@@ -46,7 +46,13 @@
         <summary><span data-i18n="trips.mileage_title">Mileage by category</span><span class="value" id="v-mileage"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
         </summary>
         <div class="body">
-          <table class="data" id="t-mileage"><tbody></tbody></table>
+          <table class="data" id="t-mileage">
+            <thead><tr>
+              <th data-i18n="trips.th_category">Category</th>
+              <th class="num" data-i18n="timeline.th_drives">Drives</th>
+              <th class="num" data-i18n="timeline.th_distance">Distance</th>
+              <th class="num">kWh</th>
+            </tr></thead><tbody></tbody></table>
           <div class="row mt2" style="gap:10px">
             <a class="btn" id="dl-csv" download data-i18n="trips.export_csv">Export CSV</a>
           </div>

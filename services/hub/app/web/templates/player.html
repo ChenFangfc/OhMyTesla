@@ -29,6 +29,7 @@
     <div class="controls">
       <button id="btn-play" class="primary">▶ <span data-i18n="player.play">Play</span></button>
       <input type="range" id="seek" min="0" max="100" step="0.1" value="0"><span id="time-label" class="small muted" style="min-width:90px;text-align:right">0:00 / 0:00</span>
+      <span class="small muted" data-i18n-title="player.keys_help" title="" style="cursor:help;user-select:none">⌨</span>
       <select id="rate">
         <option value="0.5">0.5×</option>
         <option value="1" selected>1×</option>
@@ -48,6 +49,8 @@
         <select id="x-layout">
           <option value="grid" data-i18n="player.export.layout_grid">Grid (all cameras)</option>
           <option value="front_pip" data-i18n="player.export.layout_front_pip">Front camera + PiP</option>
+          <option value="vertical" data-i18n="player.export.layout_vertical">Vertical 9:16</option>
+          <option value="wide" data-i18n="player.export.layout_wide">Wide strip</option>
           <option value="back_pip" data-i18n="player.export.layout_back_pip">Rear camera + PiP</option>
         </select>
       </div>
@@ -116,6 +119,14 @@ function loadSegment(idx, keepTime = 0) {
   $main.src = mediaUrl(cams[mainCam]);
   $main.currentTime = keepTime;
   $main.playbackRate = currentRate(); // 换 src 会把倍速重置回 1×
+  // 先停掉旧的副视角再清 DOM。只 innerHTML="" 的话，浏览器会把那些
+  // <video> 留在后台继续解码和缓冲 —— 6 机位事件里连换几段之后，
+  // 内存和 CPU 都下不来。removeAttribute("src") + load() 是断源的标准做法。
+  $pips.querySelectorAll("video").forEach((v) => {
+    v.pause();
+    v.removeAttribute("src");
+    v.load();
+  });
   $pips.innerHTML = "";
   for (const cam of camList()) {
     if (cam === mainCam || !cams[cam]) continue;
@@ -368,6 +379,56 @@ window.addEventListener("omt:locale", () => {
 
 /* 整块启动逻辑要等词表：里面全是 t()，早一步就会把
    "player.type.sentry"、"dashcam.cam.front" 这些原始 key 显示给用户。 */
+/* ---------------- 键盘操作 ----------------
+   回看行车记录仪的核心动作是"停在某一帧看清楚"，鼠标拖进度条做不到。
+   快捷键沿用视频播放器的通用约定（空格/方向键/JK/L），不自创一套。
+   逐帧步进用 1/30 秒：HW3/HW4 的行驶片段都是 30fps 左右，
+   没有精确帧率时这个步长仍然是"看清下一帧"的正确量级。 */
+const FRAME_S = 1 / 30;
+
+function nudge(seconds) {
+  if (!$main.duration) return;
+  $main.pause();
+  $pips.querySelectorAll("video").forEach((v) => v.pause());
+  const t = Math.max(0, Math.min($main.duration, $main.currentTime + seconds));
+  $main.currentTime = t;
+  // 副视角必须跟着走，否则逐帧之后画面对不上，这个功能就没有意义
+  $pips.querySelectorAll("video").forEach((v) => { v.currentTime = t; });
+}
+
+document.addEventListener("keydown", (e) => {
+  // 在输入框里打字时不要抢键
+  const tag = (e.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "textarea" || tag === "select" || e.target.isContentEditable) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+  const keys = {
+    " ":          () => ($main.paused ? playAll() : pauseAll()),
+    k:            () => ($main.paused ? playAll() : pauseAll()),
+    ArrowLeft:    () => nudge(-5),
+    ArrowRight:   () => nudge(5),
+    j:            () => nudge(-10),
+    l:            () => nudge(10),
+    ",":          () => nudge(-FRAME_S),   // 通用约定：逗号/句号 = 上一帧/下一帧
+    ".":          () => nudge(FRAME_S),
+    Home:         () => nudge(-1e9),
+    End:          () => nudge(1e9),
+  };
+  const fn = keys[e.key];
+  if (!fn) return;
+  e.preventDefault();
+  fn();
+});
+
+function playAll() {
+  $main.play().catch(() => {});
+  $pips.querySelectorAll("video").forEach((v) => v.play().catch(() => {}));
+}
+function pauseAll() {
+  $main.pause();
+  $pips.querySelectorAll("video").forEach((v) => v.pause());
+}
+
 i18nReady.catch(() => {}).then(async () => {
   // 车辆选择器：多车账号必须显式指定，否则遥测/校准会张冠李戴
   carId = await initCarPicker("#car-picker", (id) => {

@@ -4,6 +4,8 @@
   grid       —— 所有机位等分网格 (2 列，5-6 机位时 3 列)
   front_pip  —— 前摄全屏，其余机位画中画排在底部
   back_pip   —— 后摄全屏（倒车/后方事件），其余画中画
+  vertical   —— 9:16 竖版，主画面在上、其余竖排在下（手机/社交平台）
+  wide       —— 全景条，所有机位横向一字排开（事故复盘一眼扫完）
 
 每个机位: 各 1 分钟分段先 concat，再统一 trim / 缩放，最后 xstack/overlay
 拼合，叠加 ASS 遥测字幕，输出 H.264 mp4。
@@ -136,6 +138,47 @@ def build_plan(
             filters.append(f"[{current}][pip_{cam}]overlay={x}:{y}[{nxt}]")
             current = nxt
         compose_out = current
+    elif layout == "vertical":
+        # 9:16 竖版，给手机和社交平台。做法是主画面顶部、其余机位竖着叠 ——
+        # 直接把 16:9 塞进 9:16 会剩下两条巨大的黑边，等于把画面缩小到三分之一。
+        # 1080x1920 是各平台的通用安全尺寸。
+        main_cam = "front" if "front" in cams else cams[0]
+        width, height = 1080, 1920
+        others = [c for c in cams if c != main_cam][:3]
+        main_h = 810                      # 1080 宽下的 4:3 主画面
+        strip_h = (height - main_h) // max(len(others), 1) if others else 0
+
+        scale(cam_streams[main_cam], "vmain", width, main_h)
+        if not others:
+            # 只有一路时把它铺满，别留一大片黑
+            scale(cam_streams[main_cam], "vmain", width, height)
+            compose_out = "vmain"
+        else:
+            filters.append(f"color=c=black:s={width}x{height}:d=1[vbg]")
+            filters.append("[vbg][vmain]overlay=0:0[vc0]")
+            current = "vc0"
+            for i, cam in enumerate(others):
+                scale(cam_streams[cam], f"vs_{cam}", width, strip_h)
+                nxt = f"vc{i + 1}"
+                filters.append(f"[{current}][vs_{cam}]overlay=0:{main_h + i * strip_h}[{nxt}]")
+                current = nxt
+            compose_out = current
+
+    elif layout == "wide":
+        # 全景条：所有机位横向一字排开，用于"一眼扫过全部视角"。
+        # 常见于事故复盘 —— 网格布局要来回看四个角，横排只需要扫一行。
+        cell_w, cell_h = 640, 480
+        width, height = cell_w * len(cams), cell_h
+        for cam in cams:
+            scale(cam_streams[cam], f"w_{cam}", cell_w, cell_h)
+        if len(cams) == 1:
+            compose_out = f"w_{cams[0]}"
+        else:
+            spec = "|".join(f"{i * cell_w}_0" for i in range(len(cams)))
+            refs = "".join(f"[w_{c}]" for c in cams)
+            filters.append(f"{refs}xstack=inputs={len(cams)}:layout={spec}:fill=black[wide]")
+            compose_out = "wide"
+
     else:  # grid
         n = len(cams)
         cols = 1 if n == 1 else (2 if n <= 4 else 3)

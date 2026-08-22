@@ -124,7 +124,7 @@ class JobManager:
         await store.update_job(job_id, status="running", progress=0)
 
         layout = params.get("layout", "grid")
-        if layout not in ("grid", "front_pip", "back_pip"):
+        if layout not in ("grid", "front_pip", "back_pip", "vertical", "wide"):
             layout = "grid"
         quality = params.get("quality", "standard")
         cameras = params.get("cameras") or None

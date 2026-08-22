@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import hashlib
 import re
+import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -96,7 +97,10 @@ async def thumb(id: str = Query(...)):
     if src is None:
         raise HTTPException(404, "no readable frame")
 
-    tmp = dest.with_suffix(".part")
+    # 临时名要带随机后缀。固定用 .part 的话，两个浏览器标签同时请求同一个
+    # 事件的缩略图，两个 ffmpeg 会往同一个文件里写，谁先 rename 谁把另一个
+    # 写了一半的内容变成"成品"。
+    tmp = dest.with_suffix(f".{secrets.token_hex(4)}.part")
     proc = await asyncio.create_subprocess_exec(
         # -update 1 必须有：没有它 ffmpeg 会把输出当成图片序列，
         # 因为文件名里没有 %03d 这类模式而报错退出
@@ -326,7 +330,7 @@ from typing import Literal
 
 class ComposeRequest(BaseModel):
     event_id: str
-    layout: Literal["grid", "front_pip", "back_pip"] = "grid"
+    layout: Literal["grid", "front_pip", "back_pip", "vertical", "wide"] = "grid"
     cameras: list[str] | None = None
     quality: Literal["high", "standard", "fast"] = "standard"
     start_offset: float = 0
@@ -538,6 +542,25 @@ async def cancel_job(job_id: int):
 # 这一组回答的是"整个素材库里"的问题（这个月自驾占多少、所有急刹在哪），
 # 上面那组 /telemetry /sei 回答的是"这一段里"的问题。两者数据同源，
 # 区别只在解析结果有没有落库。
+
+@router.get("/evidence")
+async def evidence_package(id: str, car_id: int | None = None):
+    """取证包：原始片段 + 事件元数据 + 遥测 CSV + 校验和，打成一个 ZIP。
+
+    整包在内存里拼，几十到几百 MB。zipfile 是同步的，必须扔线程池 ——
+    否则打包期间整个门户（单进程 uvicorn）全程无响应。
+    """
+    from . import evidence
+
+    try:
+        blob, name = await evidence.build(id, car_id)
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from e
+    return Response(
+        blob, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
 
 @router.get("/encoder")
 async def encoder_status():
