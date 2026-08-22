@@ -240,25 +240,50 @@ class LiveState:
                             topic, payload, retain = await self._outbox.get()
                             try:
                                 await client.publish(topic, payload, qos=1, retain=retain)
-                            except Exception:
-                                # 发布失败（断线瞬间）：塞回队列等重连后重发
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as e:  # noqa: BLE001
+                                # 发布失败（断线瞬间）：塞回队列等重连后重发。
+                                #
+                                # 这里以前是 `raise`，后果很隐蔽：sender 任务当场死掉，
+                                # 而外层 `async for message` 还在正常收消息，连接看起来
+                                # 完全健康 —— 但从这一刻起**一条都发不出去**。哨兵事件
+                                # 回发、HA 自动发现、ABRP 中继全部静默停摆，直到连接
+                                # 因为别的原因断开才会恢复。/healthz 照样 200。
                                 with contextlib.suppress(asyncio.QueueFull):
                                     self._outbox.put_nowait((topic, payload, retain))
-                                raise
+                                log.warning("MQTT publish failed (%s); retrying", e)
+                                await asyncio.sleep(1)
+
+                    async def read_messages():
+                        async for message in client.messages:
+                            topic = str(message.topic)
+                            if topic.startswith(f"{settings.fleet_topic_prefix}/"):
+                                await self._handle_fleet(message)
+                            else:
+                                await self._handle(prefix, message)
 
                     sender = asyncio.create_task(send_outbox())
-                    async for message in client.messages:
-                        topic = str(message.topic)
-                        if topic.startswith(f"{settings.fleet_topic_prefix}/"):
-                            await self._handle_fleet(message)
-                        else:
-                            await self._handle(prefix, message)
+                    reader = asyncio.create_task(read_messages())
+                    # 两个方向互相监督：任何一边退出（正常结束或抛异常）都把
+                    # 整条连接回收重连，避免出现"只收不发"或"只发不收"的半死状态。
+                    done, _ = await asyncio.wait(
+                        {sender, reader}, return_when=asyncio.FIRST_COMPLETED)
+                    reader.cancel()
+                    with contextlib.suppress(Exception, asyncio.CancelledError):
+                        await reader
+                    for tsk in done:
+                        if tsk.cancelled():
+                            continue
+                        exc = tsk.exception()
+                        if exc is not None:
+                            raise exc
             except asyncio.CancelledError:
                 raise
             except (aiomqtt.MqttError, OSError) as e:
                 log.warning("MQTT connection lost (%s); retrying in 5s", e)
                 await asyncio.sleep(5)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 # 只接 MqttError/OSError 的话，_handle 里冒出来的任何别的异常
                 # （载荷形状意外、某个 hook 抛错）都会把这个任务永久杀死：
                 # 没人守护它、没人重启它，而 /healthz 照样返回 200 ——
@@ -396,7 +421,7 @@ class LiveState:
         for hook in self._hooks:
             try:
                 await hook(car_key, key, old, state)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("fleet transition hook failed for %s", vin)
 
     async def ingest_fleet_sentry(self, vin: str, state: str) -> None:
@@ -448,7 +473,7 @@ class LiveState:
         for hook in self._hooks:
             try:
                 await hook(car_id, key, old, value)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("transition hook failed for %s/%s", car_id, key)
 
         event = json.dumps(

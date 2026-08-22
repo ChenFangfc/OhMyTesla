@@ -11,7 +11,6 @@
 import asyncio
 import contextlib
 import logging
-import time
 from datetime import datetime, timezone
 
 from .store import store
@@ -53,6 +52,7 @@ async def mark_done(item_id: str, odometer_km: float | None) -> list[dict]:
         if it.get("id") == item_id:
             it["last_km"] = round(float(odometer_km), 1) if odometer_km else it.get("last_km")
             it["last_date"] = datetime.now(timezone.utc).date().isoformat()
+            it.pop("baseline", None)      # 这次才是真实保养日，不再是起算点
     await set_items(items)
     return items
 
@@ -75,10 +75,39 @@ def _due(item: dict, odometer_km: float | None) -> dict | None:
     return reasons[0] if reasons else None
 
 
+async def ensure_baseline(odometer_km: float | None) -> list[dict]:
+    """给还没有基准的项补一个起点，并落库。
+
+    这是四条出厂预置提醒**从来不会到期**的原因：get_items() 给它们的
+    last_km / last_date 都是 None，而 _due() 两个分支都要求基准为真，
+    于是无论开多久、放多久都不会响。用户看到的是一个安静的、
+    看起来正常工作的保养页 —— 这比没有这个功能更糟。
+
+    基准取"第一次见到这条项目的时刻"：里程用当前里程表，日期用今天。
+    这不是真实的上次保养时间，所以界面上要说明是「自启用起算」；
+    用户做完一次点一下就会推到准确值。
+    """
+    items = await get_items()
+    today = datetime.now(timezone.utc).date().isoformat()
+    changed = False
+    for it in items:
+        if it.get("every_months") and not it.get("last_date"):
+            it["last_date"] = today
+            it["baseline"] = "enabled"     # 标明这是起算点不是真实保养日
+            changed = True
+        if it.get("every_km") and it.get("last_km") is None and odometer_km:
+            it["last_km"] = round(float(odometer_km), 1)
+            it["baseline"] = "enabled"
+            changed = True
+    if changed:
+        await set_items(items)
+    return items
+
+
 async def status(odometer_km: float | None) -> list[dict]:
     """每条的到期情况，供设置页显示。"""
     out = []
-    for it in await get_items():
+    for it in await ensure_baseline(odometer_km):
         d = _due(it, odometer_km)
         out.append({**it, "due": bool(d), "due_reason": d})
     return out
@@ -106,7 +135,7 @@ class MaintenanceWatcher:
         while True:
             try:
                 await self._check()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 log.exception("maintenance check failed")
             await asyncio.sleep(CHECK_INTERVAL_S)
 

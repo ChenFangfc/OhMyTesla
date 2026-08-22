@@ -53,18 +53,24 @@ async def set_tag(drive_id: int, body: TagBody):
     cat = (body.category or "").strip().lower()
     if cat and cat not in CATEGORIES:
         raise HTTPException(400, f"category must be one of {', '.join(CATEGORIES)}")
-    tags = await _tags()
     key = str(drive_id)
-    if not cat and not (body.note or "").strip():
-        tags.pop(key, None)            # 清空 = 取消标记
-    else:
-        entry = tags.get(key) or {}
-        if body.category is not None:
-            entry["category"] = cat
-        if body.note is not None:
-            entry["note"] = body.note.strip()[:200]
-        tags[key] = entry
-    await store.set_setting("drive_tags", tags)
+
+    # 整块 JSON 的读-改-写必须持锁：行程页上连着给两段行程打标签时，
+    # 第二个请求读到的是第一个写回之前的快照，写回时把第一条标签覆盖掉。
+    def apply(tags: dict) -> dict:
+        tags = dict(tags or {})
+        if not cat and not (body.note or "").strip():
+            tags.pop(key, None)        # 清空 = 取消标记
+        else:
+            entry = dict(tags.get(key) or {})
+            if body.category is not None:
+                entry["category"] = cat
+            if body.note is not None:
+                entry["note"] = body.note.strip()[:200]
+            tags[key] = entry
+        return tags
+
+    tags = await store.mutate_setting("drive_tags", apply, {})
     return {"ok": True, "tags": tags.get(key)}
 
 

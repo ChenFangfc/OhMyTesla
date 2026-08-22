@@ -100,7 +100,7 @@ class Janitor:
         while True:
             try:
                 self._last = await self.sweep()
-            except Exception:  # noqa: BLE001 - 清理失败绝不能拖垮进程
+            except Exception:
                 log.exception("janitor sweep failed")
             await asyncio.sleep(INTERVAL_S)
 
@@ -121,6 +121,25 @@ class Janitor:
             n, b = _sweep_dir(Path(d), keep, sfx)
             files += n
             freed += b
+
+        # SEI 索引跟着素材走，不按年龄清。扫不到素材目录时一行都不动 ——
+        # U 盘没插的时候把索引清空，等于每次插拔都要全库重解。
+        try:
+            from ..dashcam.scanner import _teslacam_base, scanner
+
+            base = _teslacam_base()
+            if base is not None:
+                alive = {
+                    rel
+                    for ev in scanner.scan()
+                    for seg in ev.segments
+                    for rel in seg.cameras.values()
+                }
+                sei_rows = await store.prune_sei_orphans(alive)
+                if sei_rows:
+                    result.setdefault("rows", {}).update(sei_rows)
+        except Exception:
+            log.exception("SEI index prune failed")
 
         orphans = _sweep_orphan_subtitles(Path(settings.exports_dir))
         if files or orphans:

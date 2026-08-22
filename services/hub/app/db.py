@@ -6,6 +6,7 @@ TeslaMate 首次启动时才建表，因此这里对连接失败保持容错：
 
 import asyncio
 import logging
+import time
 
 import asyncpg
 
@@ -15,6 +16,10 @@ log = logging.getLogger(__name__)
 
 _pool: asyncpg.Pool | None = None
 _lock = asyncio.Lock()
+# 建池失败后的冷却截止时刻。用单调钟而不是 time.time()：容器里 NTP 校时
+# 会让墙钟跳变，冷却要么立刻失效要么卡住很久。
+_fail_until: float = 0.0
+_RETRY_COOLDOWN_S = 10.0
 # 持有正在后台关闭的池的任务引用。不留引用的话 asyncio 只保存弱引用，
 # 任务可能在 await 中途被回收，连接就漏了。
 _CLOSING: set[asyncio.Task] = set()
@@ -25,12 +30,18 @@ class DbUnavailable(Exception):
 
 
 async def get_pool() -> asyncpg.Pool:
-    global _pool
+    global _pool, _fail_until
     if _pool is not None:
         return _pool
+    # 刚失败过就直接拒绝，别让每个请求都去撞一次超时。TeslaMate 首次启动要
+    # 跑几分钟建表迁移，这段时间里门户每一次刷新都会串行地卡在 _lock 上。
+    if time.monotonic() < _fail_until:
+        raise DbUnavailable("database was unreachable moments ago; backing off")
     async with _lock:
         if _pool is not None:
             return _pool
+        if time.monotonic() < _fail_until:
+            raise DbUnavailable("database was unreachable moments ago; backing off")
         try:
             _pool = await asyncpg.create_pool(
                 host=settings.tm_db_host,
@@ -38,13 +49,20 @@ async def get_pool() -> asyncpg.Pool:
                 user=settings.tm_db_user,
                 password=settings.tm_db_pass,
                 database=settings.tm_db_name,
-                min_size=1,
+                # min_size=1 会在建池时就要求一条可用连接，数据库没起来时
+                # 这一步要一直等到 TCP 超时（可达数十秒），而 _lock 是全局的
+                # —— 所有请求连同 MQTT 监听里的库调用一起排在后面。
+                # 0 表示"池子先建起来，用的时候再连"。
+                min_size=0,
                 max_size=5,
                 command_timeout=30,
+                timeout=5,              # 单次取连接的上限
             )
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
+            _fail_until = time.monotonic() + _RETRY_COOLDOWN_S
             log.warning("TeslaMate database not reachable yet: %s", e)
             raise DbUnavailable(str(e)) from e
+        _fail_until = 0.0
         return _pool
 
 

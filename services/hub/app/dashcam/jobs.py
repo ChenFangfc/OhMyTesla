@@ -6,9 +6,9 @@ import logging
 import re
 from datetime import datetime, timedelta
 
+from .. import db
 from ..alerts.store import store
 from ..config import settings
-from .. import db
 from . import composer, sei, telemetry
 from .scanner import scanner
 
@@ -73,23 +73,36 @@ class JobManager:
                     )
                 else:
                     await self._queue.put(r["id"])
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("job recovery failed")
 
     async def _worker(self) -> None:
+        """唯一一个合成 worker。它死了 = 之后所有任务永远卡在 queued。
+
+        try 必须罩住整个循环体，不能只罩 self._run：`store.get_job` 或
+        `update_job` 抛错（SQLite 锁竞争、库文件被换掉）时异常会逃出去，
+        这个任务就此结束，而 jobs.start() 只在启动时创建一次、无人监督。
+        用户看到的是"点了导出没反应"，日志里也只有一行 Task exception。
+        """
         await self._recover()
         while True:
-            job_id = await self._queue.get()
-            job = await store.get_job(job_id)
-            if not job or job["status"] != "queued":
-                continue
+            job_id = None
             try:
+                job_id = await self._queue.get()
+                job = await store.get_job(job_id)
+                if not job or job["status"] != "queued":
+                    continue
                 await self._run(job_id, job)
+            except asyncio.CancelledError:
+                raise
             except Exception as e:  # noqa: BLE001
                 log.exception("compose job %s failed", job_id)
-                await store.update_job(job_id, status="failed", error=str(e)[:2000])
+                if job_id is not None:
+                    with contextlib.suppress(Exception):
+                        await store.update_job(job_id, status="failed", error=str(e)[:2000])
             finally:
-                self._cancel_req.discard(job_id)
+                if job_id is not None:
+                    self._cancel_req.discard(job_id)
 
     async def _default_car_id(self) -> int | None:
         try:

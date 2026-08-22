@@ -127,6 +127,66 @@ async def is_dirty() -> bool:
     return bool(await store.get_setting("tariff_dirty", False))
 
 
+def _num(v, default: float = 0.0) -> float:
+    """把费率转成数。
+
+    存进来的 JSON 可能带任何东西（空串、null、用户手打的 "0.6 元"）。
+    以前是裸 float()，一条坏数据就让 recompute 和 preview 永久 500 —— 而且
+    是在**读**的路径上炸，用户既看不到费用也改不回来，只能去翻数据库。
+    读的时候宽容、写的时候严格，才不会把自己锁在门外。
+    """
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return default
+
+
+def validate_plan(plan: dict) -> list[str]:
+    """保存前的结构校验。返回人话的错误列表，空列表表示可以存。"""
+    errs: list[str] = []
+    if not isinstance(plan, dict):
+        return ["plan must be an object"]
+
+    def check_rule(rule, where: str) -> None:
+        if rule is None:
+            return
+        if not isinstance(rule, dict):
+            errs.append(f"{where}: must be an object")
+            return
+        kind = rule.get("type", "flat")
+        if kind not in ("flat", "tou"):
+            errs.append(f"{where}: type must be flat or tou")
+        if kind == "flat":
+            if _num(rule.get("rate"), -1) < 0:
+                errs.append(f"{where}: rate must be a number >= 0")
+        else:
+            periods = rule.get("periods")
+            if not isinstance(periods, list) or not periods:
+                errs.append(f"{where}: tou needs a non-empty periods list")
+            else:
+                for i, prd in enumerate(periods):
+                    if not isinstance(prd, dict):
+                        errs.append(f"{where}.periods[{i}]: must be an object")
+                        continue
+                    if _num(prd.get("rate"), -1) < 0:
+                        errs.append(f"{where}.periods[{i}]: rate must be a number >= 0")
+                    for k in ("from", "to"):
+                        try:
+                            _parse_hm(prd[k])
+                        except (KeyError, ValueError):
+                            errs.append(f"{where}.periods[{i}].{k}: expected HH:MM")
+
+    check_rule(plan.get("default"), "default")
+    check_rule(plan.get("supercharger"), "supercharger")
+    locs = plan.get("locations")
+    if locs is not None and not isinstance(locs, dict):
+        errs.append("locations: must be an object keyed by place name")
+    elif isinstance(locs, dict):
+        for name, rule in locs.items():
+            check_rule(rule, f"locations[{name}]")
+    return errs
+
+
 def _is_zero_rule(rule) -> bool:
     """这条规则是不是"等于没配"（费率全零）。"""
     if not isinstance(rule, dict):
@@ -136,11 +196,11 @@ def _is_zero_rule(rule) -> bool:
         if not periods:
             return True
         return all(
-            float(p.get("rate") or 0) == 0
+            _num(p.get("rate")) == 0
             for p in periods if isinstance(p, dict)
         )
     try:
-        return float(rule.get("rate") or 0) == 0
+        return _num(rule.get("rate")) == 0
     except (TypeError, ValueError):
         return True
 
@@ -194,11 +254,11 @@ def validate(plan: dict) -> list[dict]:
                 continue
             am, bm = a.hour * 60 + a.minute, b.hour * 60 + b.minute
             if am == bm:
-                rng = range(0, 1440)      # 与 _rate_at 一致：起止相同 = 全天
+                rng = range(1440)      # 与 _rate_at 一致：起止相同 = 全天
             elif am < bm:
                 rng = range(am, bm)
             else:
-                rng = [*range(am, 1440), *range(0, bm)]
+                rng = [*range(am, 1440), *range(bm)]
             for m in rng:
                 marks[m] = True
         gaps = sum(1 for m in marks if not m)
@@ -216,7 +276,7 @@ def validate(plan: dict) -> list[dict]:
 def _rate_at(rule: dict, dt_local: datetime) -> tuple[float, str]:
     """返回 (单价, 时段名)。"""
     if rule.get("type") != "tou":
-        return float(rule.get("rate") or 0), FLAT
+        return _num(rule.get("rate")), FLAT
     now = dt_local.time()
     for p in rule.get("periods", []):
         try:
@@ -233,7 +293,7 @@ def _rate_at(rule: dict, dt_local: datetime) -> tuple[float, str]:
         else:
             inside = now >= start or now < end
         if inside:
-            return float(p.get("rate") or 0), p.get("name") or TOU
+            return _num(p.get("rate")), p.get("name") or TOU
     return 0.0, UNCOVERED
 
 
@@ -252,7 +312,6 @@ def _boundaries(rule: dict) -> list[int]:
 
 def _next_boundary(bounds: list[int], dt: datetime) -> datetime:
     """dt 之后的下一个时段切换时刻。"""
-    mins = dt.hour * 60 + dt.minute
     day = dt.replace(hour=0, minute=0, second=0, microsecond=0)
     for b in bounds:
         cand = day + timedelta(minutes=b)
@@ -465,7 +524,7 @@ async def recompute_all(car_id: int | None = None, write_back: bool = False) -> 
             else:
                 ours[cp_id] = res["cost"]
                 written += 1
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("cost write-back failed for %s", cp_id)
 
     await store.set_setting("charge_costs", costs)

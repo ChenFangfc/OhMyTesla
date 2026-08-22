@@ -18,9 +18,9 @@
 
 import asyncio
 import contextlib
-import re
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 
@@ -46,7 +46,12 @@ class Session:
     last_seen: float
     samples: int = 1
     peak_state: str = "aware"
-    escalated: bool = False
+    # 已经推送到哪一级：""（只发过 L1）/ "warn"（持续活动升级）/ "panic"（警报拉响）。
+    # 这里原本是个 bool。布尔量表达不了"升过一次就不能再升"与"从 warn 升到
+    # panic"的区别，于是一旦因持续 90 秒升过级，随后真正的 Panic 就被
+    # `not sess.escalated` 挡死 —— 整套系统最严重的那一条事件，恰好只在
+    # "事前已有持续活动"这种最典型的真实入侵形态下丢失。
+    escalated_level: str = ""
     geofence: str = ""
     soc: str = ""
     db_id: int | None = None
@@ -158,11 +163,13 @@ class SentryTracker:
             sess.extras.append(extra)
         await self._persist(sess, closed=False)
 
-        should_escalate = (
-            not sess.escalated
-            and (state == "panic" or sess.duration >= settings.sentry_escalate_seconds)
-        )
-        if should_escalate:
+        # Panic 是独立的一级，不受"这个会话已经升过级"的影响：
+        # 从"持续活动"到"警报真的拉响"是状态变严重了，必须再推一次。
+        # 只有同一级别内的重复才该被压制。
+        if state == "panic":
+            if sess.escalated_level != "panic":
+                await self._notify(sess, escalated=True, reason="sentry.reason.panic")
+        elif not sess.escalated_level and sess.duration >= settings.sentry_escalate_seconds:
             await self._notify(sess, escalated=True,
                                reason="sentry.reason.sustained",
                                reason_vars={"n": int(sess.duration)})
@@ -263,7 +270,9 @@ class SentryTracker:
         # 却把会话标记成已升级；接下来真的 Panic 时，observe() 里的
         # `not sess.escalated` 直接挡掉 —— 承诺过"入侵仍然会推"，结果没推。
         if escalated and delivered:
-            sess.escalated = True
+            # 记的是"推到了哪一级"。peak_state 已经是 panic 时记 panic，
+            # 这样后续同为 panic 的重复才会被压制，而 warn → panic 仍能升。
+            sess.escalated_level = "panic" if sess.peak_state == "panic" else "warn"
 
     # ---------- 落库与收尾 ----------
 
@@ -276,7 +285,7 @@ class SentryTracker:
                     "  escalated, geofence, soc, extras, closed)"
                     " VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
                     (sess.car_id, sess.car_name, sess.source, sess.started, sess.last_seen,
-                     sess.samples, sess.peak_state, int(sess.escalated), sess.geofence,
+                     sess.samples, sess.peak_state, int(bool(sess.escalated_level)), sess.geofence,
                      sess.soc, json.dumps(sess.extras, ensure_ascii=False), int(closed)),
                 )
                 await store.db.commit()
@@ -284,12 +293,12 @@ class SentryTracker:
             await store.db.execute(
                 "UPDATE sentry_sessions SET last_seen=?, samples=?, peak_state=?,"
                 " escalated=?, extras=?, closed=? WHERE id=?",
-                (sess.last_seen, sess.samples, sess.peak_state, int(sess.escalated),
+                (sess.last_seen, sess.samples, sess.peak_state, int(bool(sess.escalated_level)),
                  json.dumps(sess.extras, ensure_ascii=False), int(closed), sess.db_id),
             )
             await store.db.commit()
             return sess.db_id
-        except Exception:  # noqa: BLE001
+        except Exception:
             log.exception("failed to persist sentry session")
             return sess.db_id
 

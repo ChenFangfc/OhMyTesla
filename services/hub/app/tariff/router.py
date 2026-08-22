@@ -57,6 +57,12 @@ async def save_plan(plan: dict):
     if len(cur) > 8 or not cur.isalnum():
         raise HTTPException(400, "Currency must be a short alphanumeric code (USD, EUR, CNY…)")
     plan["currency"] = cur
+    # 写的时候严格：一条非数字费率存进去之后，读的路径（重算、预览、洞察页
+    # 的费用列）会一路 500，而用户没有任何界面能把它改回来。在入口挡住，
+    # 并明确指出是哪一条不合格。
+    errs = calc.validate_plan(plan)
+    if errs:
+        raise HTTPException(400, "; ".join(errs[:5]))
     await calc.set_plan(plan)
     return {"ok": True, "warnings": calc.validate(plan)}
 
