@@ -162,9 +162,10 @@ services:
       -port 4443 -host 0.0.0.0 -verbose
     volumes:
       - ./config/tesla-proxy:/config:ro
-    ports:
-      # 只绑本机：这个端口能解锁你的车，绝不要暴露到局域网之外
-      - "127.0.0.1:4443:4443"
+    # 不向宿主机映射端口。hub 通过 compose 内部 DNS（https://tesla-proxy:4443）
+    # 就能到达，映射出去只会带来两个问题：① 和 fleet-telemetry 的 4443 撞车，
+    # 导致 commands 和 fleet 两个 profile 不能同时启用；② 在本机多开一个
+    # 能解锁车辆的监听口。需要从宿主机调试时临时加 -p 即可。
 
   # 可选: 官方 Fleet Telemetry 自托管（哨兵 Aware/Panic 真实事件流）
   # 需要 Tesla 开发者账号 + 公网域名 + mTLS 证书，配置见 docs/FLEET-TELEMETRY.md
