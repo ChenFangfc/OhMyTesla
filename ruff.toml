@@ -1,0 +1,74 @@
+# OhmyTesla 的 lint 策略。
+#
+# 这份配置不是"把 ruff 默认值抄一遍"，而是把仓库里**已经在实践的约定**写下来：
+# 代码里到处是 `# noqa: BLE001` / `# noqa: S608`，说明作者是按 flake8-bandit 和
+# flake8-blind-except 那套标准写的，只是从来没有配置文件来强制它。没有配置的
+# 后果是：ruff 跑默认规则时，这 47 处 noqa 全被判成"无用指令"，真正想拦的
+# 东西反而一条都没拦。
+#
+# 选规则的原则：**能指出真实运行期故障的开**，风格洁癖的不开。
+# 这是一个会解锁用户车辆、会读写数据库的服务，安全与正确性优先于整齐。
+
+target-version = "py313"
+line-length = 100
+
+exclude = [
+    "teslamate",                       # 上游子模块，不归本仓库管
+    "services/hub/app/web/static/vendor",
+    ".venv",
+]
+
+[lint]
+select = [
+    "F",      # pyflakes：未使用的导入/变量、未定义名字 —— 真错
+    "E", "W", # pycodestyle
+    "I",      # 导入排序：合并冲突的常见来源
+    "B",      # bugbear：可变默认参数、循环里的闭包变量这类真陷阱
+    "S",      # bandit：安全。这个服务能控车，必须开
+    "BLE",    # 裸 except / except Exception —— 吞异常是本项目最常见的坑
+    "ASYNC",  # 异步里做阻塞调用。单进程 uvicorn，一次阻塞全站卡住
+    "DTZ",    # 天真 datetime。TeslaMate 的时间列是 naive UTC，最容易出错的地方
+    "SIM",    # 可简化的写法里那些会藏 bug 的
+    "RUF",    # ruff 自有规则，含 RUF100（无用 noqa）
+    "TRY",    # 异常处理反模式
+    "PIE", "C4", "FURB", "PL",
+]
+
+ignore = [
+    "E501",     # 行长交给 formatter，不在 lint 里吵
+    "TRY003",   # "异常里不要写长消息" —— 本项目的错误信息是要给用户看的
+    "TRY300",   # else 分支的位置偏好，不影响正确性
+    "PLR0911", "PLR0912", "PLR0913", "PLR0915",  # 分支/参数数量阈值，状态机天然超
+    "PLR2004",  # 魔数。阈值常量都带注释解释了，再改成命名常量收益不大
+    "S101",     # assert：仅用于内部不变量（store.db 的 not None 断言）
+    "SIM108",   # 三元表达式偏好
+
+    # 全仓库的注释和文档字符串都是中文。RUF001/002/003 是用来抓标识符里的
+    # 同形字攻击的（把拉丁 a 换成西里尔 а），拿它去扫中文散文只会得到
+    # 1799 条"全角逗号很可疑"。真要防同形字，该防的是变量名，而这个仓库
+    # 的标识符全是 ASCII。
+    "RUF001", "RUF002", "RUF003",
+
+    # 函数内导入在这里是**刻意**的：livestate ↔ alerts ↔ tariff ↔ insights
+    # 之间互相引用，模块顶层导入会形成环。89 处全是这个原因。
+    "PLC0415",
+
+    "PLR0917",  # 位置参数个数，与上面几条 PLR 阈值同理
+    "PLW0603",  # global 语句：db.py 的连接池单例就是靠它自愈的
+]
+
+[lint.per-file-ignores]
+# 测试是可独立运行的脚本，故意用 exec 加载被测模块、故意 assert
+"services/hub/tests/*" = ["S102", "S101", "PLC0415", "T201"]
+# 迁移文件里就是大段 SQL 字面量
+"services/hub/app/migrations.py" = ["S608"]
+
+[lint.flake8-bandit]
+# subprocess 调用集中在 ffmpeg/ffprobe 那几处，参数全部是列表形式且不过 shell。
+# S603（"subprocess 调用需要检查"）在这里只会产生噪声，真正要防的是 S602（shell=True），
+# 那条保持开启。
+check-typed-exception = true
+
+[format]
+quote-style = "double"
+indent-style = "space"

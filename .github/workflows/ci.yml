@@ -1,0 +1,113 @@
+name: CI
+
+# 门禁：这三项不过，代码不该合进 main。
+#
+# 为什么不用 pytest / tox：hub 的测试是可独立运行的脚本，退出码即结果。
+# CI 跑的和开发者在本地跑的是同一条命令（services/hub/tests/run.sh），
+# 不存在"本地过了 CI 挂"或反过来的情况。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # 同一分支上新的推送把旧的跑批取消掉，别排队烧 runner
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: 静态检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false          # 上游 TeslaMate 不归本仓库 CI 管
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: 语法检查（全部 Python 文件必须能编译）
+        run: python -m compileall -q services/hub/app
+
+      - name: ruff
+        run: |
+          pip install --quiet ruff
+          ruff check services/hub/app --output-format=github
+
+      - name: shell 脚本语法
+        run: bash -n omt && bash -n services/hub/tests/run.sh
+
+      - name: i18n 目录一致性
+        # 两份词表键必须完全一致，占位符也要对得上。
+        # 少一边会在运行时 console.warn 并悄悄回退英文，用户看不出是漏翻。
+        run: python3 scripts/check_i18n.py
+
+  unit:
+    name: 单元测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: 不依赖运行时的测试
+        run: ./services/hub/tests/run.sh
+
+  integration:
+    name: 集成测试（真起容器）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 造一份最小 .env
+        # CI 里不需要真 token，只需要让 preflight 和加密层能初始化
+        run: |
+          cp .env.example .env
+          sed -i "s|^TM_ENCRYPTION_KEY=.*|TM_ENCRYPTION_KEY=$(openssl rand -base64 32)|" .env
+          sed -i "s|^TM_DB_PASS=.*|TM_DB_PASS=$(openssl rand -base64 18 | tr -d '/+=')|" .env
+          sed -i "s|^OHMYTESLA_PASSWORD=.*|OHMYTESLA_PASSWORD=ci-test-password|" .env
+
+      - name: 起栈
+        run: docker compose up -d database mosquitto ohmytesla
+
+      - name: 等 hub 就绪
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8800/healthz >/dev/null 2>&1; then
+              echo "ready after ${i}s"; exit 0
+            fi
+            sleep 1
+          done
+          echo "hub 没起来"; docker compose logs ohmytesla; exit 1
+
+      - name: 迁移必须跑到最新版
+        # /healthz 报的 schema 号要等于代码里的最大版本号。
+        # 对不上说明迁移没跑成，那种情况下服务照样能起，但功能会以奇怪的方式坏掉。
+        run: |
+          want=$(python3 -c "import re,sys;s=open('services/hub/app/migrations.py').read();print(max(int(m) for m in re.findall(r'^\s*\((\d+), \"', s, re.M)))")
+          got=$(curl -fsS http://localhost:8800/healthz | python3 -c "import json,sys;print(json.load(sys.stdin).get('schema'))")
+          echo "expected schema=$want got=$got"
+          [ "$want" = "$got" ] || { docker compose logs ohmytesla; exit 1; }
+
+      - name: 未认证的请求必须被挡住
+        # 除 /healthz 外一律 401。这条挂了说明整站数据在裸奔。
+        run: |
+          for p in /api/overview /api/cars /mcp /api/tesla/status /api/alerts/history; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:8800$p")
+            echo "$p -> $code"
+            [ "$code" = "401" ] || { echo "❌ $p 没要求认证"; exit 1; }
+          done
+
+      - name: 容器内测试
+        run: ./services/hub/tests/run.sh --docker
+
+      - name: 失败时把日志打出来
+        if: failure()
+        run: docker compose logs --tail 200

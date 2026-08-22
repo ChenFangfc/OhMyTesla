@@ -27,12 +27,58 @@ preflight() {
   command -v docker >/dev/null || die "Docker isn't installed. Get Docker Desktop from docker.com."
   docker info >/dev/null 2>&1 || die "Docker isn't running. Open Docker Desktop and wait for the whale icon to settle."
   [ -f .env ] || die ".env is missing. Copy it from the template:  cp .env.example .env"
+  # .env 里有加密密钥、数据库口令、门户密码。cp 出来是 0644。
+  chmod 600 .env 2>/dev/null || true
   grep -q '^TM_ENCRYPTION_KEY=.\+' .env || die "TM_ENCRYPTION_KEY is empty in .env. Generate one:  openssl rand -base64 32"
   # 只查"非空"的话，.env.example 里的占位串照样过关——而这个键正是加密
   # Tesla token 用的，用占位值等于没加密。
   grep -q '^TM_ENCRYPTION_KEY=change-me' .env && die "TM_ENCRYPTION_KEY is still the placeholder. Generate a real one:  openssl rand -base64 32"
   grep -q '^TM_DB_PASS=change-me' .env && die "TM_DB_PASS is still the placeholder. Generate one:  openssl rand -base64 18 | tr -d '/+='"
+
+  # 门户密码和上面两个密钥同等重要 —— 它是唯一挡在"解锁车门"和局域网之间的东西，
+  # 而 8800 默认绑在 0.0.0.0。以前这里对它一字不提，于是照着 README 装一遍
+  # 得到的是一个谁都能开你车的服务。没设就直接生成一个写回 .env：
+  # 比 die 好，因为 CURL_AUTH 读的就是这个值，生成完 status/up 立刻能正常工作。
+  if ! grep -qE '^OHMYTESLA_PASSWORD=.+' .env; then
+    cmd_portal_password --auto
+  fi
+
+  # Grafana 同理。compose 现在用 `${GF_SECURITY_ADMIN_PASSWORD:?}`，空值会让
+  # `docker compose up` 直接失败 —— 与其让用户看一句 compose 的报错，
+  # 不如在这里替他生成好。这个面板能看到全部行车轨迹，不该是 admin/admin。
+  if ! grep -qE '^GF_SECURITY_ADMIN_PASSWORD=.+' .env; then
+    local gpw; gpw=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | cut -c1-24)
+    if grep -qE '^GF_SECURITY_ADMIN_PASSWORD=' .env; then
+      awk -v pw="$gpw" '/^GF_SECURITY_ADMIN_PASSWORD=/ {print "GF_SECURITY_ADMIN_PASSWORD=" pw; next} {print}' .env > .env.tmp && mv .env.tmp .env
+    else
+      printf '\nGF_SECURITY_ADMIN_PASSWORD=%s\n' "$gpw" >> .env
+    fi
+    chmod 600 .env 2>/dev/null || true
+    echo "${GREEN}Generated a Grafana admin password${OFF} (user: admin) and saved it to .env"
+  fi
   return 0
+}
+
+# 生成/重置门户密码。写回 .env 并提示需要重启才生效。
+cmd_portal_password() {
+  local auto="${1:-}"
+  local pw; pw=$(openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | cut -c1-28)
+  if grep -qE '^OHMYTESLA_PASSWORD=' .env; then
+    # -i 在 GNU sed 和 BSD sed 上参数不同；用临时文件绕开这个差异。
+    # 密码里只有 A-Za-z0-9，不需要转义分隔符。
+    awk -v pw="$pw" '/^OHMYTESLA_PASSWORD=/ {print "OHMYTESLA_PASSWORD=" pw; next} {print}' .env > .env.tmp
+    mv .env.tmp .env
+  else
+    printf '\nOHMYTESLA_PASSWORD=%s\n' "$pw" >> .env
+  fi
+  chmod 600 .env 2>/dev/null || true
+  echo
+  echo "${GREEN}Portal password set.${OFF}"
+  echo "    user:     ${BOLD}ohmytesla${OFF}"
+  echo "    password: ${BOLD}${pw}${OFF}"
+  echo "  ${DIM}Saved to .env. Keep it — the portal can unlock your car.${OFF}"
+  [ "$auto" = "--auto" ] || echo "  ${YELLOW}Run ./omt restart for it to take effect.${OFF}"
+  echo
 }
 
 # Poll until the hub answers, so `up` doesn't return before the app is usable.
@@ -112,27 +158,139 @@ cmd_update() {
   banner
 }
 
+# 一次备份产出一个带时间戳的目录，里面三样东西齐全才算成功：
+# Postgres 全量 dump、hub.db 一致性快照、以及记录当时镜像摘要的 manifest。
+# 升级出事要回滚时，光有数据没有"当时跑的是哪个镜像"是回不去的。
 cmd_backup() {
-  local out="backups/ohmytesla-$(date +%Y%m%d-%H%M%S).sql.gz"
-  local tmp="${out}.partial"
-  mkdir -p backups
-  echo "Backing up the database to ${out}…"
-  # 直接 `pg_dump | gzip > "$out"` 会先把目标文件建好再跑 pg_dump，
+  local stamp; stamp=$(date +%Y%m%d-%H%M%S)
+  local dir="backups/$stamp"
+  mkdir -p "$dir"
+  # 备份里是整库明文 dump（含加密 token 报文、全部位置历史）与 hub.db
+  # （含 VAPID 私钥）。默认 0755 意味着同机器上任何用户都能拿走。
+  chmod 700 backups "$dir" 2>/dev/null || true
+  echo "Backing up to ${dir}/ …"
+
+  # ① Postgres。直接 `pg_dump | gzip > "$out"` 会先把目标文件建好再跑 pg_dump，
   # dump 失败时留下的半截 .sql.gz 看起来和正常备份一模一样 ——
   # 备份最不能有的就是这种"看着成功了"。先写临时文件，成了才改名。
-  if docker compose exec -T database pg_dump -U "$(port TM_DB_USER)" "$(port TM_DB_NAME)" | gzip > "$tmp"; then
-    mv "$tmp" "$out"
-    echo "${GREEN}Done.${OFF} $(du -h "$out" | cut -f1)"
-    # hub 自己的库（告警历史、哨兵会话、电价方案、token 覆盖）不在 Postgres 里，
-    # 只备份 Postgres 等于丢掉这一半。
-    if [ -f data/hub/hub.db ]; then
-      cp data/hub/hub.db "backups/hub-$(date +%Y%m%d-%H%M%S).db"
-      echo "${GREEN}Done.${OFF} hub.db copied too"
-    fi
-  else
-    rm -f "$tmp"
-    die "Backup failed — nothing was written."
+  if ! docker compose exec -T database pg_dump -U "$(port TM_DB_USER)" "$(port TM_DB_NAME)" \
+       | gzip > "$dir/teslamate.sql.gz.partial"; then
+    rm -rf "$dir"; die "Backup failed — nothing was written."
   fi
+  mv "$dir/teslamate.sql.gz.partial" "$dir/teslamate.sql.gz"
+  echo "  ${GREEN}✓${OFF} teslamate.sql.gz  $(du -h "$dir/teslamate.sql.gz" | cut -f1)"
+
+  # ② hub.db。**不能用 cp**：这个库跑在 WAL 模式下，已提交但还没 checkpoint
+  # 的事务全在 hub.db-wal 里，只复制主库文件会得到一个残缺快照 ——
+  # 实测最坏情况是连表都没有（整个 schema 还在 WAL 里），恢复出来直接
+  # "no such table"。必须走 SQLite 的在线备份 API，它会把 WAL 一并合进去。
+  if [ -f data/hub/hub.db ]; then
+    if python3 - "$dir/hub.db" <<'PYBK'
+import sqlite3, sys
+src = sqlite3.connect("file:data/hub/hub.db?mode=ro", uri=True)
+dst = sqlite3.connect(sys.argv[1])
+src.backup(dst)          # 在线备份：读一致快照，含 WAL 里的已提交事务
+dst.execute("PRAGMA journal_mode=DELETE")   # 快照本身不需要留 WAL
+dst.close(); src.close()
+PYBK
+    then
+      echo "  ${GREEN}✓${OFF} hub.db  $(du -h "$dir/hub.db" | cut -f1)"
+    else
+      rm -rf "$dir"; die "hub.db snapshot failed — backup discarded."
+    fi
+  fi
+
+  # ③ manifest：回滚要用的镜像摘要与版本
+  {
+    echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    echo "teslamate_image=$(docker inspect --format '{{index .Config.Image}}' ohmytesla-teslamate-1 2>/dev/null || echo unknown)"
+    echo "teslamate_digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$(docker inspect --format '{{.Image}}' ohmytesla-teslamate-1 2>/dev/null)" 2>/dev/null || echo unknown)"
+    echo "grafana_image=$(docker inspect --format '{{index .Config.Image}}' ohmytesla-grafana-1 2>/dev/null || echo unknown)"
+    echo "submodule_commit=$(git -C teslamate rev-parse HEAD 2>/dev/null || echo unknown)"
+  } > "$dir/manifest.txt"
+  echo "  ${GREEN}✓${OFF} manifest.txt"
+
+  cmd_verify_backup "$dir"
+  echo "${GREEN}Backup complete.${OFF} ${dir}"
+}
+
+# 没验证过的备份不算备份。这里真的把 dump 解开、把 hub.db 打开查一遍，
+# 而不是只看文件大小不为零。
+cmd_verify_backup() {
+  local dir="${1:-}"
+  [ -z "$dir" ] && dir=$(ls -1d backups/*/ 2>/dev/null | tail -1)
+  [ -z "$dir" ] && die "No backup to verify."
+  dir="${dir%/}"
+  echo "Verifying ${dir}…"
+
+  [ -f "$dir/teslamate.sql.gz" ] || die "  missing teslamate.sql.gz"
+  gzip -t "$dir/teslamate.sql.gz" || die "  teslamate.sql.gz is corrupt"
+  # dump 尾部一定有这一行；截断的 dump 解得开但没有它
+  if ! gzip -dc "$dir/teslamate.sql.gz" | tail -5 | grep -q 'PostgreSQL database dump complete'; then
+    die "  teslamate.sql.gz is truncated (no completion marker)"
+  fi
+  local tables; tables=$(gzip -dc "$dir/teslamate.sql.gz" | grep -c '^CREATE TABLE' || true)
+  echo "  ${GREEN}✓${OFF} teslamate.sql.gz — ${tables} tables, completion marker present"
+
+  if [ -f "$dir/hub.db" ]; then
+    python3 - "$dir/hub.db" <<'PYCK' || die "  hub.db snapshot is unusable"
+import sqlite3, sys
+c = sqlite3.connect(sys.argv[1])
+assert c.execute("PRAGMA integrity_check").fetchone()[0] == "ok", "integrity_check failed"
+n = [r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+assert n, "snapshot has no tables at all"
+rows = sum(c.execute(f'SELECT count(*) FROM "{t}"').fetchone()[0] for t in n)
+print(f"  \033[32m✓\033[0m hub.db — {len(n)} tables, {rows} rows, integrity ok")
+PYCK
+  fi
+}
+
+# 恢复。没有 restore 的 backup 是自欺欺人 —— 真出事那天才发现恢复不了
+# 是最糟的时刻。这条命令会先停服务、再灌数据、最后拉起来。
+cmd_restore() {
+  local dir="${1:-}"
+  [ -z "$dir" ] && dir=$(ls -1d backups/*/ 2>/dev/null | tail -1)
+  [ -z "$dir" ] && die "No backup found. Usage: ./omt restore [backups/<timestamp>]"
+  dir="${dir%/}"
+  [ -d "$dir" ] || die "Not a backup directory: $dir"
+
+  cmd_verify_backup "$dir"
+  echo
+  echo "${YELLOW}This replaces the current TeslaMate database and hub.db with ${dir}.${OFF}"
+  [ -f "$dir/manifest.txt" ] && sed 's/^/    /' "$dir/manifest.txt"
+  printf "Type ${BOLD}restore${OFF} to continue: "
+  local answer; read -r answer
+  [ "$answer" = "restore" ] || die "Cancelled."
+
+  # 恢复之前先给"现在这份"留个后路。恢复错备份是很常见的失误。
+  echo "Snapshotting current state first…"
+  cmd_backup >/dev/null || echo "${YELLOW}  (pre-restore snapshot failed, continuing)${OFF}"
+
+  echo "Stopping services that hold the databases open…"
+  docker compose stop ohmytesla teslamate grafana >/dev/null
+
+  echo "Restoring Postgres…"
+  # 先 drop 再建：直接往有数据的库里灌 dump 会撞主键，一半成功一半失败
+  docker compose exec -T database psql -U "$(port TM_DB_USER)" -d postgres \
+    -c "DROP DATABASE IF EXISTS \"$(port TM_DB_NAME)\" WITH (FORCE)" >/dev/null
+  docker compose exec -T database psql -U "$(port TM_DB_USER)" -d postgres \
+    -c "CREATE DATABASE \"$(port TM_DB_NAME)\"" >/dev/null
+  gzip -dc "$dir/teslamate.sql.gz" \
+    | docker compose exec -T database psql -U "$(port TM_DB_USER)" -d "$(port TM_DB_NAME)" -q >/dev/null \
+    || die "Postgres restore failed. Services are stopped; fix and retry."
+
+  if [ -f "$dir/hub.db" ]; then
+    echo "Restoring hub.db…"
+    # 主库连同 -wal / -shm 一起换掉：留着旧的 WAL 会让 SQLite 把它重放到
+    # 新库上，得到一个两份数据混在一起的库
+    rm -f data/hub/hub.db data/hub/hub.db-wal data/hub/hub.db-shm
+    cp "$dir/hub.db" data/hub/hub.db
+  fi
+
+  echo "Starting services…"
+  docker compose up -d >/dev/null
+  wait_ready
+  echo "${GREEN}Restored from ${dir}.${OFF}"
 }
 
 # Grafana 只在数据卷首次初始化时读 GF_SECURITY_ADMIN_PASSWORD，之后密码存在它自己
@@ -169,7 +327,10 @@ cmd_menu() {
   printf "    %-10s %s\n" logs    "follow the log ( ./omt logs teslamate )"
   printf "    %-10s %s\n" restart "restart after changing .env"
   printf "    %-10s %s\n" update  "rebuild after changing the code"
-  printf "    %-10s %s\n" backup  "dump the database to backups/"
+  printf "    %-10s %s\n" backup  "snapshot both databases + image manifest into backups/<timestamp>/"
+  printf "    %-10s %s\n" restore "restore from a backup (verifies it first, snapshots current state)"
+  printf "    %-14s %s\n" verify-backup "check a backup is actually restorable"
+  printf "    %-16s %s\n" portal-password "generate a new portal password"
   echo
   printf "    %-16s %s\n" grafana-password "set the Grafana admin password"
   echo
@@ -183,7 +344,10 @@ case "${1:-menu}" in
   logs|log)    cmd_logs "${2:-ohmytesla}" ;;
   update|build|rebuild) cmd_update ;;
   backup)      cmd_backup ;;
+  verify-backup) cmd_verify_backup "${2:-}" ;;
+  restore)     cmd_restore "${2:-}" ;;
   grafana-password) cmd_grafana_password "${2:-}" ;;
+  portal-password)  cmd_portal_password ;;
   menu|help|-h|--help) cmd_menu ;;
   *) echo "${RED}Unknown command: $1${OFF}"; cmd_menu; exit 1 ;;
 esac
