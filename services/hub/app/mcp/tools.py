@@ -173,8 +173,8 @@ async def _ensure_role(conn) -> bool:
         for leaky in ("public.tokens", "public.oauth_tokens"):
             try:
                 await conn.execute(f'REVOKE ALL ON TABLE {leaky} FROM "{_RO_ROLE}"')
-            except Exception:  # noqa: BLE001 - 表不存在是正常情况
-                pass
+            except Exception:
+                log.debug("suppressed", exc_info=True)
         _role_ready = True
         return True
     except Exception:

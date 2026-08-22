@@ -71,7 +71,7 @@ def _due(item: dict, odometer_km: float | None) -> dict | None:
             if months >= float(item["every_months"]):
                 reasons.append({"kind": "months", "value": round(months)})
         except ValueError:
-            pass
+            log.debug("suppressed", exc_info=True)
     return reasons[0] if reasons else None
 
 

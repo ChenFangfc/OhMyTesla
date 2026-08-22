@@ -156,7 +156,7 @@ async def send(title: str, body: str, url: str = "/", level: str = "info") -> bo
     )
     ok_any = False
     dead = []
-    for sub, res in zip(subs, results):
+    for sub, res in zip(subs, results, strict=False):
         if isinstance(res, Exception):
             continue
         ok, code = res

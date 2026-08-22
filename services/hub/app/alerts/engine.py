@@ -385,8 +385,8 @@ class AlertEngine:
         try:
             start_s, end_s = spec.split("-")
             now = datetime.now(_tz()).time()
-            start = datetime.strptime(start_s.strip(), "%H:%M").time()
-            end = datetime.strptime(end_s.strip(), "%H:%M").time()
+            start = datetime.strptime(start_s.strip(), "%H:%M").time()  # noqa: DTZ007 - 刻意解析无时区的本地时间（车机文件名 / HH:MM 时段），加 %z 反而是错的
+            end = datetime.strptime(end_s.strip(), "%H:%M").time()  # noqa: DTZ007 - 刻意解析无时区的本地时间（车机文件名 / HH:MM 时段），加 %z 反而是错的
         except ValueError:
             return False
         if start <= end:

@@ -111,7 +111,7 @@ async def fetch(cache_dir: Path, model: str, exterior_color: str | None,
         return None
 
     path = _cache_path(cache_dir, url)
-    if path.is_file() and path.stat().st_size > 4096:
+    if path.is_file() and path.stat().st_size > 4096:  # noqa: SIM102 - 分开写是为了让两个条件各自带注释说明
         if time.time() - path.stat().st_mtime < CACHE_TTL_S:
             return path
 
@@ -141,7 +141,7 @@ async def fetch(cache_dir: Path, model: str, exterior_color: str | None,
             _fail_until[url] = time.time() + FAIL_BACKOFF_S
             return path if path.is_file() else None
 
-        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 - 本地 stat/exists，微秒级；为它开线程的开销大于调用本身
         tmp = path.with_suffix(".part")
         tmp.write_bytes(r.content)
         tmp.replace(path)                   # 原子替换，避免读到写了一半的文件

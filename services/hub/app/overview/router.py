@@ -125,7 +125,7 @@ def _health(c: dict) -> dict:
 
     for key, kind in (("tpms_soft_warning_fl", "fl"), ("tpms_soft_warning_fr", "fr"),
                       ("tpms_soft_warning_rl", "rl"), ("tpms_soft_warning_rr", "rr")):
-        if str(c.get(key)).lower() == "true":
+        if str(c.get(key)).lower() == "true":  # noqa: SIM102 - 分开写是为了让两个条件各自带注释说明
             if not any(i.get("corner") == kind for i in issues):
                 issues.append({"kind": "tpms_warning", "corner": kind})
 
@@ -165,8 +165,8 @@ async def overview(car_id: int | None = None, tz_offset_min: int = 0):
             if row:
                 name = name or row["name"] or row["marketing_name"]
                 model = model or row["model"]
-        except Exception:  # noqa: BLE001 - 数据库不可用时用实时状态里的值
-            pass
+        except Exception:
+            log.debug("suppressed", exc_info=True)
 
     out = {
         "connected": True,

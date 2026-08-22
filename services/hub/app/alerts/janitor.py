@@ -48,7 +48,7 @@ def _sweep_dir(path: Path, keep_days: int, suffixes: tuple[str, ...] | None = No
                 continue
             size = st.st_size
             f.unlink()
-        except OSError:
+        except OSError:  # noqa: S112 - 文件正被写入时跳过是正常路径，上面已有 debug 日志
             continue        # 正在被读/已经没了，下一轮再说
         n += 1
         freed += size
@@ -74,6 +74,7 @@ def _sweep_orphan_subtitles(exports: Path) -> int:
             f.unlink()
             n += 1
         except OSError:
+            log.debug("suppressed", exc_info=True)
             continue
     return n
 

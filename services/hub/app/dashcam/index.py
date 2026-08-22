@@ -142,6 +142,7 @@ async def index_event(ev: Event, base: Path, force: bool = False) -> int:
         try:
             mtime = full.stat().st_mtime
         except OSError:
+            log.debug("suppressed", exc_info=True)
             continue
 
         seg_epoch = local_naive_to_utc(seg.start).timestamp()
@@ -299,7 +300,7 @@ async def fsd_trend(days: int = 180, bucket_days: int = 7) -> list[dict]:
                    COALESCE(SUM(dist_km),0) km, COALESCE(SUM(disengage),0) dis
             FROM clip_sei WHERE 1=1{where}
             GROUP BY bucket ORDER BY bucket""",  # noqa: S608 - where 同上；分桶跨度走 ? 绑定
-        [span, span] + args,
+        [span, span, *args],
     )
     out = []
     for r in rows:

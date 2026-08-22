@@ -140,7 +140,7 @@ def _iter_mdat_nals(path: Path):
     """遍历 mp4 mdat 中长度前缀的 NAL 单元，产出 SEI 候选。"""
     with open(path, "rb") as fp:
         # 定位 mdat atom
-        offset = size = None
+        size = None
         while True:
             header = fp.read(8)
             if len(header) < 8:
@@ -157,7 +157,7 @@ def _iter_mdat_nals(path: Path):
                 hdr = 8
             if atom == b"mdat":
                 # size=None 表示 mdat 延伸到文件尾（atom size 字段为 0）
-                offset, size = fp.tell(), (atom_size - hdr if atom_size else None)
+                _offset, size = fp.tell(), (atom_size - hdr if atom_size else None)
                 break
             if atom_size < hdr:
                 return
@@ -191,8 +191,8 @@ def probe_fps_exact(path: Path) -> float | None:
     但看上去和正确的数字一模一样。
     """
     try:
-        out = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+        out = subprocess.run(  # noqa: S603 - 参数是列表形式、不过 shell，可执行文件名是硬编码常量
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",  # noqa: S607 - 走 PATH 找 ffmpeg 是刻意的：容器和裸机上的路径不同
              "-show_entries", "stream=avg_frame_rate,codec_name",
              "-of", "json", str(path)],
             capture_output=True, timeout=10, check=True,
@@ -260,7 +260,7 @@ def extract(path: Path, step: float = 0.5, strict: bool = False) -> list[dict]:
         _cache[key] = []
         return []
     samples: list[dict] = []
-    stride = max(int(round(step * fps)), 1)
+    stride = max(round(step * fps), 1)
     for idx in range(0, len(frames), stride):
         f = frames[idx]
         samples.append({

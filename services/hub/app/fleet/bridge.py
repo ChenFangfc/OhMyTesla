@@ -110,6 +110,7 @@ def _created_at(frame: dict) -> float:
         try:
             dt = datetime.fromisoformat(text)
         except ValueError:
+            log.debug("suppressed", exc_info=True)
             continue
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
@@ -222,7 +223,7 @@ class VinBridge:
                     await self._run_ws()
             except asyncio.CancelledError:
                 raise
-            except Exception as e:  # noqa: BLE001
+            except Exception as e:
                 # 先脱敏再截断：截断可能正好把 token 切成半截仍然可读，
                 # 而且 last_error 是要直接显示在界面上的。
                 msg = _scrub(str(e))[:200]
@@ -234,7 +235,7 @@ class VinBridge:
                 if not fatal_auth and time.time() - healthy_at > 60:
                     attempt = 0
                 if fatal_auth:
-                    log.error("fleet bridge auth failed for VIN…%s: %s", self.vin[-6:], msg)
+                    log.exception("fleet bridge auth failed for VIN…%s: %s", self.vin[-6:], msg)
                     attempt = 99  # 直接退到最大间隔，不要反复拿坏 token 去撞
                 else:
                     log.warning("fleet bridge VIN…%s disconnected: %s", self.vin[-6:], msg)
@@ -268,7 +269,7 @@ class VinBridge:
         timeout = httpx.Timeout(
             connect=10.0, read=settings.fleet_bridge_idle_timeout, write=10.0, pool=None
         )
-        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:  # noqa: SIM117 - 分开的 with 是为了在中间插入日志
             async with client.stream("GET", url, headers=self._headers(), params=params) as resp:
                 resp.raise_for_status()
                 self.connected = True
@@ -294,7 +295,7 @@ class VinBridge:
         # 之前叫 extra_headers。写死一个会在另一个大版本上抛 TypeError，
         # 而那个 TypeError 又会被外层 except Exception 吃掉 —— 表现成
         # 永远重连不上、last_error 还看不懂。
-        kw = dict(ping_interval=20, close_timeout=5)
+        kw = {"ping_interval": 20, "close_timeout": 5}
         if headers:
             major = int((getattr(websockets, "__version__", "0") or "0").split(".")[0] or 0)
             kw["additional_headers" if major >= 14 else "extra_headers"] = headers

@@ -685,7 +685,7 @@ async def drive_tracks(car_id: int, limit: int = 20, max_points: int = 140) -> l
         if not lats or len(lats) < 2:
             continue
         stride = max(1, len(lats) // max_points)
-        pts = [[float(la), float(lo)] for la, lo in zip(lats[::stride], lons[::stride])]
+        pts = [[float(la), float(lo)] for la, lo in zip(lats[::stride], lons[::stride], strict=False)]
         # 抽稀不能把终点丢了，否则轨迹看着像半途断掉
         last = [float(lats[-1]), float(lons[-1])]
         if pts[-1] != last:

@@ -40,7 +40,7 @@ TYPE_DIRS = {"SentryClips": "sentry", "SavedClips": "saved", "RecentClips": "rec
 
 def parse_ts(name: str) -> datetime:
     """'2026-08-05_10-30-01' -> naive datetime（车机本地时间）"""
-    return datetime.strptime(name, "%Y-%m-%d_%H-%M-%S")
+    return datetime.strptime(name, "%Y-%m-%d_%H-%M-%S")  # noqa: DTZ007 - 刻意解析无时区的本地时间（车机文件名 / HH:MM 时段），加 %z 反而是错的
 
 
 @dataclass
@@ -132,7 +132,7 @@ def _load_event_folder(folder: Path, base: Path, ev_type: str) -> Event | None:
         try:
             data = json.loads(meta.read_text())
             if not isinstance(data, dict):
-                raise ValueError("event.json is not an object")
+                raise ValueError("event.json is not an object")  # noqa: TRY004,TRY301 - 统一抛 ValueError：路由层用 except ValueError 转 400，换成 TypeError 就成 500
             if ts := data.get("timestamp"):
                 ev.timestamp = datetime.fromisoformat(str(ts).replace("Z", ""))
             ev.city = str(data.get("city") or "")
@@ -141,7 +141,7 @@ def _load_event_folder(folder: Path, base: Path, ev_type: str) -> Event | None:
                 try:
                     setattr(ev, attr, float(data[src]))
                 except (KeyError, TypeError, ValueError):
-                    pass
+                    log.debug("suppressed", exc_info=True)
         except Exception as e:  # noqa: BLE001 - 坏 event.json 不应拖垮整个扫描
             log.warning("bad event.json in %s: %s", folder, e)
     thumb = folder / "thumb.png"

@@ -139,7 +139,8 @@ async def has_tokens() -> bool:
                 return True
         except db.DbUnavailable:
             raise
-        except Exception:  # noqa: BLE001 - 表不存在（新旧版本差异）属正常
+        except Exception:
+            log.debug("suppressed", exc_info=True)
             continue
     if not reachable:
         raise db.DbUnavailable("tokens table unreachable")

@@ -277,7 +277,7 @@ class LiveState:
                             continue
                         exc = tsk.exception()
                         if exc is not None:
-                            raise exc
+                            raise exc  # noqa: TRY301 - 就地 raise 是为了让紧跟其后的 except 统一收口，抽成函数反而绕
             except asyncio.CancelledError:
                 raise
             except (aiomqtt.MqttError, OSError) as e:

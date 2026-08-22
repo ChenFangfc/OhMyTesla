@@ -61,7 +61,8 @@ async def _from_teslamate() -> str | None:
             reachable = True
         except db.DbUnavailable:
             raise DbDown from None
-        except Exception:  # noqa: BLE001 - 表不存在（旧/新版本差异）属正常
+        except Exception:
+            log.debug("suppressed", exc_info=True)
             continue
         if row is None or row["access"] is None:
             continue

@@ -398,8 +398,8 @@ async def index(request: Request):
 
         if not await vault.has_tokens():
             return RedirectResponse("/welcome", status_code=307)
-    except Exception:  # noqa: BLE001 - 数据库没就绪就照常渲染首页
-        pass
+    except Exception:
+        log.debug("suppressed", exc_info=True)
     return await page(request, "overview.html", active="home")
 
 

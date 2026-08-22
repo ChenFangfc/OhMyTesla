@@ -46,8 +46,8 @@ async def _config(car_id: int | None) -> tuple[str, str, int] | None:
                 model = model or row["model"]
                 colour = colour or row["exterior_color"]
                 vin = vin or (row["vin"] or "")
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception:
+            log.debug("suppressed", exc_info=True)
     if not model and vin:
         model = _VIN_MODEL.get(vin[:3].upper(), "")
     return (model or ""), (colour or ""), cid

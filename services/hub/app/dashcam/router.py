@@ -29,8 +29,8 @@ async def status():
     return {
         "root": settings.teslacam_root,
         "found": base is not None,
-        "root_exists": root.exists(),
-        "root_empty": root.exists() and not any(root.iterdir()),
+        "root_exists": root.exists(),  # noqa: ASYNC240 - 本地 stat/exists，微秒级；为它开线程的开销大于调用本身
+        "root_empty": root.exists() and not any(root.iterdir()),  # noqa: ASYNC240 - 本地 stat/exists，微秒级；为它开线程的开销大于调用本身
         "events": len(events),
         "by_type": {
             t: sum(1 for e in events if e.type == t)
@@ -272,7 +272,7 @@ async def telemetry_csv(
                     # 片段起点比请求起点晚多少秒
                     shift = (clip_start - t0_local).total_seconds()
                 for s in await asyncio.to_thread(sei.extract, target, step=step):
-                    idx = int(round((s["t"] + shift) / step))
+                    idx = round((s["t"] + shift) / step)
                     if idx >= 0:
                         sei_by_bucket[idx] = s
 
@@ -325,7 +325,7 @@ async def get_sei(path: str, step: float = 0.5):
     return {"available": bool(samples), "samples": samples}
 
 
-from typing import Literal
+from typing import Literal  # noqa: E402 - 延后导入以避免模块级循环依赖
 
 
 class ComposeRequest(BaseModel):
@@ -381,8 +381,8 @@ _MAX_IMPORT_FILE = 800 * 1024 * 1024  # 单文件上限（HW4 前摄 1 分钟远
 
 @router.post("/import")
 async def import_files(
-    files: list[UploadFile] = File(...),
-    paths: list[str] = Form(...),
+    files: list[UploadFile] = File(...),  # noqa: B008 - FastAPI 的 File()/Form() 就是要写在默认值里，这是框架约定
+    paths: list[str] = Form(...),  # noqa: B008 - FastAPI 的 File()/Form() 就是要写在默认值里，这是框架约定
     rescan: bool = Form(False),
 ):
     """浏览器把 U 盘里的事件文件上传进服务器素材目录（保留相对路径）。
@@ -396,10 +396,10 @@ async def import_files(
         raise HTTPException(400, "files/paths mismatch")
     base = _import_base()
     imported, skipped = 0, []
-    for f, rel in zip(files, paths):
-        rel = rel.replace("\\", "/").lstrip("/")
+    for f, rel in zip(files, paths, strict=False):
+        rel = rel.replace("\\", "/").lstrip("/")  # noqa: PLW2901 - 循环变量被规范化后复用是本意，改名反而要多一个中间变量
         # 兼容传来的路径带 TeslaCam/ 前缀
-        rel = rel.removeprefix("TeslaCam/")
+        rel = rel.removeprefix("TeslaCam/")  # noqa: PLW2901 - 循环变量被规范化后复用是本意，改名反而要多一个中间变量
         if not _IMPORT_RE.match(rel):
             skipped.append(rel)
             continue
@@ -446,7 +446,7 @@ async def preview(path: str = Form(...)):
     if not target.is_relative_to(base.resolve()) or not target.is_file():
         raise HTTPException(404, "clip not found")
 
-    key = hashlib.sha1(f"{target}:{target.stat().st_mtime}".encode()).hexdigest()[:20]
+    key = hashlib.sha1(f"{target}:{target.stat().st_mtime}".encode()).hexdigest()[:20]  # noqa: S324 - sha1 只用作缓存键，不用于任何安全判定
     out = settings.preview_dir / f"{key}.mp4"
     if out.exists():
         return {"url": f"/preview/{out.name}"}

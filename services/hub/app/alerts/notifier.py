@@ -32,9 +32,7 @@ def _email_ready() -> bool:
         for d in ("gmail.com", "qq.com", "163.com", "outlook.com", "office365.com",
                   "yahoo.com", "126.com", "icloud.com", "zoho.com", "sendgrid.net")
     )
-    if needs_auth and not (settings.smtp_user and settings.smtp_pass):
-        return False
-    return True
+    return not (needs_auth and not (settings.smtp_user and settings.smtp_pass))
 
 
 def _build_apprise_urls() -> list[str]:
@@ -105,8 +103,8 @@ async def configured_channels() -> list[str]:
 
         if await webpush.count():
             channels.append("webpush")
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception:
+        log.debug("suppressed", exc_info=True)
     return channels
 
 

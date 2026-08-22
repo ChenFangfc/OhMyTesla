@@ -282,6 +282,7 @@ def _rate_at(rule: dict, dt_local: datetime) -> tuple[float, str]:
         try:
             start, end = _parse_hm(p["from"]), _parse_hm(p["to"])
         except (KeyError, ValueError, TypeError):
+            log.debug("suppressed", exc_info=True)
             continue
         if start == end:
             # 00:00→00:00 是"全天一个价"最自然的写法。按 start <= now < end
@@ -305,6 +306,7 @@ def _boundaries(rule: dict) -> list[int]:
             try:
                 t = _parse_hm(p[key])
             except (KeyError, ValueError):
+                log.debug("suppressed", exc_info=True)
                 continue
             marks.add(t.hour * 60 + t.minute)
     return sorted(marks)

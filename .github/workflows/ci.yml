@@ -73,6 +73,9 @@ jobs:
           sed -i "s|^TM_ENCRYPTION_KEY=.*|TM_ENCRYPTION_KEY=$(openssl rand -base64 32)|" .env
           sed -i "s|^TM_DB_PASS=.*|TM_DB_PASS=$(openssl rand -base64 18 | tr -d '/+=')|" .env
           sed -i "s|^OHMYTESLA_PASSWORD=.*|OHMYTESLA_PASSWORD=ci-test-password|" .env
+          # compose 对这一项用了 `:?`，空值会让整个 up 失败（这是有意的：
+          # 出厂 admin/admin 曾经就是这么来的）。CI 里也必须给一个真值。
+          sed -i "s|^GF_SECURITY_ADMIN_PASSWORD=.*|GF_SECURITY_ADMIN_PASSWORD=ci-grafana-password|" .env
 
       - name: 起栈
         run: docker compose up -d database mosquitto ohmytesla

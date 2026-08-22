@@ -213,8 +213,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
     pad = int(width * 0.015)
     col_time_x = width - pad
-    mid_y = bar_y + int(bar_h * 0.16)
-    label_y = bar_y + int(bar_h * 0.60)
+    bar_y + int(bar_h * 0.16)
+    bar_y + int(bar_h * 0.60)
 
     for s in overlay:
         t_start, t_end = s["t"], s["t"] + step
@@ -228,7 +228,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         odo = s.get("odometer")
         lat, lon = s.get("latitude"), s.get("longitude")
 
-        se = sei_by_bucket.get(int(round(t_start / step)))
+        se = sei_by_bucket.get(round(t_start / step))
         if se and se.get("speed_kmh") is not None:
             speed = se["speed_kmh"]  # SEI 逐帧速度更精确
 

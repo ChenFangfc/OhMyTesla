@@ -61,7 +61,7 @@ def _works(name: str, extra: list[str]) -> bool:
         cmd += ["-vf", "format=nv12,hwupload"]
     cmd += ["-c:v", name, "-frames:v", "1", "-f", "null", "-"]
     try:
-        r = subprocess.run(cmd, capture_output=True, timeout=20)
+        r = subprocess.run(cmd, capture_output=True, timeout=20, check=False)  # noqa: S603 - 参数是列表形式、不过 shell，可执行文件名是硬编码常量
         if r.returncode == 0:
             return True
         log.debug("hwaccel %s unavailable: %s", name,
@@ -99,7 +99,7 @@ def encoder_args(crf: str, preset: str) -> tuple[list[str], list[str], str]:
 
 def status() -> dict:
     """给界面/排障用。没探测过就先探测。"""
-    name, extra, _ = detect()
+    name, _extra, _ = detect()
     return {
         "encoder": name,
         "hardware": name != "libx264",

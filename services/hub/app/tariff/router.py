@@ -1,8 +1,12 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 
 from .. import db
 from ..config import settings
 from . import calc
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tariff", tags=["tariff"])
 
@@ -18,8 +22,8 @@ async def get_plan():
     try:
         rows = await db.fetch("SELECT name FROM geofences ORDER BY name")
         geofences = [r["name"] for r in rows]
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception:
+        log.debug("suppressed", exc_info=True)
     return {
         "plan": plan,
         "geofences": geofences,

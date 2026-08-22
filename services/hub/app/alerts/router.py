@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -10,6 +12,8 @@ from . import sentry as sentry_mod
 from .engine import RULES, engine
 from .sentry import tracker as sentry_tracker
 from .store import store
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
@@ -209,8 +213,8 @@ async def sentry_policies():
 
         rows = await db.fetch("SELECT name FROM geofences ORDER BY name")
         geofences = [r["name"] for r in rows]
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception:
+        log.debug("suppressed", exc_info=True)
     return {
         "policies": await sentry_tracker.policies(),
         "geofences": geofences,

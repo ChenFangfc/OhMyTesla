@@ -145,8 +145,8 @@ async def detect() -> dict:
         if code:
             market = code
             signals.append(f"Most-visited places are in {country}")
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception:
+        log.debug("suppressed", exc_info=True)
 
     # VIN 只用来展示产地，**不再**用于判断市场：
     # 上海产的车大量出口欧洲/亚太，弗里蒙特产的也进口到中国，两个方向都会错。
@@ -159,8 +159,8 @@ async def detect() -> dict:
             _, plant_desc = from_vin(row["vin"])
             if plant_desc:
                 signals.append(f"Built at {plant_desc} (informational — plant is not market)")
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception:
+        log.debug("suppressed", exc_info=True)
 
     if market == "NA":
         market = "US"   # 大区能确定但分不出美/加时按美国，用户可手动改

@@ -101,8 +101,8 @@ async def _run(method: str, query: str, *args):
 async def _close_quietly(pool: asyncpg.Pool) -> None:
     try:
         await pool.close()
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception:
+        log.debug("suppressed", exc_info=True)
     finally:
         _CLOSING.discard(asyncio.current_task())
 

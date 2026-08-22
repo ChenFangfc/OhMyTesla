@@ -30,7 +30,7 @@ async def probe(path: Path) -> dict:
     reason: "" | "unreadable"（解不开，多半是加密）| "needs_transcode"（HEVC）
     """
     try:
-        st = path.stat()
+        st = path.stat()  # noqa: ASYNC240 - 本地 stat/exists，微秒级；为它开线程的开销大于调用本身
     except OSError:
         return {"ok": False, "codec": None, "reason": "missing"}
 
@@ -57,7 +57,7 @@ async def probe(path: Path) -> dict:
         if streams:
             codec = streams[0].get("codec_name")
     except ValueError:
-        pass
+        log.debug("suppressed", exc_info=True)
 
     if not codec:
         # 文件在、有大小，但连视频流都识别不出来 —— 加密片段就是这个表现
