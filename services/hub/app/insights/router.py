@@ -3,7 +3,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from .. import db
-from . import queries
+from . import journey, queries
 
 router = APIRouter(prefix="/api", tags=["insights"])
 
@@ -127,9 +127,13 @@ async def set_battery_baseline(car_id: int, body: BatteryBaseline):
 
 
 @router.get("/insights/vampire")
-async def vampire(car_id: int, days: int = 90):
-    """停放耗电。每家记录器都有这张表，因为"车停着掉多少电"是最常问的问题之一。"""
-    return await _guard(queries.vampire_drain)(car_id, days)
+async def vampire(car_id: int, days: int = 90, min_idle_h: float = 6.0):
+    """停放耗电。每家记录器都有这张表，因为"车停着掉多少电"是最常问的问题之一。
+
+    min_idle_h 与 TeslaMate 自家面板的 "min. Idle Time (h)" 同义，默认同为 6。
+    调小能看到刚停车那段的高耗电，但那个数字不能当"每天掉多少"用。
+    """
+    return await _guard(queries.vampire_drain)(car_id, days, min_idle_h)
 
 
 @router.get("/insights/charge-curve")
@@ -208,3 +212,56 @@ async def drive_footage(drive_id: int):
         })
     matches.sort(key=lambda m: m["event_start"])
     return {"drive_id": drive_id, "footage": matches}
+
+
+# ---------------- 时间维度与地理维度 ----------------
+
+@router.get("/insights/timeline")
+async def timeline(car_id: int, days: int = 30, limit: int = 300):
+    """统一时间线：行程 / 充电 / 更新 / 停放按时间倒序排在一条轴上。"""
+    return await _guard(journey.timeline)(car_id, days, limit)
+
+
+@router.get("/insights/calendar")
+async def calendar(car_id: int, days: int = 365):
+    """按本地日分桶的活动强度，供月历热力图使用。"""
+    return await _guard(journey.calendar)(car_id, days)
+
+
+@router.get("/insights/visited")
+async def visited(car_id: int):
+    """生涯足迹：去过的国家 / 省州 / 城市。"""
+    return await _guard(journey.visited)(car_id)
+
+
+@router.get("/insights/places")
+async def places(car_id: int, limit: int = 30):
+    """常去地点排行：到访次数 + 累计停留时长。"""
+    return await _guard(journey.places)(car_id, limit)
+
+
+@router.get("/insights/statistics")
+async def statistics(car_id: int, bucket: str = "month", limit: int = 36):
+    """周期汇总。bucket 取 day/week/month/year，非法值回落到 month。"""
+    return await _guard(journey.statistics)(car_id, bucket, limit)
+
+
+@router.get("/insights/states")
+async def states(car_id: int, days: int = 30):
+    """在线 / 睡眠 / 离线占比与睡眠评分。"""
+    return await _guard(journey.states_breakdown)(car_id, days)
+
+
+@router.get("/insights/coverage")
+async def coverage(car_id: int):
+    """未记录里程与采集覆盖率。"""
+    return await _guard(journey.unlogged_km)(car_id)
+
+
+@router.get("/drives/{drive_id}/detail")
+async def drive_detail(drive_id: int):
+    """单次行程的完整档案（元数据；逐点序列走 /drives/{id}/track）。"""
+    d = await _guard(journey.drive_detail)(drive_id)
+    if not d:
+        raise HTTPException(404, "drive not found")
+    return d

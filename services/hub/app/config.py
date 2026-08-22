@@ -22,6 +22,23 @@ class Settings(BaseSettings):
     teslacam_root: str = "/teslacam"
     teslacam_tz: str = ""  # TeslaCam 文件名所用时区，空 = 系统时区
     data_dir: str = "/data"
+    # 统计分桶用的时区。TeslaMate 的时间列是 naive UTC，按 UTC 分桶会让
+    # 东八区凌晨的行程落到前一天。空 = 跟随容器的 TZ 环境变量，再没有就 UTC。
+    tz: str = ""
+
+    # TeslaMateApi 兼容层的 API token。留空 = 只靠全站 Basic 认证；
+    # 设了之后 /api/v1/* 还要额外带 Bearer 或 X-Api-Token。
+    # 用途是分权：Basic 密码给家人，App 用的 token 单独一把、可单独吊销。
+    teslamateapi_token: str = ""
+
+    # 允许自动化规则调用解锁/开厢这类高危指令。默认关闭 ——
+    # 一条写错的规则半夜把车解锁，和其它任何 bug 都不是一个量级的后果。
+    automation_allow_unlock: bool = False
+
+    # 允许 AI 通过 MCP 做写操作（控车、打标签、建自动化、静音告警）。
+    # 默认关闭，关闭时这些工具连列表都不出现 —— 模型看不见就不会去试。
+    # 打开后高风险动作仍需两段式确认，见 mcp/write_tools.py。
+    mcp_write: bool = False
 
     # 关联服务（用于门户跳转链接）
     teslamate_url: str = "http://teslamate:4000"

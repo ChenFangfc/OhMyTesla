@@ -772,7 +772,7 @@ async def updates(car_id: int) -> list[dict]:
     return [{"date": _iso(r["start_date"]), "version": r["version"]} for r in rows]
 
 
-async def vampire_drain(car_id: int, days: int = 90) -> dict:
+async def vampire_drain(car_id: int, days: int = 90, min_idle_h: float = 6.0) -> dict:
     """停放耗电（俗称"吸血鬼耗电"）。
 
     做法：取相邻两段行程，若中间**没有充电**，那么上一段结束时的电量减去
@@ -786,13 +786,23 @@ async def vampire_drain(car_id: int, days: int = 90) -> dict:
     # drives 表本身不存电量，只有额定续航；SOC 要顺着 start/end_position_id
     # 回 positions 拿。额定续航差 × efficiency 就是掉了多少度电 ——
     # 这也是 TeslaMate 自己算能耗的口径。
+    #
+    # SOC 取 battery_level 而不是 usable_battery_level，两个原因：
+    # ① 流式插入的行不带 usable_battery_level（实测本机 26571 条 positions 里
+    #    24544 条为空，而 battery_level 一条都不空），而行程**起点**几乎总是
+    #    流式行 —— 用 usable 的话 29 个停放区间只有 3 个两端齐全，下面那道
+    #    "掉电 >40% 判为异常"的过滤等于从来没生效过；
+    # ② usable_battery_level 会随电池变冷而下降，那是可用量变了、不是电跑了。
+    #    量停放掉电要的是真实 SOC，battery_level 才是对的口径。
     rows = await db.fetch(
         """
         SELECT d.end_date, d.end_rated_range_km AS end_km_range,
-               pe.usable_battery_level AS end_soc,
+               pe.battery_level AS end_soc,
+               d.end_km AS end_odo,
                LEAD(d.start_date)           OVER w AS next_start,
                LEAD(d.start_rated_range_km) OVER w AS next_km_range,
-               LEAD(ps.usable_battery_level) OVER w AS next_soc
+               LEAD(ps.battery_level) OVER w AS next_soc,
+               LEAD(d.start_km) OVER w AS next_odo
         FROM drives d
         LEFT JOIN positions pe ON pe.id = d.end_position_id
         LEFT JOIN positions ps ON ps.id = d.start_position_id
@@ -839,8 +849,21 @@ async def vampire_drain(car_id: int, days: int = 90) -> dict:
             float(r["end_soc"]) - float(r["next_soc"])
             if r["end_soc"] is not None and r["next_soc"] is not None else None
         )
-        # 太短的区间噪声大；掉电为负是采样抖动；掉太多基本是中途拔了枪之类的异常
-        if hours < 1 or km_drop <= 0 or (pct_drop is not None and pct_drop > 40):
+        # 太短的区间噪声大；掉电为负是采样抖动；掉太多基本是中途拔了枪之类的异常。
+        #
+        # 门槛取 6 小时是跟上游对齐：TeslaMate 自己的 vampire-drain 面板把
+        # "min. Idle Time (h)" 默认设成 6（可选 0/1/3/6/12/18/24）。原来这里
+        # 写的是 1 小时，导致大量"刚停下的一两个小时"被计入——那段电池还热、
+        # 空调可能还在跑、哨兵刚布防，掉电速率远高于长期停放，外推成全天
+        # 会把每日耗电抬高好几倍（本机实测 1h 门槛下算出 14.4 kWh/天）。
+        if hours < min_idle_h or km_drop <= 0 or (pct_drop is not None and pct_drop > 40):
+            continue
+        # 里程表在这段"停放"里走了 —— 那是 TeslaMate 没记上的行车，不是停放耗电。
+        # 实测本机 10 个候选区间里有 3 个分别走了 19 / 494 / 272 公里，
+        # 不排掉的话每日耗电会被抬高好几倍（8.86 → 实际 1.x kWh/天）。
+        # pct>40% 那道闸只拦得住最夸张的两段，19 公里那段会混进来。
+        if (r["end_odo"] is not None and r["next_odo"] is not None
+                and r["next_odo"] - r["end_odo"] > 0.5):
             continue
         if charged_between(r["end_date"], r["next_start"]):
             continue
@@ -862,6 +885,7 @@ async def vampire_drain(car_id: int, days: int = 90) -> dict:
         # 回显**实际用的**天数，不是用户传进来的。传 -5 时内部夹到 1，
         # 却在响应里回 -5，等于告诉调用方"我按 -5 天算的"。
         "days": max(int(days), 1),
+        "min_idle_h": min_idle_h,
         # 额定续航差 × efficiency 直接就是度数，不需要先知道电池容量
         "avg_kwh_per_day": kwh_day,
         "avg_km_per_day": round(total_km / total_h * 24, 1) if total_h else None,

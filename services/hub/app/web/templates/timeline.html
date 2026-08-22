@@ -1,0 +1,521 @@
+{% extends "shell.html" %}
+{% block title %}{{ t('timeline.page_title') }}{% endblock %}
+
+{% block content %}
+<div class="page" style="padding-bottom:96px">
+
+  {# 这一页回答的是"什么时候发生了什么、去过哪儿"。Energy 页回答"多少度、多少钱"，
+     Trips 页回答"每一段怎么开的"。三页不重叠。 #}
+  <div class="page-head">
+    <h1 data-i18n="nav.timeline">Timeline</h1>
+    <div class="row mt" style="gap:10px">
+      <div class="segmented" id="range-pick">
+        <button data-range="30"  data-i18n="energy.range_30">30 days</button>
+        <button data-range="90"  data-i18n="energy.range_90">90 days</button>
+        <button data-range="365" class="active" data-i18n="energy.range_365">Year</button>
+        <button data-range="0"   data-i18n="energy.range_all">All</button>
+      </div><span class="spacer"></span>
+      <select id="car-picker" hidden></select>
+    </div>
+  </div>
+
+  <div id="db-err" class="empty" style="display:none"></div>
+
+  <div class="metrics" id="headline"></div>
+
+  {# 日历热力图。一年的活动密度一眼看完，是 TeslaFi 被公认最有价值的一屏。 #}
+  <div class="section" id="cal-section">
+    <div class="section-head">
+      <h2 data-i18n="timeline.cal_title">Activity calendar</h2>
+      <span class="note" id="cal-note"></span>
+    </div>
+    <div id="cal-wrap" class="cal-wrap"></div>
+    <div class="cal-legend">
+      <span class="body-sm" data-i18n="timeline.cal_less">Less</span>
+      <span class="cal-cell l0"></span><span class="cal-cell l1"></span><span class="cal-cell l2"></span><span class="cal-cell l3"></span><span class="cal-cell l4"></span>
+      <span class="body-sm" data-i18n="timeline.cal_more">More</span>
+    </div>
+  </div>
+
+  {# 事件轴。停放是反推出来的（相邻两件事之间的空档），所以它没有 id，
+     也点不进详情——这一点在 UI 上用"不可点"来表达，不额外解释。 #}
+  <div class="section">
+    <div class="section-head">
+      <h2 data-i18n="timeline.events_title">What happened</h2>
+      <div class="row" style="gap:6px">
+        <div class="segmented" id="kind-pick">
+          <button data-kind=""       class="active" data-i18n="timeline.k_all">All</button>
+          <button data-kind="drive"  data-i18n="timeline.k_drive">Drives</button>
+          <button data-kind="charge" data-i18n="timeline.k_charge">Charges</button>
+          <button data-kind="idle"   data-i18n="timeline.k_idle">Parked</button>
+          <button data-kind="gap"    data-i18n="timeline.k_gap">Gaps</button>
+        </div>
+      </div>
+    </div>
+    <ol class="evt" id="tl"></ol>
+  </div>
+
+  <div class="section">
+    <div class="section-head"><h2 data-i18n="timeline.detail_title">Detail</h2></div>
+
+    <details class="disclose" id="d-stats">
+      <summary><span data-i18n="timeline.d_stats">Period totals</span><span class="value" id="v-stats">–</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+      </summary>
+      <div class="body">
+        <div class="row" style="gap:10px;margin-bottom:12px">
+          <div class="segmented" id="bucket-pick">
+            <button data-bucket="week"  data-i18n="timeline.b_week">Weekly</button>
+            <button data-bucket="month" class="active" data-i18n="timeline.b_month">Monthly</button>
+            <button data-bucket="year"  data-i18n="timeline.b_year">Yearly</button>
+          </div>
+        </div>
+        <div class="table-scroll">
+          <table class="data" id="t-stats">
+            <thead><tr>
+              <th data-i18n="timeline.th_period">Period</th>
+              <th class="num" data-i18n="timeline.th_drives">Drives</th>
+              <th class="num"><span data-i18n="timeline.th_distance">Distance</span> <span class="unit" id="dist-unit"></span></th>
+              <th class="num" data-i18n="common.duration">Duration</th>
+              <th class="num" data-i18n="timeline.th_used">Used</th>
+              <th class="num"><span data-i18n="timeline.th_eff">Efficiency</span> <span class="unit" id="eff-unit"></span></th>
+              <th class="num" data-i18n="timeline.th_charges">Charges</th>
+              <th class="num" data-i18n="insights.table.kwh">kWh</th>
+              <th class="num" data-i18n="insights.table.cost">Cost</th>
+            </tr></thead><tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+
+    <details class="disclose" id="d-places">
+      <summary><span data-i18n="timeline.d_places">Places you go</span><span class="value" id="v-places">–</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+      </summary>
+      <div class="body">
+        <div class="table-scroll">
+          <table class="data" id="t-places">
+            <thead><tr>
+              <th data-i18n="common.location">Location</th>
+              <th data-i18n="timeline.th_city">City</th>
+              <th class="num" data-i18n="timeline.th_visits">Visits</th>
+              <th class="num" data-i18n="timeline.th_dwell">Time parked</th>
+              <th class="num" data-i18n="timeline.th_last">Last</th>
+            </tr></thead><tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+
+    <details class="disclose" id="d-visited">
+      <summary><span data-i18n="timeline.d_visited">Where you have been</span><span class="value" id="v-visited">–</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+      </summary>
+      <div class="body">
+        <div class="metrics" id="visited-metrics" style="gap:44px;margin-bottom:16px"></div>
+        <div class="table-scroll">
+          <table class="data" id="t-visited">
+            <thead><tr>
+              <th data-i18n="timeline.th_country">Country</th>
+              <th data-i18n="timeline.th_region">Region</th>
+              <th data-i18n="timeline.th_city">City</th>
+              <th class="num" data-i18n="timeline.th_visits">Visits</th>
+              <th class="num" data-i18n="timeline.th_first">First</th>
+            </tr></thead><tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </details>
+
+    <details class="disclose" id="d-states">
+      <summary><span data-i18n="timeline.d_states">Awake, asleep, offline</span><span class="value" id="v-states">–</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+      </summary>
+      <div class="body">
+        <div class="statebar" id="statebar"></div>
+        <div class="legend" id="state-legend"></div>
+        <p class="body-sm" id="sleep-note" style="margin-top:14px;max-width:64ch"></p>
+      </div>
+    </details>
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+window.addEventListener("omt:locale", () => { document.title = t("timeline.page_title"); });
+
+let carId = null, days = 365, kind = "", bucket = "month";
+let tlTruncated = false, tlTotal = 0, tlShown = 0;
+let lastTimeline = null;   // 缓存最近一次结果，供纯客户端的筛选复用
+const $ = (s) => document.querySelector(s);
+const rows = (sel, html, cols) =>
+  $(sel).innerHTML = html || `<tr><td colspan="${cols}" class="empty small">${t("insights.empty")}</td></tr>`;
+
+function metric(label, value, unit, delta, cls) {
+  return `<div class="metric">
+    <div class="label">${esc(label)}</div>
+    <div class="metric-value">${value}${unit ? `<span class="unit">${esc(unit)}</span>` : ""}</div>
+    ${delta ? `<div class="delta ${cls || ""}">${esc(delta)}</div>` : ""}
+  </div>`;
+}
+
+/* 分钟转成人读的时长。超过一天就说天，否则说小时分钟——
+   "15342 分钟"没人能在脑子里换算成"10 天 15 小时"。 */
+function dur(min) {
+  if (min == null) return "–";
+  const m = Math.round(min);
+  if (m < 60) return t("timeline.dur_m", { m });
+  if (m < 60 * 24) return t("timeline.dur_hm", { h: Math.floor(m / 60), m: m % 60 });
+  return t("timeline.dur_dh", { d: Math.floor(m / 1440), h: Math.floor((m % 1440) / 60) });
+}
+
+/* fmt 里没有这三个，就地补上——都只在本页用到，不值得进公共层。 */
+/* 本地日期 → "YYYY-MM-DD"。绝不能用 UTC 格式化：东八区的 8/22 会变成 8/21，
+   于是整张热力图往前平移一天、最后一天的数据一个格子都渲染不出来，
+   月份标签也会跑到上个月。 */
+function isoLocal(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function hhmm(iso) {
+  return new Date(iso).toLocaleTimeString(
+    (window.i18n && i18n.state.locale === "en") ? "en-US" : "zh-CN",
+    { hour: "2-digit", minute: "2-digit" });
+}
+function weekdayLabel(dow) {
+  // 2026-01-04 是周日，加 dow 天就得到对应星期几，不用硬编码中英文星期名
+  return new Date(2026, 0, 4 + dow).toLocaleDateString(
+    (window.i18n && i18n.state.locale === "en") ? "en-US" : "zh-CN", { weekday: "narrow" });
+}
+function periodLabel(iso, bucket) {
+  if (bucket === "year") return iso.slice(0, 4);
+  if (bucket === "month") return fmt.month(iso);
+  return fmt.date(iso);                      // 周桶显示这一周的起始日
+}
+
+/* ---------------- 日历热力图 ---------------- */
+
+/* GitHub 式的周列格子。强度按当日里程分 4 档，档位边界用**当期最大值**
+   而不是固定阈值：开网约车的人和一周开一次的人，用同一套绝对阈值时
+   一个人全是深色、另一个人全是浅色，两张图都读不出信息。 */
+function renderCalendar(cal) {
+  const wrap = $("#cal-wrap");
+  const cells = cal.days || [];
+  if (!cells.length) { wrap.innerHTML = `<div class="empty small">${esc(t("insights.empty"))}</div>`; return; }
+
+  const byDate = new Map(cells.map((c) => [c.date, c]));
+  const first = new Date(cells[0].date + "T00:00:00");
+  const last = new Date(cells[cells.length - 1].date + "T00:00:00");
+  // 起点回退到那一周的周日，否则第一列会缺格、整张图错位一行
+  const start = new Date(first);
+  start.setDate(start.getDate() - start.getDay());
+
+  const max = cal.max_km || 1;
+  const lvl = (km) => (!km ? 0 : Math.min(4, Math.ceil(km / max * 4)));
+
+  const CELL = 12, GAP = 3, TOP = 18, LEFTPAD = 26;
+  const weeks = Math.ceil((last - start) / (7 * 864e5)) + 1;
+  const W = LEFTPAD + weeks * (CELL + GAP), H = TOP + 7 * (CELL + GAP);
+
+  let svg = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img">`;
+  const monthAt = new Map();
+  for (let w = 0; w < weeks; w++) {
+    for (let d = 0; d < 7; d++) {
+      const day = new Date(start);
+      day.setDate(day.getDate() + w * 7 + d);
+      if (day > last) continue;
+      const iso = isoLocal(day);
+      const c = byDate.get(iso);
+      const x = LEFTPAD + w * (CELL + GAP), y = TOP + d * (CELL + GAP);
+      const level = c ? lvl(c.km) : 0;
+      const tip = c
+        ? t("timeline.cal_tip", { date: iso,
+            km: fmt.num(U.dist(c.km, 1), 1) + " " + U.distLabel(),
+            n: c.drives, kwh: fmt.num(c.kwh, 1) })
+        : t("timeline.cal_tip_empty", { date: iso });
+      svg += `<rect class="cal-cell l${level}" x="${x}" y="${y}" width="${CELL}" height="${CELL}" rx="2"><title>${esc(tip)}</title></rect>`;
+      if (day.getDate() <= 7 && d === 0) monthAt.set(w, day);
+    }
+  }
+  for (const [w, day] of monthAt) {
+    svg += `<text class="cal-mon" x="${LEFTPAD + w * (CELL + GAP)}" y="11">${esc(fmt.month(isoLocal(day)))}</text>`;
+  }
+  for (const d of [1, 3, 5]) {
+    svg += `<text class="cal-mon" x="0" y="${TOP + d * (CELL + GAP) + 9}">${esc(weekdayLabel(d))}</text>`;
+  }
+  wrap.innerHTML = svg + "</svg>";
+
+  $("#cal-note").textContent = t("timeline.cal_note", {
+    days: cal.active_days,
+    km: fmt.num(U.dist(cal.total_km, 0), 0) + " " + U.distLabel(),
+    kwh: fmt.num(cal.total_kwh, 0) });
+}
+
+/* ---------------- 事件轴 ---------------- */
+
+/* 图标只能用 icons.js 里真有的那 27 个：drive / bolt / spark / pin。
+   写一个不存在的名字时 icon() 返回空串，圆点里会是个空洞。 */
+const KIND_ICON = { drive: "drive", charge: "bolt", update: "spark", idle: "pin", gap: "route" };
+const KIND_CLS = { drive: "k-drive", charge: "k-charge", update: "k-update", idle: "k-idle", gap: "k-gap" };
+
+function eventLine(e) {
+  if (e.kind === "drive") {
+    const bits = [];
+    if (e.distance != null) bits.push(fmt.num(U.dist(e.distance, 1), 1) + " " + U.distLabel());
+    if (e.duration_min != null) bits.push(dur(e.duration_min));
+    if (e.start_soc != null && e.end_soc != null) bits.push(`${e.start_soc}% → ${e.end_soc}%`);
+    return bits.join(" · ");
+  }
+  if (e.kind === "charge") {
+    const bits = [];
+    if (e.energy != null) bits.push(fmt.num(e.energy, 1) + " kWh");
+    if (e.start_soc != null && e.end_soc != null) bits.push(`${e.start_soc}% → ${e.end_soc}%`);
+    if (e.duration_min != null) bits.push(dur(e.duration_min));
+    if (e.cost) bits.push(fmt.money(e.cost));
+    return bits.join(" · ");
+  }
+  if (e.kind === "gap") {
+    // 里程表动了但没有行程记录。这里说的是"少了多少"，不是"耗了多少"，
+    // 所以不把 SOC 差叫成掉电 —— 那段电是开车开掉的。
+    const bits = [dur(e.duration_min), t("timeline.gap_km", {
+      km: fmt.num(U.dist(e.unlogged_km, 1), 1) + " " + U.distLabel() })];
+    if (e.start_soc != null && e.end_soc != null && e.start_soc > e.end_soc) {
+      bits.push(t("timeline.gap_soc", { pct: e.start_soc - e.end_soc }));
+    }
+    return bits.join(" · ");
+  }
+  if (e.kind === "idle") {
+    const bits = [dur(e.duration_min)];
+    // 停放掉电两端 SOC 都拿到才说，缺一个就不说——编一个 0 比留空更糟
+    if (e.start_soc != null && e.end_soc != null && e.start_soc > e.end_soc) {
+      bits.push(t("timeline.idle_drop", { pct: e.start_soc - e.end_soc }));
+    }
+    return bits.join(" · ");
+  }
+  return e.version || "";
+}
+
+function eventTitle(e) {
+  if (e.kind === "drive") {
+    return e.from && e.to && e.from !== e.to
+      ? `${e.from} → ${e.to}` : (e.to || e.from || t("timeline.k_drive"));
+  }
+  if (e.kind === "charge") return e.to || t("timeline.k_charge");
+  if (e.kind === "gap") return e.from ? t("timeline.gap_at", { place: e.from }) : t("timeline.k_gap");
+  if (e.kind === "idle") return e.from ? t("timeline.idle_at", { place: e.from }) : t("timeline.k_idle");
+  return t("timeline.update_to", { version: e.version || "" });
+}
+
+function renderTimeline(tl) {
+  const list = (tl.events || []).filter((e) => !kind || e.kind === kind);
+  tlTruncated = !!tl.truncated;
+  tlTotal = tl.total || 0;
+  tlShown = (tl.events || []).filter((e) => e.kind !== "idle" && e.kind !== "gap").length;
+  if (!list.length) {
+    $("#tl").innerHTML = `<li class="empty small">${esc(t("insights.empty"))}</li>`;
+    return;
+  }
+  let lastDay = "";
+  $("#tl").innerHTML = list.map((e) => {
+    const d = new Date(e.start);
+    const day = fmt.date(e.start);
+    const head = day !== lastDay ? `<li class="evt-day">${esc(day)}</li>` : "";
+    lastDay = day;
+    // 行程和充电点得进详情，停放和更新点不进——它们没有可展开的东西
+    const href = e.kind === "drive" ? `/trips?drive=${e.id}`
+               : e.kind === "charge" ? `/energy?charge=${e.id}` : null;
+    const inner = `<div class="evt-dot ${KIND_CLS[e.kind] || ""}"><span class="ico-slot" data-icon="${KIND_ICON[e.kind] || "pin"}" data-size="13"></span></div>
+      <div class="evt-body">
+        <div class="evt-title">${esc(eventTitle(e))}</div>
+        <div class="evt-sub">${esc(eventLine(e))}</div>
+      </div>
+      <div class="evt-time">${esc(hhmm(e.start))}</div>`;
+    return head + `<li class="evt-row">` +
+      (href ? `<a class="evt-link" href="${href}">${inner}</a>` : `<div class="evt-link static">${inner}</div>`) +
+      `</li>`;
+  }).join("");
+  if (tlTruncated) {
+    // 被截断了就要说出来。否则 kind 筛选（Gaps / Parked）看起来像
+    // "一年只有 3 个缺口"，而事实是筛选只作用在最近这一屏上。
+    const li = document.createElement("li");
+    li.className = "empty small";
+    li.style.padding = "16px 0 0";
+    li.textContent = t("timeline.truncated", { shown: tlShown, total: tlTotal });
+    $("#tl").appendChild(li);
+  }
+  paintIcons($("#tl"));
+}
+
+/* ---------------- 明细区 ---------------- */
+
+async function renderStats() {
+  let d;
+  try { d = await apiGet(`/api/insights/statistics?car_id=${carId}&bucket=${bucket}`); }
+  catch (e) { return; }
+  const ps = d.periods || [];
+  $("#v-stats").textContent = t("timeline.n_periods", { n: ps.length });
+  // 表头单位跟着偏好走，不写死 km / Wh/km
+  $("#dist-unit").textContent = U.distLabel();
+  $("#eff-unit").textContent = U.consLabel();
+  rows("#t-stats tbody", ps.map((p) => `<tr>
+    <td>${esc(periodLabel(p.period, d.bucket))}</td>
+    <td class="num">${p.drives || "–"}</td>
+    <td class="num">${p.km ? fmt.num(U.dist(p.km, 1), 1) : "–"}</td>
+    <td class="num">${p.minutes ? dur(p.minutes) : "–"}</td>
+    <td class="num">${p.kwh_used != null ? fmt.num(p.kwh_used, 1) + " kWh" : "–"}</td>
+    <td class="num">${p.wh_per_km != null ? fmt.num(U.cons(p.wh_per_km), 0) : "–"}</td>
+    <td class="num">${p.charges || "–"}</td>
+    <td class="num">${p.kwh_added ? fmt.num(p.kwh_added, 1) : "–"}</td>
+    <td class="num">${p.cost ? fmt.money(p.cost) : "–"}</td>
+  </tr>`).join(""), 9);
+}
+
+async function renderPlaces() {
+  let d;
+  try { d = await apiGet(`/api/insights/places?car_id=${carId}`); }
+  catch (e) { return; }
+  $("#v-places").textContent = t("timeline.n_places", { n: d.length });
+  rows("#t-places tbody", d.map((p) => `<tr>
+    <td>${esc(p.label)}</td>
+    <td>${esc(p.city || "–")}</td>
+    <td class="num">${p.visits}</td>
+    <td class="num">${dur(p.dwell_min)}</td>
+    <td class="num">${esc(fmt.date(p.last))}</td>
+  </tr>`).join(""), 5);
+}
+
+async function renderVisited() {
+  let d;
+  try { d = await apiGet(`/api/insights/visited?car_id=${carId}`); }
+  catch (e) { return; }
+  $("#v-visited").textContent = t("timeline.n_cities", { n: d.n_cities });
+  $("#visited-metrics").innerHTML =
+    metric(t("timeline.m_countries"), d.n_countries, "") +
+    metric(t("timeline.m_regions"), d.n_states, "") +
+    metric(t("timeline.m_cities"), d.n_cities, "");
+  rows("#t-visited tbody", (d.cities || []).map((c) => `<tr>
+    <td>${esc(c.country || "–")}</td>
+    <td>${esc(c.state || "–")}</td>
+    <td>${esc(c.city || "–")}</td>
+    <td class="num">${c.visits}</td>
+    <td class="num">${esc(fmt.date(c.first))}</td>
+  </tr>`).join(""), 5);
+}
+
+async function renderStates() {
+  let d;
+  try { d = await apiGet(`/api/insights/states?car_id=${carId}&days=${days || 365}`); }
+  catch (e) { return; }
+  const parts = [
+    { k: "drive",  min: d.drive_min,      color: "--series-1" },
+    { k: "charge", min: d.charge_min,     color: "--charging-green" },
+    { k: "idle",   min: d.idle_awake_min, color: "--warning-orange" },
+    { k: "asleep", min: d.asleep_min,     color: "--series-3" },
+    { k: "offline", min: d.offline_min,   color: "--series-5" },
+  ].filter((p) => p.min > 0);
+  const total = parts.reduce((n, p) => n + p.min, 0) || 1;
+
+  $("#statebar").innerHTML = parts.map((p) =>
+    `<span class="seg" style="width:${(p.min / total * 100).toFixed(2)}%;background:var(${p.color})" title="${esc(t("timeline.s_" + p.k) + " " + dur(p.min))}"></span>`).join("");
+  $("#state-legend").innerHTML = parts.map((p) =>
+    `<span class="item"><span class="swatch" style="background:var(${p.color})"></span>${esc(t("timeline.s_" + p.k))} ${esc(dur(p.min))}</span>`).join("");
+
+  $("#v-states").textContent = d.sleep_score != null
+    ? t("timeline.sleep_score", { pct: d.sleep_score }) : "–";
+  // 睡眠评分的分母是"睡着 + 醒着但没事干"，离线不计。这句话必须写出来，
+  // 否则用户会拿它跟"车有多少时间在线"对不上而以为算错了。
+  $("#sleep-note").textContent = d.sleep_score != null
+    ? t("timeline.sleep_note", { pct: d.sleep_score, idle: dur(d.idle_awake_min) }) : "";
+}
+
+/* ---------------- 装配 ---------------- */
+
+async function render() {
+  let tl, cal, cov;
+  try {
+    [tl, cal, cov] = await Promise.all([
+      apiGet(`/api/insights/timeline?car_id=${carId}&days=${days}`),
+      apiGet(`/api/insights/calendar?car_id=${carId}&days=${days || 365}`),
+      apiGet(`/api/insights/coverage?car_id=${carId}`),
+    ]);
+  } catch (e) {
+    $("#db-err").style.display = "block";
+    $("#db-err").textContent = e.message;
+    return;
+  }
+  $("#db-err").style.display = "none";
+
+  const drives = (tl.events || []).filter((e) => e.kind === "drive");
+  const charges = (tl.events || []).filter((e) => e.kind === "charge");
+
+  $("#headline").innerHTML =
+    metric(t("timeline.m_active_days"), cal.active_days || 0, t("timeline.u_days")) +
+    metric(t("timeline.m_distance"), fmt.num(U.dist(cal.total_km, 0), 0), U.distLabel()) +
+    // 用后端给的未截断总数。events.length 被 LIMIT 削过，选「一年」会恒定
+    // 显示 300，而旁边的总里程是全年真值，两个数字互相矛盾。
+    metric(t("timeline.m_events"),
+           tl.totals ? tl.totals.drives + tl.totals.charges : drives.length + charges.length, "") +
+    // 覆盖率是"记录到的里程 ÷ 里程表跨度"。低于 100% 说明有车开了但没记上，
+    // 这是所有统计准不准的前提，所以放在头条而不是埋进明细。
+    metric(t("timeline.m_coverage"),
+           cov.coverage != null ? fmt.num(cov.coverage, 0) : "–", "%",
+           cov.unlogged_km ? t("timeline.unlogged", { km: fmt.num(U.dist(cov.unlogged_km, 0), 0) + " " + U.distLabel() }) : null,
+           cov.coverage != null && cov.coverage < 90 ? "warn" : null);
+
+  lastTimeline = tl;
+  renderCalendar(cal);
+  renderTimeline(tl);
+  renderStates();
+}
+
+/* 明细区只在第一次展开时才拉数据：四个接口里有三个跟主视图无关，
+   页面一落地就全拉会让首屏多等三个来回。 */
+function lazy(id, fn) {
+  const el = $(id);
+  let done = false;
+  el.addEventListener("toggle", () => { if (el.open && !done) { done = true; fn(); } });
+  return () => { done = false; if (el.open) { done = true; fn(); } };
+}
+
+(async function init() {
+  await i18nReady;
+  const refreshStats = lazy("#d-stats", renderStats);
+  const refreshPlaces = lazy("#d-places", renderPlaces);
+  const refreshVisited = lazy("#d-visited", renderVisited);
+
+  carId = await initCarPicker("#car-picker", (id) => {
+    carId = id; render(); refreshStats(); refreshPlaces(); refreshVisited();
+  });
+
+  $("#range-pick").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    $("#range-pick").querySelectorAll("button").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    days = +b.dataset.range;
+    render();
+  });
+  $("#kind-pick").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    $("#kind-pick").querySelectorAll("button").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    kind = b.dataset.kind;
+    // 筛选是纯客户端的，只影响事件轴那一段。原来这里调 render()，
+    // 会并发重拉 timeline/calendar/coverage 三个接口、重画热力图和状态条 ——
+    // 点一下筛选等一秒，而且热力图闪一下又变回原样。
+    if (lastTimeline) renderTimeline(lastTimeline);
+  });
+  $("#bucket-pick").addEventListener("click", (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    $("#bucket-pick").querySelectorAll("button").forEach((x) => x.classList.remove("active"));
+    b.classList.add("active");
+    bucket = b.dataset.bucket;
+    renderStats();
+  });
+
+  render();
+  window.addEventListener("omt:locale", () => {
+    render();
+    if ($("#d-stats").open) renderStats();
+    if ($("#d-places").open) renderPlaces();
+    if ($("#d-visited").open) renderVisited();
+  });
+})();
+</script>
+{% endblock %}

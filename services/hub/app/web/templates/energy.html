@@ -314,6 +314,21 @@ async function render() {
     document.querySelectorAll("#t-charges tbody tr[data-cp]").forEach((tr) =>
       tr.addEventListener("click", () => showCurve(+tr.dataset.cp)));
 
+    // 时间线的充电条目会带 ?charge=N 跳过来。充电明细默认收在 <details> 里，
+    // 不主动展开的话跳过来是一片空白，用户以为链接是死的。只认一次，
+    // 否则每次切时间段都会把面板重新弹开。
+    const want = +(new URLSearchParams(location.search).get("charge") || 0);
+    if (want && !window._chargeDeepLinked) {
+      window._chargeDeepLinked = true;
+      const row = document.querySelector(`#t-charges tbody tr[data-cp="${want}"]`);
+      if (row) {
+        $("#d-charging").open = true;
+        row.classList.add("on");
+        showCurve(want);
+        row.scrollIntoView({ block: "center" });
+      }
+    }
+
     $("#v-places").textContent = t("energy.n_places", { n: c.top_locations.length });
     rows("#t-locations tbody", c.top_locations.map((l) => `<tr>
       <td>${esc(l.location || t("common.unknown"))}</td><td class="num">${fmt.num(l.kwh, 0)}</td>
