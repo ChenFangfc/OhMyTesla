@@ -1,0 +1,52 @@
+{% extends "data_base.html" %}
+{% import "_data_ui.html" as ui %}
+{# 概览 asks "how has the car been used?". The lifetime ledger states it in
+   one sentence; the period strip (the largest figures) answers "lately",
+   against the period before. Records, the trend and the year follow. #}
+{% block title %}{{ t('data.title.overview') }}{% endblock %}
+{% block h1 %}<span data-i18n="data.nav.overview">{{ t('data.nav.overview') }}</span>{% endblock %}
+
+{% block chapter %}
+<section class="dh-sec first" id="ov-life" aria-live="polite">
+  <div class="dh-body"><div class="dh-lede">{{ ui.lines(2) }}</div></div>
+</section>
+
+<section class="dh-sec" id="ov-period">
+  <header class="dh-sec-h">
+    <h2 id="ov-period-h">&nbsp;</h2>
+    <p class="dh-note" id="ov-period-n">&nbsp;</p>
+  </header>
+  <div class="dh-body">{{ ui.kpis(6) }}</div>
+</section>
+
+<section class="dh-sec" id="ov-records">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.ov.records">{{ t('data.ov.records') }}</h2>
+    <p class="dh-note" data-i18n="data.ov.records_n">{{ t('data.ov.records_n') }}</p>
+  </header>
+  <div class="dh-body">{{ ui.kpis(3, true) }}</div>
+</section>
+
+<section class="dh-sec" id="ov-trend">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.ov.trend">{{ t('data.ov.trend') }}</h2>
+    <p class="dh-note" id="ov-trend-n">&nbsp;</p>
+  </header>
+  <div class="dh-body">
+    <div class="dh-grid">
+      <div class="dh-sub c6"><h3 class="dh-subh" data-i18n="data.ov.trend_dist">{{ t('data.ov.trend_dist') }}</h3><p class="dh-subn">&nbsp;</p>{{ ui.chart() }}</div>
+      <div class="dh-sub c6"><h3 class="dh-subh" data-i18n="data.ov.trend_energy">{{ t('data.ov.trend_energy') }}</h3><p class="dh-subn">&nbsp;</p>{{ ui.chart() }}</div>
+    </div>
+  </div>
+</section>
+
+<section class="dh-sec" id="ov-cal">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.ov.cal">{{ t('data.ov.cal') }}</h2>
+    <p class="dh-note" id="ov-cal-n">&nbsp;</p>
+  </header>
+  <div class="dh-body">{{ ui.chart('short') }}</div>
+</section>
+{% endblock %}
+
+{% block data_scripts %}<script src="/static/js/pages/data-overview.js"></script>{% endblock %}

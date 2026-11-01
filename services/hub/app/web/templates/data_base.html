@@ -1,0 +1,25 @@
+{% extends "shell.html" %}
+{# 数据 hub layout. Six chapters share the index, the period, the header and
+   the plumbing in data.js; each chapter template fills `chapter` and loads
+   its own script in `data_scripts`. #}
+{% block head %}<link rel="stylesheet" href="/static/css/data.css">{% endblock %}
+
+{% block content %}
+<div class="page dh" id="dh" data-chapter="{{ chapter }}">
+  {% include "_data_nav.html" %}
+  <header class="dh-head">
+    <h1>{% block h1 %}{% endblock %}</h1>
+    <div class="dh-meta" id="dh-meta"></div>
+  </header>
+  <div class="dh-notes" id="dh-notes"></div>
+  <div id="dh-main">
+    {% block chapter %}{% endblock %}
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/pages/data-charts.js"></script>
+<script src="/static/js/pages/data.js"></script>
+{% block data_scripts %}{% endblock %}
+{% endblock %}

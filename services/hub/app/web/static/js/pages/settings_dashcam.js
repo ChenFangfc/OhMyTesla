@@ -203,7 +203,7 @@
   function bytes(n) {
     if (n == null) return "–";
     const gb = n / 1e9;
-    return gb >= 100 ? Math.round(gb) + " GB" : gb.toFixed(1) + " GB";
+    return (gb >= 100 ? fmt.int(gb) : fmt.fixed(gb, 1)) + " GB";
   }
   function paintPi() {
     const box = $("sdc-pi");

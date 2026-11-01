@@ -43,5 +43,13 @@
   "security.watch": "观看",
   "security.test_sent": "测试已通过 {list} 发送",
   "security.test_none": "没有可用的渠道，请先在设置中配置",
-  "security.rules_push": "{n} 项会推送到手机"
+  "security.rules_push": "{n} 项会推送到手机",
+  "security.f_speed": "检测速度",
+  "security.f_where": "提醒发往",
+  "security.f_home": "在家时",
+  "security.no_home": "还没设定家的位置",
+  "security.today": "今天",
+  "security.yesterday": "昨天",
+  "security.testing": "正在发送测试提醒…",
+  "security.filter": "筛选"
 }

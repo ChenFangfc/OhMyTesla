@@ -223,6 +223,16 @@ async def seed(con):
     await con.execute("""INSERT INTO updates (start_date, end_date, version, car_id) VALUES
         ($1, $2, '2026.26.6.5 abc', 1), ($3, $3, '2026.38.5.11 def', 1)""",
                       local(20, 1), local(20, 1, 40), local(2, 3))
+    # 4 号车：两段行程隔了 38 天，里程表却走了 1060 km（TeslaMate 停了一个多月没记），
+    # 中间夹着一次软件更新 —— 更新没有里程读数，不能把这段漏采集切成两截"停放"
+    await con.execute("INSERT INTO car_settings DEFAULT VALUES")
+    await con.execute("""INSERT INTO cars (eid, vid, model, efficiency, vin, name, settings_id)
+        VALUES (4, 4, 'Cybertruck', 0.234, '7G2CEHED0RA000004', 'Gap', 4)""")
+    await con.execute("""INSERT INTO drives (start_date, end_date, start_km, end_km, distance, duration_min, car_id)
+        VALUES ($1, $2, 2000, 2010, 10, 20, 4), ($3, $4, 3070, 3080, 10, 20, 4)""",
+                      local(40, 9), local(40, 9, 20), local(2, 9), local(2, 9, 20))
+    await con.execute("INSERT INTO updates (start_date, end_date, version, car_id) VALUES ($1, $2, '2026.32.1 x', 4)",
+                      local(20, 2), local(20, 2, 30))
     # 2 号车：60 天前最后一次出现，states 里挂着一条没关的 online
     old = NOW - timedelta(days=60)
     await con.execute("""INSERT INTO positions (date, latitude, longitude, odometer, car_id, ideal_battery_range_km,
@@ -344,6 +354,23 @@ async def run(con) -> int:
         and c["charge"]["energy"]["efficiency_pct"] == round(20 / 23 * 100, 1), c["charge"]["energy"])
     loc = await A.locations(1, parse_period(0))
     chk("城市取 COALESCE(city, neighbourhood)", any(x["city"] == "Plainville Hamlet" for x in loc["cities"]), loc["cities"])
+    fp = await A.footprint(1, parse_period(0))
+    cells = fp["cells"]
+    chk("足迹：20 分钟的行程点亮了一串 ~1 km 格子", 3 <= len(cells) <= 60, len(cells))
+    chk("足迹：格子按首次到达排序，时间戳是秒", all(cells[i][2] <= cells[i + 1][2] for i in range(len(cells) - 1))
+        and cells[0][2] > 1_600_000_000, cells[:2])
+    chk("足迹：面积约等于格子数 × ~0.94 km²（纬度 40°）", abs(fp["explored_km2"] / max(len(cells), 1) - 0.94) < 0.05,
+        fp["explored_km2"])
+    chk("足迹：城市与「第一次」时间线", fp["counts"]["cities"] >= 1 and fp["firsts"]
+        and all(fp["firsts"][i]["at"] <= fp["firsts"][i + 1]["at"] for i in range(len(fp["firsts"]) - 1)), fp["firsts"])
+    chk("足迹：边界框包住所有格子", fp["bounds"] and fp["bounds"][0] <= 40.056 <= fp["bounds"][2], fp["bounds"])
+    tl4 = await journey.timeline(4, days=60)
+    kinds = [e["kind"] for e in tl4["events"]]
+    gaps = [e for e in tl4["events"] if e["kind"] == "gap"]
+    chk("漏采集中间夹着软件更新：仍判成一段 gap，带上漏掉的里程",
+        len(gaps) == 1 and abs((gaps[0]["unlogged_km"] or 0) - 1060) < 1 and "idle" not in kinds, kinds)
+    fp3 = await A.footprint(3, parse_period(0))
+    chk("没数据的车：足迹为空，不报错", fp3["cells"] == [] and fp3["bounds"] is None and fp3["explored_km2"] == 0)
     m = await A.mileage(3, parse_period(0))
     chk("没数据的车：mileage 空表", m["rows"] == [] and m["total_km"] == 0)
 

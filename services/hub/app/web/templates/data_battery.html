@@ -1,0 +1,75 @@
+{% extends "data_base.html" %}
+{% import "_data_ui.html" as ui %}
+{# 电池 asks "is the battery all right?". Health is the answer figure; the
+   capacity and range trends back it up (TeslaMate's method, dashed "when
+   new" lines, firmware installs marked). Then how it is used: charge level,
+   drain while parked, where the time goes, and the software it runs. #}
+{% block title %}{{ t('data.title.battery') }}{% endblock %}
+{% block h1 %}<span data-i18n="data.nav.battery">{{ t('data.nav.battery') }}</span>{% endblock %}
+
+{% block chapter %}
+<section class="dh-sec first" id="bt-health">
+  <div class="dh-body">{{ ui.kpis(5) }}</div>
+</section>
+
+<section class="dh-sec">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.bat.trend">{{ t('data.bat.trend') }}</h2>
+    <p class="dh-note" data-i18n="data.bat.trend_n">{{ t('data.bat.trend_n') }}</p>
+  </header>
+  <div class="dh-grid">
+    <div class="dh-sub c6" id="bt-cap">
+      <h3 class="dh-subh" data-i18n="data.bat.cap">{{ t('data.bat.cap') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.chart() }}</div>
+    </div>
+    <div class="dh-sub c6" id="bt-range">
+      <h3 class="dh-subh" data-i18n="data.bat.range">{{ t('data.bat.range') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.chart() }}</div>
+    </div>
+  </div>
+  <details class="dh-more" id="bt-base">
+    <summary><span data-i18n="data.bat.base">{{ t('data.bat.base') }}</span><span class="val" id="bt-base-v"></span><span class="chev ico-slot" data-icon="chevron" data-size="14"></span></summary>
+    <div class="dh-body" id="bt-base-b"></div>
+  </details>
+</section>
+
+<section class="dh-sec">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.bat.level">{{ t('data.bat.level') }}</h2>
+    <p class="dh-note" id="bt-level-n">&nbsp;</p>
+  </header>
+  <div class="dh-grid">
+    <div class="dh-sub c8" id="bt-soc">
+      <h3 class="dh-subh" data-i18n="data.bat.soc_time">{{ t('data.bat.soc_time') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.chart() }}</div>
+    </div>
+    <div class="dh-sub c4" id="bt-socd">
+      <h3 class="dh-subh" data-i18n="data.bat.soc_dist">{{ t('data.bat.soc_dist') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.chart() }}</div>
+    </div>
+  </div>
+</section>
+
+<section class="dh-sec" id="bt-drain">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.bat.drain">{{ t('data.bat.drain') }}</h2>
+    <p class="dh-note" data-i18n="data.bat.drain_n">{{ t('data.bat.drain_n') }}</p>
+  </header>
+  <div class="dh-body">{{ ui.kpis(4, true) }}<div style="margin-top:24px">{{ ui.chart() }}</div></div>
+</section>
+
+<section class="dh-sec">
+  <div class="dh-grid">
+    <div class="dh-sub c6" id="bt-states">
+      <header class="dh-sec-h"><h2 data-i18n="data.bat.states">{{ t('data.bat.states') }}</h2></header>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.rows(3) }}</div>
+    </div>
+    <div class="dh-sub c6" id="bt-sw">
+      <header class="dh-sec-h"><h2 data-i18n="data.bat.sw">{{ t('data.bat.sw') }}</h2></header>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.rows(4) }}</div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block data_scripts %}<script src="/static/js/pages/data-battery.js"></script>{% endblock %}

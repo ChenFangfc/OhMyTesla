@@ -509,15 +509,73 @@ async def manifest():
     return FileResponse(BASE / "web" / "static" / "manifest.json", media_type="application/manifest+json")
 
 
-# 新导航的规范路径。旧路径保留跳转，书签不会断。
-@app.get("/energy", response_class=HTMLResponse)
+# ---------------- 数据 hub ----------------
+# 六个章节共用一个时间段（?days=7|30|90|365|all）。服务端只拿它标出选中的按钮、
+# 让章节链接带上同一个时间段；取数全在前端，各块各自加载、各自报错。
+# 不带 days 时前端用上次选过的时间段（没有就是 90 天），再把它写回地址栏。
+_DATA_TEMPLATES = {
+    "overview": "data.html", "driving": "data_driving.html", "charging": "data_charging.html",
+    "battery": "data_battery.html", "footprint": "data_footprint.html", "timeline": "data_timeline.html",
+}
+_DATA_PERIODS = ("7", "30", "90", "365", "all")
+
+
+def _data_days(request: Request) -> str | None:
+    d = (request.query_params.get("days") or "").strip().lower()
+    d = "all" if d == "0" else d
+    return d if d in _DATA_PERIODS else None
+
+
+async def _data_page(request: Request, chapter: str):
+    days = _data_days(request)
+    return await page(request, _DATA_TEMPLATES[chapter], active="data", chapter=chapter,
+                      days=days, period_qs=f"?days={days}" if days else "")
+
+
+@app.get("/data", response_class=HTMLResponse)
+async def data_overview_page(request: Request):
+    return await _data_page(request, "overview")
+
+
+@app.get("/data/driving", response_class=HTMLResponse)
+async def data_driving_page(request: Request):
+    return await _data_page(request, "driving")
+
+
+@app.get("/data/charging", response_class=HTMLResponse)
+async def data_charging_page(request: Request):
+    return await _data_page(request, "charging")
+
+
+@app.get("/data/battery", response_class=HTMLResponse)
+async def data_battery_page(request: Request):
+    return await _data_page(request, "battery")
+
+
+@app.get("/data/footprint", response_class=HTMLResponse)
+async def data_footprint_page(request: Request):
+    return await _data_page(request, "footprint")
+
+
+@app.get("/data/timeline", response_class=HTMLResponse)
+async def data_timeline_page(request: Request):
+    return await _data_page(request, "timeline")
+
+
+def _moved(request: Request, to: str) -> RedirectResponse:
+    """旧页面永久搬进数据 hub。查询串原样带走：?drive= / ?charge= 深链不能断。"""
+    q = request.url.query
+    return RedirectResponse(f"{to}?{q}" if q else to, status_code=301)
+
+
+@app.get("/energy")
 async def energy_page(request: Request):
-    return await page(request, "energy.html", active="energy")
+    return _moved(request, "/data/charging")
 
 
-@app.get("/trips", response_class=HTMLResponse)
+@app.get("/trips")
 async def trips_page(request: Request):
-    return await page(request, "trips.html", active="trips")
+    return _moved(request, "/data/driving")
 
 
 @app.get("/controls", response_class=HTMLResponse)
@@ -525,9 +583,9 @@ async def controls_page(request: Request):
     return await page(request, "controls.html", active="controls")
 
 
-@app.get("/timeline", response_class=HTMLResponse)
+@app.get("/timeline")
 async def timeline_page(request: Request):
-    return await page(request, "timeline.html", active="timeline")
+    return _moved(request, "/data/timeline")
 
 
 @app.get("/security", response_class=HTMLResponse)
@@ -536,13 +594,13 @@ async def security_page(request: Request):
 
 
 @app.get("/insights")
-async def _legacy_insights():
-    return RedirectResponse("/energy", status_code=301)
+async def _legacy_insights(request: Request):
+    return _moved(request, "/data")
 
 
 @app.get("/drives")
-async def _legacy_drives():
-    return RedirectResponse("/trips", status_code=301)
+async def _legacy_drives(request: Request):
+    return _moved(request, "/data/driving")
 
 
 @app.get("/alerts")

@@ -43,5 +43,13 @@
   "security.watch": "Watch",
   "security.test_sent": "Test sent via {list}",
   "security.test_none": "No channel could send it — set one up in Settings",
-  "security.rules_push": "{n} push to your phone"
+  "security.rules_push": "{n} push to your phone",
+  "security.f_speed": "Detection",
+  "security.f_where": "Alerts go to",
+  "security.f_home": "At home",
+  "security.no_home": "No home set",
+  "security.today": "Today",
+  "security.yesterday": "Yesterday",
+  "security.testing": "Sending a test alert…",
+  "security.filter": "Filter"
 }

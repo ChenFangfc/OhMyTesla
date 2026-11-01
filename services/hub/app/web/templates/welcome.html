@@ -1,23 +1,25 @@
 {% extends "shell.html" %}
 {% block title %}{{ t('setup.page_title') }}{% endblock %}
 {% block content %}
-<div class="page" style="padding-bottom:96px">
+<div class="page">
 <div style="max-width:660px;margin:0 auto">
+  <div class="page-head">
   <h1 data-i18n="setup.title">Connect your Tesla</h1>
-  <p class="muted" data-i18n="setup.lede">
+  <p class="sub" data-i18n="setup.lede">
     One-time setup. After this, everything runs on its own.
   </p>
+  </div>
 
   <div id="setup-state" class="card mt"></div>
 
   <div class="card mt">
-    <h2 style="margin:0 0 4px"><span data-i18n="setup.step1">1. Get your tokens</span></h2>
+    <h2 style="margin:0 0 4px;font-size:var(--t-18)"><span data-i18n="setup.step1">1. Get your tokens</span></h2>
     <p class="small muted" data-i18n="setup.step1_note">
       Tesla no longer lets third-party apps sign in with an email and password.
       A small helper opens Tesla's own login page and hands back two tokens.
       Your password only ever goes to Tesla.
     </p>
-    <pre style="background:var(--page);border:1px solid var(--border);border-radius:8px;padding:10px 12px;overflow-x:auto;font-size:13px"><code>~/Desktop/OhmyTesla/tools/tesla_auth</code></pre>
+    <pre style="background:var(--bg);border:1px solid var(--line);border-radius:var(--r-2);padding:10px 12px;overflow-x:auto;font-size:var(--t-13)"><code>~/Desktop/OhmyTesla/tools/tesla_auth</code></pre>
     <p class="small muted"><span data-i18n="setup.step1_alt">Or download it here:</span>
       <a href="https://github.com/adriankumpf/tesla_auth/releases/latest" target="_blank" rel="noopener">tesla_auth</a>
       ·
@@ -26,21 +28,19 @@
   </div>
 
   <div class="card mt">
-    <h2 style="margin:0 0 4px"><span data-i18n="setup.step2">2. Paste them here</span></h2>
+    <h2 style="margin:0 0 4px;font-size:var(--t-18)"><span data-i18n="setup.step2">2. Paste them here</span></h2>
     <div class="mt">
       <label class="small muted" data-i18n="setup.access_token">Access token</label>
-      <textarea id="tok-access" rows="3" style="width:100%;font-family:ui-monospace,Menlo,monospace;font-size:12px;
-        background:var(--surface);color:var(--ink);border:1px solid var(--baseline);border-radius:8px;padding:8px"
+      <textarea id="tok-access" rows="3" style="width:100%;font-family:var(--font-mono)" spellcheck="false" autocomplete="off"
         placeholder="eyJhbGciOi..."></textarea>
     </div>
     <div class="mt">
       <label class="small muted" data-i18n="setup.refresh_token">Refresh token</label>
-      <textarea id="tok-refresh" rows="2" style="width:100%;font-family:ui-monospace,Menlo,monospace;font-size:12px;
-        background:var(--surface);color:var(--ink);border:1px solid var(--baseline);border-radius:8px;padding:8px"
+      <textarea id="tok-refresh" rows="2" style="width:100%;font-family:var(--font-mono)" spellcheck="false" autocomplete="off"
         placeholder="eyJhbGciOi..."></textarea>
     </div>
     <div class="row mt">
-      <button id="btn-signin" class="primary" data-i18n="setup.connect">Connect</button><span id="signin-msg" class="small muted"></span>
+      <button id="btn-signin" type="button" class="btn accent" data-i18n="setup.connect">Connect</button><span id="signin-msg" class="small muted" role="status" aria-live="polite"></span>
     </div>
   </div>
 

@@ -1,0 +1,28 @@
+Natural Earth — admin-0 countries and admin-1 states/provinces
+===============================================================
+
+Source:   Natural Earth, version 5.1.1 (https://www.naturalearthdata.com)
+          ne_10m_admin_1_states_provinces  -> admin1.topo.json  (object "regions")
+          ne_50m_admin_0_countries         -> admin0.topo.json  (object "countries")
+Licence:  Public domain. "All versions of Natural Earth raster + vector map data
+          found on this website are in the public domain. You may use the maps in
+          any manner, including modifying the content and design, electronic
+          dissemination, and offset printing." — naturalearthdata.com/about/terms-of-use
+          No permission or attribution is required; credit is given here anyway:
+          "Made with Natural Earth. Free vector and raster map data @ naturalearthdata.com."
+
+Boundaries are Natural Earth's de facto view and are used only to light the
+regions a car has driven in on the 足迹 / Footprint page. Country names shown to
+the user come from the car's own reverse-geocoded addresses, not from this file.
+
+How these files were made (mapshaper 0.6.102):
+  mapshaper ne_10m_admin_1_states_provinces.shp \
+    -filter-fields name,name_en,name_zh,name_alt,gn_name,woe_name,iso_a2,adm0_a3 \
+    -simplify 4% weighted keep-shapes -rename-layers regions \
+    -o format=topojson quantization=50000
+  mapshaper ne_50m_admin_0_countries.shp \
+    -filter-fields NAME,NAME_EN,NAME_ZH,ISO_A2,ISO_A2_EH,ADM0_A3 \
+    -simplify 12% weighted keep-shapes -rename-layers countries \
+    -o format=topojson quantization=50000
+then the properties were reduced to: c (ISO 3166-1 alpha-2), e (English name),
+z (Chinese name) and, for regions, k (other names, "|"-joined, for matching).

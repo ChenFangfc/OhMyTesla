@@ -222,13 +222,13 @@
     if (v) v.textContent = [home ? t("sentrycfg.sum_home") : t("sentrycfg.sum_nohome"),
                             fp ? t("sentrycfg.sum_fast", { n: fp }) : t("sentrycfg.sum_slow")].join(" · ");
     const seg = (name, cur, opts) => `<div class="seg2" data-seg="${name}">${opts.map(([val, lbl]) =>
-      `<button data-v="${val}" class="${cur === val ? "on" : ""}">${esc(lbl)}</button>`).join("")}</div>`;
+      `<button type="button" data-v="${val}" class="${cur === val ? "on" : ""}" aria-pressed="${cur === val}">${esc(lbl)}</button>`).join("")}</div>`;
     const stats = Object.entries((d.fast_poll && d.fast_poll.cars) || {}).map(([cid, s]) =>
       `${esc(Car.label(Car.info(Number(cid))))}: ${s.last_ok ? t("sentrycfg.fast_ok", { ago: fmt.ago(Date.now() / 1000 - s.last_ok), ms: s.latency_ms ?? "–" }) : esc(s.last_error || "…")}`).join("<br>");
     host.innerHTML = `
       <p class="body-sm" style="margin:0 0 16px;max-width:66ch">${t("sentrycfg.intro")}</p>
       <div class="setting-row"><div class="info"><div class="name">${esc(t("sentrycfg.home"))}</div>
-        <div class="desc">${home ? esc(t("sentrycfg.home_set", { lat: home.lat.toFixed(4), lon: home.lon.toFixed(4), r: Math.round(home.radius_m) })) : esc(t("sentrycfg.home_none"))}</div></div>
+        <div class="desc">${home ? esc(t("sentrycfg.home_set", { lat: fmt.fixed(home.lat, 4), lon: fmt.fixed(home.lon, 4), r: fmt.int(home.radius_m) })) : esc(t("sentrycfg.home_none"))}</div></div>
         <div class="row"><button class="btn" id="s-home">${esc(t("sentrycfg.home_here", { car: Car.label(Car.info()) }))}</button>
         ${home ? `<button class="btn ghost" id="s-home-clear">${esc(t("sentrycfg.clear"))}</button>` : ""}</div></div>
       <div class="setting-row"><div class="info"><div class="name">${esc(t("sentrycfg.at_home"))}</div><div class="desc">${esc(t("sentrycfg.at_home_desc"))}</div></div>

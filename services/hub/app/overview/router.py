@@ -141,6 +141,35 @@ def _health(c: dict) -> dict:
     return {"ok": not issues, "issues": issues}
 
 
+
+async def _place_name(cid: int, c: dict) -> str | None:
+    """Where the car is, in words — never coordinates.
+
+    A TeslaMate geofence, else 「家」 when within the Sentry home radius, else
+    (parked) the last drive's destination: its name, street or city."""
+    if c.get("geofence"):
+        return c["geofence"]
+    try:
+        from ..alerts.sentry import tracker as sentry_tracker
+
+        label = (await sentry_tracker.place(c))[0]
+        if label:
+            return label
+    except Exception:
+        log.debug("home lookup failed", exc_info=True)   # the home setting is optional
+    if _car_state(c) == "driving":
+        return None
+    try:
+        row = await db.fetchrow(
+            "SELECT a.name, a.road, a.house_number, COALESCE(a.city, a.neighbourhood) AS city"
+            " FROM drives d JOIN addresses a ON a.id = d.end_address_id"
+            " WHERE d.car_id = $1 AND d.end_date IS NOT NULL ORDER BY d.end_date DESC LIMIT 1", cid)
+    except Exception:  # noqa: BLE001 — DB down: no name, rather than an error
+        return None
+    if not row:
+        return None
+    return row["name"] or row["road"] or row["city"] or None
+
 @router.get("/overview")
 async def overview(car_id: int | None = None, tz_offset_min: int = 0):
     cars = live.snapshot()
@@ -227,6 +256,7 @@ async def overview(car_id: int | None = None, tz_offset_min: int = 0):
         "doors_open": _tri(c.get("doors_open")),
         "charging": None, "today": None, "health": {"ok": True, "issues": []},
     }
+    out["place"] = await _place_name(cid, c)
 
     try:
         out["charging"] = await _charging(cid, c)

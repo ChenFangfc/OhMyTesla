@@ -121,5 +121,22 @@
   "controls.send": "发送到车",
   "controls.update_status": "更新 {v}：{s}",
   "controls.install": "立即安装",
-  "controls.cancel": "取消"
+  "controls.cancel": "取消",
+  "controls.hold.door_unlock": "按住解锁",
+  "controls.hold.frunk": "按住打开",
+  "controls.hold.vent_windows": "按住通风",
+  "controls.hold_hint": "按住 2 秒确认",
+  "controls.level_n": "{n} 档",
+  "controls.cooler": "调低温度",
+  "controls.warmer": "调高温度",
+  "controls.climate_off_in": "关 · 车内 {temp}",
+  "controls.charging_at": "正在充电 · {kw} kW",
+  "controls.all_closed": "全部关好",
+  "controls.more": "更多",
+  "controls.more_sub": "媒体 · 导航 · 软件",
+  "controls.asleep_at": "车辆休眠中 · 显示的是 {t} 的状态",
+  "controls.refreshing": "正在读取车辆状态…",
+  "controls.waking_sent": "已发出唤醒，约 15 秒后刷新…",
+  "controls.setup_short": "车辆控制还没设置，按钮暂时不能用。",
+  "controls.setup_pair": "还差一步：在 Tesla App 里批准钥匙。"
 }

@@ -100,71 +100,67 @@
 
 <style>
   /* amber as text needs more weight on a light background */
-  .usb-page { --amber-ink: var(--amber); }
-  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .usb-page { --amber-ink: #9a5b00; } }
-  :root[data-theme="light"] .usb-page { --amber-ink: #9a5b00; }
+  /* amber as text: --wn-text is already composed per theme */
+  .usb-page { --amber-ink: var(--wn-text); }
   .usb-page { padding-bottom: 96px; }
   .usb-sub { padding-bottom: 10px; }
   .usb-h1 { margin: 6px 0 22px; }
   .usb-drop { display: grid; justify-items: center; gap: 12px; padding: 56px 28px; text-align: center; cursor: pointer;
     border-radius: var(--radius-lg); border: 1.5px dashed var(--line-strong);
-    background: radial-gradient(90% 120% at 50% 0%, var(--bg-elevated), var(--bg-secondary));
+    background: var(--surface);
     transition: border-color 160ms var(--ease-out), background 160ms var(--ease-out); }
-  .usb-drop:hover, .usb-drop.over { border-color: var(--accent); }
-  .usb-drop.over { background: radial-gradient(90% 120% at 50% 0%, var(--accent-soft), var(--bg-secondary)); }
-  .usb-drop .ic { width: 64px; height: 64px; border-radius: 20px; display: grid; place-items: center; background: var(--bg-hover); color: var(--text-secondary); }
-  .usb-drop .t { font-size: 16px; max-width: 52ch; line-height: 1.55; }
-  .usb-drop .t code { font-family: ui-monospace, Menlo, monospace; font-size: 13.5px; background: var(--bg-hover); padding: 1px 6px; border-radius: 6px; }
-  .usb-drop .s { font-size: 13px; color: var(--text-tertiary); max-width: 60ch; line-height: 1.55; }
+  .usb-drop.over { background: var(--acc-tint); border-color: var(--acc); }
+  .usb-drop .ic { width: 64px; height: 64px; border-radius: var(--r-2); display: grid; place-items: center; background: var(--bg-hover); color: var(--text-secondary); }
+  .usb-drop .t { font-size: var(--t-16); max-width: 52ch; line-height: 1.55; }
+  .usb-drop .t code { font-family: var(--font-mono); font-size: var(--t-14); background: var(--bg-hover); padding: 1px 6px; border-radius: var(--r-1); }
+  .usb-drop .s { font-size: var(--t-13); color: var(--text-tertiary); max-width: 60ch; line-height: 1.55; }
   .usb-drop .btn { margin-top: 6px; }
   .usb-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
   .usb-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
   .usb-card { display: block; height: auto; padding: 0; text-align: left; border-radius: var(--radius); overflow: hidden;
     background: var(--bg-secondary); border: 1px solid var(--line); color: inherit; font: inherit; cursor: pointer; }
-  .usb-card:hover { background: var(--bg-elevated); border-color: var(--line-strong); }
   .usb-card .th { position: relative; aspect-ratio: 16 / 9; background: var(--bg-elevated); display: grid; place-items: center; color: var(--text-tertiary); }
   .usb-card .th img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-  .usb-card .lock { position: absolute; top: 8px; right: 8px; display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; padding: 3px 8px;
-    border-radius: 8px; background: rgba(0, 0, 0, .65); color: var(--amber); }
+  .usb-card .lock { position: absolute; top: 8px; right: 8px; display: inline-flex; align-items: center; gap: 5px; font-size: var(--t-12); padding: 3px 8px;
+    border-radius: var(--r-1); background: rgb(8 9 11 / .78); color: #f7b755; }
   .usb-card .m { padding: 12px 14px 14px; }
-  .usb-card .r1 { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-secondary); }
+  .usb-card .r1 { display: flex; align-items: center; gap: 7px; font-size: var(--t-13); color: var(--text-secondary); }
   .usb-card .r1 .sp { flex: 1; }
-  .usb-card .r1 .when { font-size: 12px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
-  .usb-card .r2 { margin-top: 6px; font-size: 12.5px; color: var(--text-tertiary); }
+  .usb-card .r1 .when { font-size: var(--t-12); color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+  .usb-card .r2 { margin-top: 6px; font-size: var(--t-13); color: var(--text-tertiary); }
   .usb-backlist { margin: 0 0 14px -10px; }
   .usb-backlist svg { transform: rotate(180deg); }
-  .usb-progress { height: 4px; border-radius: 2px; background: var(--bg-hover); overflow: hidden; margin-top: 14px; }
+  .usb-progress { height: 4px; border-radius: var(--r-1); background: var(--bg-hover); overflow: hidden; margin-top: 14px; }
   .usb-progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 200ms var(--ease-out); }
 
   /* the player — same anatomy as /dashcam/play */
   .pl-head { margin-bottom: 22px; }
   .pl-head h1 { margin-top: 6px; }
-  .pl-facts { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13.5px; color: var(--text-secondary); }
+  .pl-facts { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: var(--t-14); color: var(--text-secondary); }
   .pl-facts span { display: inline-flex; align-items: center; gap: 6px; }
   .pl-facts .warn { color: var(--amber-ink); }
   .usb-page .video-stage video.main { aspect-ratio: 4 / 3; object-fit: contain; }
-  .pl-camtag { position: absolute; top: 12px; left: 12px; font-size: 12px; padding: 3px 9px; border-radius: 8px;
-    background: rgba(0, 0, 0, .55); color: #fff; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  .pl-camtag { position: absolute; top: 12px; left: 12px; font-size: var(--t-12); padding: 3px 9px; border-radius: var(--r-1);
+    background: rgb(8 9 11 / .78); color: #eef0f3; }
   .pl-veil { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 8px; padding: 24px;
-    text-align: center; color: #fff; background: radial-gradient(80% 80% at 50% 45%, rgba(30, 32, 36, .92), rgba(0, 0, 0, .96)); }
-  .pl-veil .t { font-size: 17px; font-weight: 550; }
-  .pl-veil .s { font-size: 13.5px; color: #b7b9be; max-width: 46ch; }
-  .pl-veil svg { color: var(--amber); }
-  .usb-page .hud .v { font-size: 17px; font-weight: 500; letter-spacing: -.3px; white-space: nowrap; }
-  .usb-page .hud .speed .v { font-size: 30px; letter-spacing: -1px; line-height: 1; }
-  .usb-page .hud .speed small { font-size: 12px; color: var(--text-tertiary); margin-left: 4px; letter-spacing: 0; }
-  .usb-page .hud .clock { font-size: 13px; color: #d5d7db; }
+    text-align: center; color: #eef0f3; background: rgb(8 9 11 / .94); }
+  .pl-veil .t { font-size: var(--t-18); font-weight: 600; }
+  .pl-veil .s { font-size: var(--t-14); color: #b7b9be; max-width: 46ch; }
+  .pl-veil svg { color: #f7b755; }
+  .usb-page .hud .v { font-size: var(--t-18); font-weight: 500; letter-spacing: -.3px; white-space: nowrap; }
+  .usb-page .hud .speed .v { font-size: var(--t-32); letter-spacing: -1px; line-height: 1; }
+  .usb-page .hud .speed small { font-size: var(--t-12); color: var(--text-tertiary); margin-left: 4px; letter-spacing: 0; }
+  .usb-page .hud .clock { font-size: var(--t-13); color: #d5d7db; }
   .pl-transport { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
-  .pl-play { width: 42px; height: 42px; padding: 0; border-radius: 50%; flex: none; display: grid; place-items: center;
+  .pl-play { width: 42px; height: 42px; padding: 0; border-radius: var(--r-2); flex: none; display: grid; place-items: center;
     background: var(--text-primary); color: var(--bg-primary); border: 0; }
-  .pl-play:hover { background: var(--text-primary); opacity: .9; }
-  .pl-time { font-size: 13px; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 84px; }
+  .pl-time { font-size: var(--t-13); color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 84px; }
   .pl-scrub { position: relative; flex: 1; min-width: 0; height: 30px; }
-  .pl-track { position: absolute; left: 0; right: 0; top: 13px; height: 4px; border-radius: 2px; }
+  .pl-track { position: absolute; left: 0; right: 0; top: 13px; height: 4px; border-radius: var(--r-1); }
   .pl-track i { position: absolute; top: 0; bottom: 0; display: block; }
   .pl-track .tk-seg { background: var(--line-strong); }
   .pl-track .tk-seg.unknown { background: repeating-linear-gradient(90deg, var(--amber) 0 3px, transparent 3px 6px); opacity: .7; }
-  .pl-track .tk-fill { left: 0; background: var(--text-primary); border-radius: 2px 0 0 2px; pointer-events: none; }
+  .pl-track .tk-fill { left: 0; background: var(--text-primary); border-radius: var(--r-1) 0 0 var(--r-1); pointer-events: none; }
   .pl-track .tk-cut { width: 2px; margin-left: -1px; background: var(--bg-primary); }
   .pl-scrub input[type="range"] { position: absolute; inset: 0; width: 100%; height: 30px; margin: 0; background: transparent;
     -webkit-appearance: none; appearance: none; cursor: pointer; }
@@ -175,15 +171,14 @@
   .pl-scrub input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: var(--text-primary); }
   .pl-rate { width: 72px; flex: none; }
   .usb-page .pip-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 8px; margin-top: 14px; }
-  .pip { position: relative; height: auto; padding: 0; border-radius: 10px; overflow: hidden; border: 1px solid var(--line);
-    background: #000; cursor: pointer; display: block; }
-  .pip:hover { border-color: var(--line-strong); background: #000; }
+  .pip { position: relative; height: auto; padding: 0; border-radius: var(--r-2); overflow: hidden; border: 1px solid var(--line);
+    background: var(--video-bg); cursor: pointer; display: block; }
   .usb-page .pip video { width: 100%; display: block; aspect-ratio: 4 / 3; object-fit: cover; border: 0; border-radius: 0; pointer-events: none; }
-  .pip > span { position: absolute; left: 6px; bottom: 6px; font-size: 11px; padding: 2px 6px; border-radius: 6px; background: rgba(0, 0, 0, .6); color: #fff; }
+  .pip > span { position: absolute; left: 6px; bottom: 6px; font-size: var(--t-11); padding: 2px 6px; border-radius: var(--r-1); background: rgb(8 9 11 / .72); color: #eef0f3; }
   .pl-segs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; max-height: 128px; overflow-y: auto; }
-  .pl-segs button { height: 30px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg-secondary);
-    color: var(--text-secondary); font-size: 12.5px; font-weight: 450; font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 7px; }
-  .pl-segs button small { color: var(--text-tertiary); font-size: 11.5px; }
+  .pl-segs button { height: 30px; padding: 0 10px; border-radius: var(--r-2); border: 1px solid var(--line); background: var(--bg-secondary);
+    color: var(--text-secondary); font-size: var(--t-13); font-weight: 400; font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 7px; }
+  .pl-segs button small { color: var(--text-tertiary); font-size: var(--t-12); }
   .pl-segs button.on { background: var(--bg-hover); color: var(--text-primary); border-color: var(--line-strong); }
   .pl-segs button.unknown small { color: var(--amber-ink); }
   .pl-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
@@ -201,11 +196,17 @@
     .pl-scrub { order: -1; flex: 1 0 100%; }
     .pl-time { flex: 1; }
     .usb-page .hud { position: static; border-radius: 0; border: 0; border-top: 1px solid rgba(255, 255, 255, .08);
-      gap: 10px 16px; padding: 10px 12px; background: #0c0c0d; }
+      gap: 10px 16px; padding: 10px 12px; background: var(--video-bg); }
     .usb-page .hud .opt { display: none; }
-    .usb-page .hud .speed .v { font-size: 24px; }
-    .usb-page .hud .clock { flex-basis: 100%; text-align: left; margin-left: 0; font-size: 12px; }
+    .usb-page .hud .speed .v { font-size: var(--t-24); }
+    .usb-page .hud .clock { flex-basis: 100%; text-align: left; margin-left: 0; font-size: var(--t-12); }
     .usb-page .pip-row { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .usb-drop:hover { border-color: var(--accent); }
+    .usb-card:hover { background: var(--bg-elevated); border-color: var(--line-strong); }
+    .pl-play:hover { background: var(--text-primary); opacity: .9; }
+    .pip:hover { border-color: var(--line-strong); background: var(--video-bg); }
   }
 </style>
 {% endblock %}
@@ -642,7 +643,7 @@
   }, 1000);
 
   function paintTrack() {
-    const T = cur.duration || 1, pct = (x) => ((x / T) * 100).toFixed(3) + "%";
+    const T = cur.duration || 1, pct = (x) => Math.round((x / T) * 1e5) / 1e3 + "%";   // a CSS length, not display text
     $("lp-track").innerHTML = cur.segments.map((s) =>
       `<i class="tk-seg${s.duration_known ? "" : " unknown"}" style="left:${pct(s.offset)};width:${pct(s.duration)}"></i>`).join("")
       + `<i class="tk-fill" id="lp-fill"></i>`
@@ -738,7 +739,7 @@
     $("v-lp-sei").textContent = t("player.sei.value", { speed: U.speed(maxV), unit: U.speedLabel() });
     box.innerHTML = `<div class="tertiary">${esc(t("player.sei.scope", { time: hms(naiveMs(seg(segIdx).start)) }))}</div>
       <div class="mt">${esc(t("dashcam.sei.summary_ap", { pct: Math.round((apN / s.length) * 100), brakes }))}</div>
-      <div class="mt">${esc(t("dashcam.sei.summary_max", { speed: U.speed(maxV), unit: U.speedLabel(), g: maxG.toFixed(2) }))}</div>`;
+      <div class="mt">${esc(t("dashcam.sei.summary_max", { speed: U.speed(maxV), unit: U.speedLabel(), g: fmt.fixed(maxG, 2) }))}</div>`;
   }
 
   /* ------------------------------------------------------------ import */

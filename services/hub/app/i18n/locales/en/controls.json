@@ -121,5 +121,22 @@
   "controls.send": "Send to car",
   "controls.update_status": "Update {v}: {s}",
   "controls.install": "Install now",
-  "controls.cancel": "Cancel"
+  "controls.cancel": "Cancel",
+  "controls.hold.door_unlock": "Hold to unlock",
+  "controls.hold.frunk": "Hold to open",
+  "controls.hold.vent_windows": "Hold to vent",
+  "controls.hold_hint": "Hold for 2 seconds to confirm",
+  "controls.level_n": "level {n}",
+  "controls.cooler": "Cooler",
+  "controls.warmer": "Warmer",
+  "controls.climate_off_in": "Off · {temp} inside",
+  "controls.charging_at": "Charging · {kw} kW",
+  "controls.all_closed": "All closed",
+  "controls.more": "More",
+  "controls.more_sub": "Media · navigation · software",
+  "controls.asleep_at": "Asleep · showing the state from {t}",
+  "controls.refreshing": "Reading the vehicle's state…",
+  "controls.waking_sent": "Wake sent — refreshing in about 15 seconds…",
+  "controls.setup_short": "Vehicle controls aren't set up yet, so these buttons won't work.",
+  "controls.setup_pair": "One step left: approve the key in the Tesla app."
 }

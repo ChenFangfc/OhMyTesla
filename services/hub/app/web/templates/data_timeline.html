@@ -1,0 +1,54 @@
+{% extends "data_base.html" %}
+{% import "_data_ui.html" as ui %}
+{# 时间线 asks "what happened, and when?". The calendar navigates (pick a day
+   to jump to it); the event list answers; period totals close the chapter.
+   Places and the visited list moved to 足迹, the awake/asleep split to 电池. #}
+{% block title %}{{ t('data.title.timeline') }}{% endblock %}
+{% block h1 %}<span data-i18n="data.nav.timeline">{{ t('data.nav.timeline') }}</span>{% endblock %}
+
+{% block chapter %}
+<section class="dh-sec first" id="tl-sum">
+  <div class="dh-body">{{ ui.kpis(4) }}</div>
+</section>
+
+<section class="dh-sec" id="tl-cal">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.tl.cal">{{ t('data.tl.cal') }}</h2>
+    <p class="dh-note" data-i18n="data.tl.cal_n">{{ t('data.tl.cal_n') }}</p>
+  </header>
+  <div class="dh-body">{{ ui.chart('short') }}</div>
+</section>
+
+<section class="dh-sec" id="tl-events">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.tl.events">{{ t('data.tl.events') }}</h2>
+    <div class="dh-tools">
+      <div class="dh-seg" role="group" aria-label="{{ t('data.tl.filter') }}" id="tl-kind">
+        <button type="button" data-kind="" aria-pressed="true" data-i18n="data.tl.k_all">{{ t('data.tl.k_all') }}</button>
+        <button type="button" data-kind="drive" aria-pressed="false" data-i18n="data.tl.k_drive">{{ t('data.tl.k_drive') }}</button>
+        <button type="button" data-kind="charge" aria-pressed="false" data-i18n="data.tl.k_charge">{{ t('data.tl.k_charge') }}</button>
+        <button type="button" data-kind="idle" aria-pressed="false" data-i18n="data.tl.k_idle">{{ t('data.tl.k_idle') }}</button>
+        <button type="button" data-kind="gap" aria-pressed="false" data-i18n="data.tl.k_gap">{{ t('data.tl.k_gap') }}</button>
+      </div>
+    </div>
+    <p class="dh-note" id="tl-events-n">&nbsp;</p>
+  </header>
+  <div class="dh-body">{{ ui.rows(8) }}</div>
+</section>
+
+<section class="dh-sec" id="tl-stats">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.tl.totals">{{ t('data.tl.totals') }}</h2>
+    <div class="dh-tools">
+      <div class="dh-seg" role="group" aria-label="{{ t('data.tl.bucket') }}" id="tl-bucket">
+        <button type="button" data-bucket="week" aria-pressed="false" data-i18n="data.tl.b_week">{{ t('data.tl.b_week') }}</button>
+        <button type="button" data-bucket="month" aria-pressed="true" data-i18n="data.tl.b_month">{{ t('data.tl.b_month') }}</button>
+        <button type="button" data-bucket="year" aria-pressed="false" data-i18n="data.tl.b_year">{{ t('data.tl.b_year') }}</button>
+      </div>
+    </div>
+  </header>
+  <div class="dh-body">{{ ui.rows(4) }}</div>
+</section>
+{% endblock %}
+
+{% block data_scripts %}<script src="/static/js/pages/data-timeline.js"></script>{% endblock %}

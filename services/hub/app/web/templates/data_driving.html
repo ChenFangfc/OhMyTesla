@@ -1,0 +1,119 @@
+{% extends "data_base.html" %}
+{% import "_data_ui.html" as ui %}
+{# 行车 asks "how do I drive?": how much, what the trips are like, how fast
+   and at what cost, when. Then the trips themselves (list, map, tags,
+   export), ported from the old Trips page with its ?drive= deep links. #}
+{% block title %}{{ t('data.title.driving') }}{% endblock %}
+{% block h1 %}<span data-i18n="data.nav.driving">{{ t('data.nav.driving') }}</span>{% endblock %}
+
+{% block chapter %}
+<section class="dh-sec first" id="dv-sum">
+  <div class="dh-body">{{ ui.kpis(6) }}</div>
+</section>
+
+<section class="dh-sec">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.drv.how_much">{{ t('data.drv.how_much') }}</h2>
+    <p class="dh-note" id="dv-trend-n">&nbsp;</p>
+  </header>
+  <div class="dh-grid">
+    <div class="dh-sub c8" id="dv-dist">
+      <h3 class="dh-subh" data-i18n="data.drv.dist">{{ t('data.drv.dist') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.chart() }}</div>
+    </div>
+    <div class="dh-sub c4" id="dv-count">
+      <h3 class="dh-subh" data-i18n="data.drv.count">{{ t('data.drv.count') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.chart() }}</div>
+    </div>
+  </div>
+</section>
+
+<section class="dh-sec">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.drv.shape">{{ t('data.drv.shape') }}</h2>
+    <p class="dh-note" data-i18n="data.drv.shape_n">{{ t('data.drv.shape_n') }}</p>
+  </header>
+  <div class="dh-grid">
+    <div class="dh-sub c4" id="dv-len">
+      <h3 class="dh-subh" data-i18n="data.drv.len">{{ t('data.drv.len') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.chart() }}</div>
+    </div>
+    <div class="dh-sub c4" id="dv-dur">
+      <h3 class="dh-subh" data-i18n="data.drv.dur">{{ t('data.drv.dur') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.chart() }}</div>
+    </div>
+    <div class="dh-sub c4" id="dv-top">
+      <h3 class="dh-subh" data-i18n="data.drv.top">{{ t('data.drv.top') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.rows(5) }}</div>
+    </div>
+  </div>
+</section>
+
+<section class="dh-sec">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.drv.speed_cost">{{ t('data.drv.speed_cost') }}</h2>
+    <p class="dh-note" id="dv-eff-n">&nbsp;</p>
+  </header>
+  <div class="dh-grid">
+    <div class="dh-sub c4" id="dv-speed">
+      <h3 class="dh-subh" data-i18n="data.drv.speed">{{ t('data.drv.speed') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.chart() }}</div>
+    </div>
+    <div class="dh-sub c4" id="dv-eff-speed">
+      <h3 class="dh-subh" data-i18n="data.drv.eff_speed">{{ t('data.drv.eff_speed') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.chart() }}</div>
+    </div>
+    <div class="dh-sub c4" id="dv-eff-temp">
+      <h3 class="dh-subh" data-i18n="data.drv.eff_temp">{{ t('data.drv.eff_temp') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.chart() }}</div>
+    </div>
+  </div>
+</section>
+
+<section class="dh-sec">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.drv.when">{{ t('data.drv.when') }}</h2>
+    <p class="dh-note" data-i18n="data.drv.when_n">{{ t('data.drv.when_n') }}</p>
+  </header>
+  <div class="dh-grid">
+    <div class="dh-sub c8" id="dv-heat">
+      <div class="dh-body">{{ ui.chart() }}</div>
+    </div>
+    <div class="dh-sub c4" id="dv-dest">
+      <h3 class="dh-subh" data-i18n="data.drv.dest">{{ t('data.drv.dest') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.rows(5) }}</div>
+    </div>
+  </div>
+</section>
+
+<section class="dh-sec" id="dv-trips">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.drv.trips">{{ t('data.drv.trips') }}</h2>
+    <div class="dh-tools"><a class="dh-btn" id="tr-csv" href="#" download><span class="ico-slot" data-icon="download" data-size="15"></span><span data-i18n="data.drv.export_csv">{{ t('data.drv.export_csv') }}</span></a></div>
+    <p class="dh-note" id="tr-note">&nbsp;</p>
+  </header>
+  <div class="tr-wrap">
+    <div class="tr-left">
+      <div class="tr-map" id="tr-map">
+        <div class="tr-gl" id="tr-gl"></div>
+        <div class="tr-idle" id="tr-idle" data-i18n="data.drv.pick">{{ t('data.drv.pick') }}</div>
+      </div>
+      <div class="tr-detail" id="tr-detail" aria-live="polite" hidden></div>
+    </div>
+    <div class="tr-right">
+      <div class="dh-body" id="tr-list-b"><div class="tr-list" id="tr-list">{{ ui.rows(8) }}</div></div>
+      <div class="dh-tfoot" id="tr-more"></div>
+      <details class="dh-more" id="tr-cats">
+        <summary><span data-i18n="data.drv.cats">{{ t('data.drv.cats') }}</span><span class="val" id="tr-cats-v"></span><span class="chev ico-slot" data-icon="chevron" data-size="14"></span></summary>
+        <div class="dh-body" id="tr-cats-b">{{ ui.rows(3) }}</div>
+      </details>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block data_scripts %}
+<script src="/static/js/geo.js"></script>
+<script src="/static/js/map.js"></script>
+<script src="/static/js/pages/data-driving.js"></script>
+{% endblock %}

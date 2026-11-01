@@ -43,15 +43,47 @@ const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
 function localeTag() {
   return (window.i18n && i18n.state.locale === "en") ? "en-US" : "zh-CN";
 }
+
+/* 数字一律走 Intl.NumberFormat，不用 toFixed：
+   toFixed 不分组（44731 而不是 44,731）、不认语言，而且四舍五入有二进制误差
+   （1.005.toFixed(2) === "1.00"）。格式器按 语言+选项 缓存，热路径上不反复构造。 */
+const _nf = new Map();
+function numberFormat(opts) {
+  const key = localeTag() + JSON.stringify(opts);
+  let f = _nf.get(key);
+  if (!f) { f = new Intl.NumberFormat(localeTag(), opts); _nf.set(key, f); }
+  return f;
+}
+const DASH = "–";
 const fmt = {
-  num(v, d = 1) { return v == null ? "–" : Number(v).toLocaleString(localeTag(), { maximumFractionDigits: d }); },
+  /* 最多 d 位小数（默认 1）："51" / "3.5" / "44,731.3" */
+  num(v, d = 1) {
+    if (v == null || v === "" || !isFinite(Number(v))) return DASH;
+    return numberFormat({ maximumFractionDigits: d }).format(Number(v));
+  },
+  /* 固定 d 位小数：列里对齐用，"3.50" */
+  fixed(v, d = 1) {
+    if (v == null || v === "" || !isFinite(Number(v))) return DASH;
+    return numberFormat({ minimumFractionDigits: d, maximumFractionDigits: d }).format(Number(v));
+  },
+  int(v) { return fmt.num(v, 0); },
+  /* 百分比：输入是 0–100 的数，不是 0–1 */
+  pct(v, d = 0) {
+    if (v == null || v === "" || !isFinite(Number(v))) return DASH;
+    return numberFormat({ style: "percent", maximumFractionDigits: d }).format(Number(v) / 100);
+  },
   dt(iso) {
-    if (!iso) return "–";
+    if (!iso) return DASH;
     return new Date(iso).toLocaleString(localeTag(), { year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  },
+  /* 只要时刻："14:02" */
+  time(ms) {
+    if (ms == null || !isFinite(ms)) return DASH;
+    return new Date(ms).toLocaleTimeString(localeTag(), { hour: "2-digit", minute: "2-digit" });
   },
   // 纯日期串按字面解析——new Date("2026-08-01") 会当 UTC 解析，西半球时区显示会差一天
   date(iso) {
-    if (!iso) return "–";
+    if (!iso) return DASH;
     const m = DATE_ONLY.exec(iso);
     if (m) return `${m[1]}/${+m[2]}/${+m[3]}`;
     return new Date(iso).toLocaleDateString(localeTag());
@@ -60,21 +92,27 @@ const fmt = {
     const s = Math.max(0, Math.floor(sec));
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   },
-  /* "2 hours ago" / "2 小时前"。用 Intl.RelativeTimeFormat，两种语言的
-     语序、单复数都由浏览器处理，不需要我们自己拼。 */
+  /* 时长："2 小时 10 分" / "2 h 10 min" */
+  dur(sec) {
+    const m = Math.max(0, Math.round(sec / 60));
+    if (m < 60) return t("time.min", { n: m });
+    const h = Math.floor(m / 60), r = m % 60;
+    if (h < 48) return r ? t("time.h_min", { h, m: r }) : t("time.h", { n: h });
+    return t("time.days", { n: Math.round(h / 24) });
+  },
   /* 货币跟着地区走。各页面之前各拼各的字符串，还有硬编码 CNY 的。 */
   money(v, digits) {
-    if (v == null) return "–";
+    if (v == null) return DASH;
     const cur = (window.i18n && i18n.state && i18n.state.currency) || "USD";
+    const d = digits == null ? 2 : digits;
     try {
-      return new Intl.NumberFormat(localeTag(), {
-        style: "currency", currency: cur,
-        maximumFractionDigits: digits == null ? 2 : digits,
-      }).format(v);
+      return numberFormat({ style: "currency", currency: cur, minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
     } catch (e) {
-      return Number(v).toFixed(digits == null ? 2 : digits) + " " + cur;
+      return fmt.fixed(v, d) + " " + cur;
     }
   },
+  /* "2 hours ago" / "2 小时前"。用 Intl.RelativeTimeFormat，两种语言的
+     语序、单复数都由浏览器处理，不需要我们自己拼。 */
   ago(sec) {
     const s = Math.max(0, Math.floor(sec));
     const rtf = new Intl.RelativeTimeFormat(localeTag(), { numeric: "auto" });
@@ -87,7 +125,7 @@ const fmt = {
   month(iso) {
     const m = DATE_ONLY.exec(iso || "");
     const d = m ? new Date(+m[1], +m[2] - 1, 1) : new Date(iso);
-    if (isNaN(d)) return "–";
+    if (isNaN(d)) return DASH;
     const sameYear = d.getFullYear() === new Date().getFullYear();
     return d.toLocaleDateString(localeTag(),
       sameYear ? { month: "short" } : { month: "short", year: "numeric" });
@@ -105,22 +143,26 @@ function stateChip(state) {
   return `<span class="chip ${cls}">${esc(txt)}</span>`;
 }
 
-/* SSE 实时状态: onUpdate(cars) 在快照与每次变化时回调 */
-function liveConnect(onUpdate) {
+/* SSE 实时状态: onUpdate(cars, msg) 在快照与每次状态变化时回调；
+   带 type 的消息（{"type": "alert"}）是事件不是状态，交给 onEvent(msg)。 */
+function liveConnect(onUpdate, onEvent) {
   const cars = {};
   /* ?nolive=1 跳过 SSE。长连接会让无头浏览器永远等不到 load 事件，
      没有它就只能对着打桩数据截图，而打桩数据会骗人。 */
   if (new URLSearchParams(location.search).has("nolive")) return cars;
   const es = new EventSource("/api/live/stream");
   es.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
+    let msg;
+    try { msg = JSON.parse(e.data); } catch (err) { return; }
     if (msg.type === "snapshot") {
       Object.assign(cars, msg.cars);
-    } else if (!msg.type && msg.car_id) {
-      // Typed events (e.g. {"type": "alert"}) share the stream but aren't state.
+    } else if (msg.type) {
+      if (onEvent) onEvent(msg);
+      return;
+    } else if (msg.car_id) {
       (cars[msg.car_id] = cars[msg.car_id] || {})[msg.key] = msg.value;
     }
-    onUpdate(cars);
+    onUpdate(cars, msg);
   };
   es.onerror = () => { /* EventSource 自动重连 */ };
   return cars;
@@ -128,7 +170,7 @@ function liveConnect(onUpdate) {
 
 /* 车辆选择器（多车时显示） */
 async function initCarPicker(sel, onChange) {
-  // Inside the app shell the sidebar already chooses the car; follow it
+  // Inside the app shell the top bar already chooses the car; follow it
   // instead of showing a second picker.
   if (typeof Car !== "undefined" && document.querySelector("[data-carswitch]")) {
     const own = document.querySelector(sel);
