@@ -9,10 +9,9 @@ SQL 里显式 `AT TIME ZONE 'UTC' AT TIME ZONE <本地时区>` 之后再 date_tr
 """
 
 import logging
-import os
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from .. import db
+from . import costs as cost_source
 from .queries import _iso
 
 log = logging.getLogger(__name__)
@@ -34,7 +33,8 @@ def _place_label(g: str, a: str) -> str:
     return (
         f"COALESCE({g}.name, NULLIF({a}.name, ''),"
         f" NULLIF(trim(concat_ws(' ', {a}.house_number, {a}.road)), ''),"
-        f" NULLIF({a}.city, ''), {a}.display_name, '')"
+        # 4.3.0 起 Nominatim 按 rank 映射，小地方的名字落在 neighbourhood 而不是 city
+        f" NULLIF(COALESCE({a}.city, {a}.neighbourhood), ''), {a}.display_name, '')"
     )
 
 
@@ -45,22 +45,14 @@ _LBL_PLACE = _place_label("g", "a")    # 充电地点 / 常去地点
 
 
 def local_tz() -> str:
-    """给 Postgres 用的 IANA 时区名。
+    """给 Postgres 用的 IANA 时区名（与 period.local_tz_name 同一个来源）。
 
     容器里通常只有 TZ 环境变量；拿不到或者名字不合法就退回 UTC——
     宁可全站统一偏移，也不要让 SQL 抛 invalid time zone。
     """
-    from ..config import settings
+    from .period import local_tz_name
 
-    name = (getattr(settings, "tz", "") or os.environ.get("TZ") or "").strip()
-    if not name:
-        return "UTC"
-    try:
-        ZoneInfo(name)
-    except (ZoneInfoNotFoundError, ValueError):
-        log.warning("unknown timezone %r, falling back to UTC", name)
-        return "UTC"
-    return name
+    return local_tz_name()
 
 
 async def timeline(car_id: int, days: int | None = 30, limit: int = 300) -> dict:
@@ -137,8 +129,12 @@ async def timeline(car_id: int, days: int | None = 30, limit: int = 300) -> dict
     def num(v):
         return float(v) if v is not None else None
 
+    # 充电费用走唯一真源（以前只读 cp.cost，本机永远是空，时间线整列"–"）
+    costs = await cost_source.session_costs(car_id)
+
     out: list[dict] = []
     for r in rows:
+        cinfo = costs.get(r["id"]) if r["kind"] == "charge" else None
         out.append(
             {
                 "kind": r["kind"],
@@ -149,7 +145,8 @@ async def timeline(car_id: int, days: int | None = 30, limit: int = 300) -> dict
                 "distance": num(r["distance"]),
                 "range_used": num(r["range_used"]),
                 "energy": num(r["energy"]),
-                "cost": num(r["cost"]),
+                "cost": (cinfo or {}).get("cost") if cinfo else num(r["cost"]),
+                "cost_source": (cinfo or {}).get("source") if cinfo else None,
                 "start_soc": r["start_battery"],
                 "end_soc": r["end_battery"],
                 "odo_start": num(r["odo_start"]),
@@ -247,20 +244,21 @@ async def calendar(car_id: int, days: int = 365) -> dict:
         WHERE car_id = $1 AND start_date >= now() - ($2::int * INTERVAL '1 day')
         GROUP BY 1
         """,
-        car_id, int(days), tz,
+        car_id, max(int(days), 1), tz,
     )
     charge_rows = await db.fetch(
         """
         SELECT (start_date AT TIME ZONE 'UTC' AT TIME ZONE $3)::date AS d,
                COUNT(*) AS n,
                COALESCE(SUM(charge_energy_added), 0) AS kwh,
-               COALESCE(SUM(cost), 0) AS cost
+               array_agg(id) AS ids
         FROM charging_processes
         WHERE car_id = $1 AND start_date >= now() - ($2::int * INTERVAL '1 day')
         GROUP BY 1
         """,
-        car_id, int(days), tz,
+        car_id, max(int(days), 1), tz,
     )
+    costs = await cost_source.session_costs(car_id)
 
     byday: dict[str, dict] = {}
     for r in drive_rows:
@@ -283,7 +281,7 @@ async def calendar(car_id: int, days: int = 365) -> dict:
         )
         cell["charges"] = r["n"]
         cell["kwh"] = round(float(r["kwh"]), 2)
-        cell["cost"] = round(float(r["cost"]), 2)
+        cell["cost"] = cost_source.total(costs, r["ids"] or [])
 
     cells = sorted(byday.values(), key=lambda c: c["date"])
     return {
@@ -293,6 +291,8 @@ async def calendar(car_id: int, days: int = 365) -> dict:
         "max_kwh": max((c["kwh"] for c in cells), default=0),
         "total_km": round(sum(c["km"] for c in cells), 1),
         "total_kwh": round(sum(c["kwh"] for c in cells), 2),
+        "total_cost": round(sum(c["cost"] for c in cells), 2),
+        "currency": await cost_source.currency(),
         "active_days": len(cells),
     }
 
@@ -314,7 +314,7 @@ async def visited(car_id: int) -> dict:
         )
         SELECT COALESCE(a.country, '') AS country,
                COALESCE(a.state, '')   AS state,
-               COALESCE(a.city, '')    AS city,
+               COALESCE(a.city, a.neighbourhood, '') AS city,
                COUNT(*)                AS visits,
                MIN(v.at)               AS first_at,
                MAX(v.at)               AS last_at,
@@ -374,7 +374,7 @@ async def places(car_id: int, limit: int = 30) -> list[dict]:
       （出差、车放在别处、TeslaMate 停机），计进去会让家的停留时长虚高。
     - **里程表在这段空档里走了的，一分钟都不计**。实测本机数据：drive#15 到
       drive#16 之间隔了 97.9 小时，原来全算成"停在家"，但同期里程表跑了
-      493.6 公里 —— 那是一趟没被记录的长途。「家」的总停留
+      493.6 公里 —— 那是一趟没被记录的长途。「家」那个地点的总停留
       15342 分钟里有 38% 是这么来的。阈值 0.5 km 与 timeline 的空档判定一致。
     """
     limit = max(1, min(int(limit), 500))
@@ -382,7 +382,7 @@ async def places(car_id: int, limit: int = 30) -> list[dict]:
         f"""
         SELECT {_LBL_PLACE} AS label,
                g.id   AS geofence_id,
-               a.city AS city,
+               COALESCE(a.city, a.neighbourhood) AS city,
                AVG(COALESCE(g.latitude,  a.latitude))::float  AS lat,
                AVG(COALESCE(g.longitude, a.longitude))::float AS lon,
                COUNT(*) AS visits,
@@ -450,7 +450,7 @@ async def statistics(car_id: int, bucket: str = "month", limit: int = 36) -> dic
             UNION ALL
             SELECT date_trunc('{bucket}', start_date AT TIME ZONE 'UTC' AT TIME ZONE $2),
                    0, 1, 0, 0, 0, NULL,
-                   COALESCE(charge_energy_added, 0), COALESCE(cost, 0)
+                   COALESCE(charge_energy_added, 0), 0::numeric
             FROM charging_processes WHERE car_id = $1
         )
         SELECT b,
@@ -470,6 +470,19 @@ async def statistics(car_id: int, bucket: str = "month", limit: int = 36) -> dic
     eff = await db.fetchval("SELECT efficiency FROM cars WHERE id = $1", car_id)
     eff = float(eff) if eff else None
 
+    # 费用按场次的开始时间落桶，金额走唯一真源（以前只 SUM(cost)，本机恒为 0，
+    # 和 Energy 页的 $28.95 自相矛盾 —— 审计 F8）
+    costs = await cost_source.session_costs(car_id)
+    cost_rows = await db.fetch(
+        f"""
+        SELECT date_trunc('{bucket}', start_date AT TIME ZONE 'UTC' AT TIME ZONE $2) AS b,
+               array_agg(id) AS ids
+        FROM charging_processes WHERE car_id = $1 GROUP BY 1
+        """,  # noqa: S608 - bucket 已过白名单
+        car_id, tz,
+    )
+    cost_by_b = {r["b"]: cost_source.total(costs, r["ids"] or []) for r in cost_rows}
+
     periods = []
     for r in rows:
         km = round(float(r["km"]), 1)
@@ -485,10 +498,11 @@ async def statistics(car_id: int, bucket: str = "month", limit: int = 36) -> dic
             "wh_per_km": round(range_used * eff * 1000 / km, 1) if eff and km > 0 else None,
             "charges": int(r["charges"]),
             "kwh_added": round(float(r["kwh"]), 2),
-            "cost": round(float(r["cost"]), 2),
+            "cost": cost_by_b.get(r["b"], 0.0),
         })
 
-    return {"bucket": bucket, "tz": tz, "periods": periods}
+    return {"bucket": bucket, "tz": tz, "currency": await cost_source.currency(),
+            "periods": periods}
 
 
 async def states_breakdown(car_id: int, days: int = 30) -> dict:
@@ -497,51 +511,81 @@ async def states_breakdown(car_id: int, days: int = 30) -> dict:
     TeslaMate 的 states 表只有这三种状态，driving/charging 都归在 online 里，
     所以这里额外扣掉行程与充电的时长，得到"醒着但没在干活"的时间——
     那才是真正该睡而没睡的部分。
+
+    两处以前会算错（审计 F10）：
+    - 没关闭的 states 行一律算到 now()。已经离开账号的车（本机 2、3 号）
+      各挂着一条 online，于是"最近 30 天一直在线、睡眠评分 0"。现在未关闭的行
+      截到 open_state_cap()：活着的车到现在，归档的车到 last_seen。
+    - 进行中 / 孤儿的行程与充电 duration_min 是 NULL，被当成 0 分钟，
+      正在充电的车于是显示"醒着没事干"。现在按 起点→(终点 或 最后一个采样点)
+      与窗口求交来算。
     """
+    from datetime import timedelta
+
+    from . import cars as registry
+    from .period import iso, utcnow
+
+    d = max(int(days), 1)
+    hi = utcnow()
+    lo = hi - timedelta(days=d)
+    cap = await registry.open_state_cap(car_id)
     # 与窗口有交集的状态段全都要算，并且**按窗口边界截断**。
     # 原来的 `start_date >= 窗口起点` 会把跨越起点的那一条整条丢掉：
     # 实测 days=10 时 asleep 少了 363 分钟，睡眠评分从 27% 掉到 23%。
-    # 极端情形更离谱 —— 车连续休眠 40 天、查最近 30 天，那一条 asleep 的起点
-    # 在窗口外，于是 asleep_min 为 0，界面告诉用户"这个月车一次都没睡"。
     rows = await db.fetch(
         """
-        SELECT state,
-               SUM(EXTRACT(EPOCH FROM (
-                     LEAST(COALESCE(end_date, now()), now())
-                   - GREATEST(start_date, now() - ($2::int * INTERVAL '1 day'))
-               )) / 60) AS minutes,
-               COUNT(*) AS n
+        SELECT state::text AS state,
+               SUM(EXTRACT(EPOCH FROM (LEAST(COALESCE(end_date, $3), $4) - GREATEST(start_date, $2))) / 60)
+                 FILTER (WHERE LEAST(COALESCE(end_date, $3), $4) > GREATEST(start_date, $2)) AS minutes,
+               COUNT(*) FILTER (WHERE LEAST(COALESCE(end_date, $3), $4) > GREATEST(start_date, $2)) AS n
         FROM states
-        WHERE car_id = $1
-          AND COALESCE(end_date, now()) >= now() - ($2::int * INTERVAL '1 day')
+        WHERE car_id = $1 AND start_date < $4 AND COALESCE(end_date, $3) > $2
         GROUP BY state
         """,
-        car_id, int(days),
+        car_id, lo, cap, hi,
     )
     busy = await db.fetchrow(
         """
+        WITH act AS (
+            SELECT 'drive' AS k, d.start_date AS s,
+                   COALESCE(d.end_date, (SELECT max(p.date) FROM positions p
+                                         WHERE p.drive_id = d.id AND p.date >= d.start_date),
+                            d.start_date) AS e
+            FROM drives d WHERE d.car_id = $1 AND d.start_date < $3
+              AND (d.end_date IS NULL OR d.end_date > $2)
+            UNION ALL
+            SELECT 'charge', cp.start_date,
+                   COALESCE(cp.end_date, (SELECT max(c.date) FROM charges c
+                                          WHERE c.charging_process_id = cp.id), cp.start_date)
+            FROM charging_processes cp WHERE cp.car_id = $1 AND cp.start_date < $3
+              AND (cp.end_date IS NULL OR cp.end_date > $2)
+        )
         SELECT
-          (SELECT COALESCE(SUM(duration_min), 0) FROM drives
-           WHERE car_id = $1 AND start_date >= now() - ($2::int * INTERVAL '1 day')) AS drive_min,
-          (SELECT COALESCE(SUM(duration_min), 0) FROM charging_processes
-           WHERE car_id = $1 AND start_date >= now() - ($2::int * INTERVAL '1 day')) AS charge_min
+          COALESCE(SUM(EXTRACT(EPOCH FROM (LEAST(e, $3) - GREATEST(s, $2))) / 60)
+                   FILTER (WHERE k = 'drive' AND LEAST(e, $3) > GREATEST(s, $2)), 0) AS drive_min,
+          COALESCE(SUM(EXTRACT(EPOCH FROM (LEAST(e, $3) - GREATEST(s, $2))) / 60)
+                   FILTER (WHERE k = 'charge' AND LEAST(e, $3) > GREATEST(s, $2)), 0) AS charge_min
+        FROM act
         """,
-        car_id, int(days),
+        car_id, lo, hi,
     )
 
-    by = {r["state"]: {"minutes": round(float(r["minutes"] or 0)), "sessions": r["n"]} for r in rows}
+    by = {r["state"]: {"minutes": round(float(r["minutes"] or 0)), "sessions": r["n"]}
+          for r in rows if r["n"]}
     online = by.get("online", {}).get("minutes", 0)
     asleep = by.get("asleep", {}).get("minutes", 0)
     offline = by.get("offline", {}).get("minutes", 0)
-    drive_min = int(busy["drive_min"] or 0)
-    charge_min = int(busy["charge_min"] or 0)
+    drive_min = round(float(busy["drive_min"] or 0))
+    charge_min = round(float(busy["charge_min"] or 0))
     idle_awake = max(online - drive_min - charge_min, 0)
+    car = await registry.get_car(car_id)
+    covered = online + asleep + offline
 
     # 睡眠评分 = 真正睡着的时间 ÷ 本来就该睡的时间（睡着 + 醒着但没事干）。
     # 离线不计入分母：车在没信号的地库里，既不是 TeslaMate 的功劳也不是它的锅。
     sleepable = asleep + idle_awake
     return {
-        "days": days,
+        "days": d,
         "online_min": online,
         "asleep_min": asleep,
         "offline_min": offline,
@@ -550,6 +594,12 @@ async def states_breakdown(car_id: int, days: int = 30) -> dict:
         "idle_awake_min": idle_awake,
         "sleep_score": round(asleep / sleepable * 100) if sleepable > 0 else None,
         "sessions": {k: v["sessions"] for k, v in by.items()},
+        # 窗口里有多少分钟真有 states 记录（其余是记录器停机 / 车已归档）
+        "window_min": d * 1440,
+        "covered_min": covered,
+        "archived": bool(car and car["archived"]),
+        "last_seen": car["last_seen"] if car else None,
+        "effective_to": iso(min(cap, hi)),
     }
 
 
@@ -623,22 +673,22 @@ async def unlogged_km(car_id: int) -> dict:
 
     差值来自 TeslaMate 没跑起来、或者车在没网的地方开过。这个数字是数据
     完整性的直接体现，也是"我的统计准不准"这个问题的答案。
+
+    跨度以前只看 drives（max(end_km) - min(start_km)）：最后一段被记下的行程之后
+    又开了多少，它永远看不见（本机 08-29 之后 1,000+ km）。现在取 positions 里
+    最早/最新的里程表；TeslaMate 的老口径另给一个 drives_span_km。
     """
-    r = await db.fetchrow(
-        """
-        SELECT MIN(start_km) AS first_km, MAX(end_km) AS last_km,
-               COALESCE(SUM(distance), 0) AS logged
-        FROM drives WHERE car_id = $1 AND start_km IS NOT NULL AND end_km IS NOT NULL
-        """,
-        car_id,
-    )
-    if r is None or r["first_km"] is None:
-        return {"span_km": None, "logged_km": None, "unlogged_km": None, "coverage": None}
-    span = float(r["last_km"]) - float(r["first_km"])
-    logged = float(r["logged"])
+    from .analytics import odometer_coverage
+
+    cov = await odometer_coverage(car_id)
+    if cov["span_km"] is None:
+        return {"span_km": None, "logged_km": None, "unlogged_km": None, "coverage": None,
+                "drives_span_km": None, "odometer_km": None}
     return {
-        "span_km": round(span, 1),
-        "logged_km": round(logged, 1),
-        "unlogged_km": round(max(span - logged, 0), 1),
-        "coverage": round(logged / span * 100, 1) if span > 0 else None,
+        "span_km": cov["span_km"],
+        "logged_km": cov["logged_km"],
+        "unlogged_km": cov["unlogged_km"],
+        "coverage": cov["coverage_pct"],
+        "drives_span_km": cov["drives_span_km"],
+        "odometer_km": cov["odometer_km"],
     }

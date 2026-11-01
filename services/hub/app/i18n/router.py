@@ -49,22 +49,38 @@ async def detect_region():
 
 
 _LOCALE_DIR = Path(__file__).parent / "locales"
-_cache: dict[str, tuple[float, dict]] = {}
+_cache: dict[str, tuple[tuple, dict]] = {}
+
+
+def _catalog_files(loc: str) -> list[Path]:
+    """The base file plus any per-feature namespace files.
+
+    ``locales/en.json`` holds the original catalogue; ``locales/en/*.json``
+    holds one file per feature (home, controls, sentry, …), so parallel work
+    on different pages never edits the same file. Namespace files win on
+    conflicts, in sorted order.
+    """
+    files = [_LOCALE_DIR / f"{loc}.json"]
+    d = _LOCALE_DIR / loc
+    if d.is_dir():
+        files += sorted(d.glob("*.json"))
+    return [f for f in files if f.is_file()]
 
 
 def catalog(locale: str) -> dict:
     """读文案字典，按文件修改时间热重载（改文案不用重启容器）。"""
     loc = locale if locale in ("zh", "en") else "en"
-    f = _LOCALE_DIR / f"{loc}.json"
-    try:
-        mtime = f.stat().st_mtime
-    except OSError:
+    files = _catalog_files(loc)
+    if not files:
         return {}
+    stamp = tuple((f.name, f.stat().st_mtime) for f in files)
     hit = _cache.get(loc)
-    if hit and hit[0] == mtime:
+    if hit and hit[0] == stamp:
         return hit[1]
-    data = json.loads(f.read_text(encoding="utf-8"))
-    _cache[loc] = (mtime, data)
+    data: dict = {}
+    for f in files:
+        data.update(json.loads(f.read_text(encoding="utf-8")))
+    _cache[loc] = (stamp, data)
     return data
 
 

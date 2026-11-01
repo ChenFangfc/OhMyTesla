@@ -223,7 +223,7 @@ class VinBridge:
                     await self._run_ws()
             except asyncio.CancelledError:
                 raise
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 — any drop is logged (scrubbed) and retried
                 # 先脱敏再截断：截断可能正好把 token 切成半截仍然可读，
                 # 而且 last_error 是要直接显示在界面上的。
                 msg = _scrub(str(e))[:200]
@@ -235,7 +235,8 @@ class VinBridge:
                 if not fatal_auth and time.time() - healthy_at > 60:
                     attempt = 0
                 if fatal_auth:
-                    log.exception("fleet bridge auth failed for VIN…%s: %s", self.vin[-6:], msg)
+                    # warning, not exception: the traceback would carry the URL (and a token in it)
+                    log.warning("fleet bridge auth failed for VIN…%s: %s", self.vin[-6:], msg)
                     attempt = 99  # 直接退到最大间隔，不要反复拿坏 token 去撞
                 else:
                     log.warning("fleet bridge VIN…%s disconnected: %s", self.vin[-6:], msg)

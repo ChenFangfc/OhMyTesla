@@ -1,165 +1,295 @@
-"""多渠道通知发送。
+"""Deliver one alert to every configured channel, independently.
 
-内置四条快捷通道（SMTP 邮件 / ntfy / Telegram / 通用 Webhook），
-外加 APPRISE_URLS 直通 Apprise 的 100+ 服务。
-Apprise 是同步库，统一丢进线程池执行。
+Each channel is sent on its own and reported on its own. The previous design
+pushed everything through a single Apprise call, so one broken target (an
+email with a wrong password) marked the whole alert undelivered — and then
+the cooldown never applied and the next alert re-sent to everyone (audit F9).
+
+Richness per channel, because a sentry alarm is not a newsletter:
+
+* ntfy — JSON publish (UTF-8 titles), priority 5 for critical, a tap target
+  that opens the event, and the clip thumbnail when there is one.
+* Bark (iOS) — ``level=critical`` rings through silent mode and Do Not
+  Disturb; that is the only way to get that on iPhone without an App Store app.
+* Telegram — photo + caption when a thumbnail exists.
+* Web Push (PWA) — see webpush.py.
+* Email and anything else Apprise understands — archival channels.
+
+Critical alerts that failed on a channel are retried in the background
+(15 s, 60 s, 180 s) — a missed alarm is the one failure this product exists
+to prevent.
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from base64 import b64encode
+from pathlib import Path
 from urllib.parse import quote, urlparse
 
-import apprise
 import httpx
 
-from ..config import settings
+from . import channels as chan
 
 log = logging.getLogger(__name__)
 
-
-def _email_ready() -> bool:
-    """SMTP 是不是真的能用。
-
-    只看 host 非空会把「填了服务器但还没填密码」当成已配置 —— 界面显示
-    "Delivering via Email"，实际一封也发不出去。安防产品最怕的就是这种
-    看起来在工作的失效。
-    """
-    if not (settings.smtp_host and settings.smtp_to):
-        return False
-    # 公共邮件服务一律要认证；自建中继可能允许匿名，那种情况 user 也会留空
-    needs_auth = any(
-        settings.smtp_host.endswith(d)
-        for d in ("gmail.com", "qq.com", "163.com", "outlook.com", "office365.com",
-                  "yahoo.com", "126.com", "icloud.com", "zoho.com", "sendgrid.net")
-    )
-    return not (needs_auth and not (settings.smtp_user and settings.smtp_pass))
-
-
-def _build_apprise_urls() -> list[str]:
-    urls: list[str] = []
-
-    # 必须和 configured_channels() 用同一个判断。之前这里只看 host+to，
-    # 于是密码为空的邮件 URL 照样被拼进去，Apprise 认证失败会把**整次发送**
-    # 判为失败 —— 连本来好好的 ntfy 也跟着不发了。
-    if _email_ready():
-        user = quote(settings.smtp_user, safe="")
-        pw = quote(settings.smtp_pass, safe="")
-        scheme = "mailtos" if settings.smtp_port in (465, 587) else "mailto"
-        url = (
-            f"{scheme}://{user}:{pw}@{settings.smtp_host}:{settings.smtp_port}"
-            f"/?to={quote(settings.smtp_to, safe='')}"
-        )
-        if settings.smtp_from:
-            url += f"&from={quote(settings.smtp_from, safe='')}"
-        if settings.smtp_port == 465:
-            url += "&mode=ssl"  # 465 是隐式 TLS（QQ/163 默认端口）
-        elif settings.smtp_port == 587:
-            url += "&mode=starttls"
-        urls.append(url)
-
-    if settings.ntfy_topic:
-        base = settings.ntfy_url or "https://ntfy.sh"
-        parsed = urlparse(base if "://" in base else f"https://{base}")
-        scheme = "ntfys" if parsed.scheme == "https" else "ntfy"
-        host = parsed.netloc or parsed.path
-        urls.append(f"{scheme}://{host}/{settings.ntfy_topic}")
-
-    if settings.telegram_bot_token and settings.telegram_chat_id:
-        urls.append(f"tgram://{settings.telegram_bot_token}/{settings.telegram_chat_id}")
-
-    if settings.apprise_urls:
-        urls.extend(u.strip() for u in settings.apprise_urls.split(",") if u.strip())
-
-    return urls
-
-
-
-
-def email_config_problem() -> str:
-    """邮件没配全时说明缺哪一项，供设置页显示。"""
-    if not settings.smtp_host:
-        return ""
-    if not settings.smtp_to:
-        return "missing_to"
-    if not _email_ready():
-        return "missing_password" if settings.smtp_user else "missing_user"
-    return ""
+_PRIORITY = {"critical": 5, "warning": 4, "info": 3}
+_TAGS = {"critical": "rotating_light", "warning": "warning", "info": "information_source"}
+_RETRY_DELAYS = (15, 60, 180)
+_TIMEOUT = httpx.Timeout(15.0)
 
 
 async def configured_channels() -> list[str]:
-    channels = []
-    if _email_ready():
-        channels.append("email")
-    if settings.ntfy_topic:
-        channels.append("ntfy")
-    if settings.telegram_bot_token and settings.telegram_chat_id:
-        channels.append("telegram")
-    if settings.alert_webhook_url:
-        channels.append("webhook")
-    if settings.apprise_urls:
-        channels.append("apprise")
+    names = list(await chan.active())
     try:
         from . import webpush
 
         if await webpush.count():
-            channels.append("webpush")
+            names.append("webpush")
     except Exception:
         log.debug("suppressed", exc_info=True)
-    return channels
+    return names
 
 
-def _send_apprise_sync(title: str, body: str, attach: str | None) -> bool:
-    urls = _build_apprise_urls()
-    if not urls:
-        return False
+async def email_config_problem() -> str:
+    c = (await chan.config())["email"]
+    return chan.problem("email", c) if c.get("host") else ""
+
+
+def _rfc2047(s: str) -> str:
+    """HTTP headers are Latin-1; ntfy accepts RFC 2047 for anything else."""
+    try:
+        s.encode("latin-1")
+        return s
+    except UnicodeEncodeError:
+        return "=?UTF-8?B?" + b64encode(s.encode()).decode() + "?="
+
+
+# ── channel senders: each returns True on confirmed acceptance ───────────
+
+async def _read(path: str | None) -> tuple[str, bytes] | None:
+    """Attachment bytes, read off the event loop (or None if there isn't one)."""
+    if not path:
+        return None
+
+    def load():
+        p = Path(path)
+        return (p.name, p.read_bytes()) if p.is_file() else None
+    return await asyncio.to_thread(load)
+
+
+async def _ntfy(c: dict, title: str, body: str, level: str, url: str | None,
+                attach: str | None, map_url: str | None = None) -> bool:
+    base = (c.get("url") or "https://ntfy.sh").rstrip("/")
+    if "://" not in base:
+        base = "https://" + base
+    headers = {}
+    if c.get("token"):
+        headers["Authorization"] = f"Bearer {c['token']}"
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as cli:
+        file = await _read(attach)
+        if file:
+            # Attachment publish: the file is the body; text goes in headers.
+            h = dict(headers)
+            h.update({"Title": _rfc2047(title), "Message": _rfc2047(body.replace("\n", "\\n")),
+                      "Priority": str(_PRIORITY.get(level, 3)), "Tags": _TAGS.get(level, ""),
+                      "Filename": file[0]})
+            if url:
+                h["Click"] = url
+            r = await cli.put(f"{base}/{c['topic']}", content=file[1], headers=h)
+        else:
+            msg = {"topic": c["topic"], "title": title, "message": body,
+                   "priority": _PRIORITY.get(level, 3), "tags": [_TAGS.get(level, "")]}
+            actions = []
+            if url:
+                msg["click"] = url
+                actions.append({"action": "view", "label": "Open", "url": url})
+            if map_url:
+                actions.append({"action": "view", "label": "Map", "url": map_url})
+            if actions:
+                msg["actions"] = actions
+            r = await cli.post(base, json=msg, headers=headers)
+    if r.status_code >= 400:
+        log.warning("ntfy rejected the alert: HTTP %s %s", r.status_code, r.text[:160])
+    return r.status_code < 400
+
+
+async def _bark(c: dict, title: str, body: str, level: str, url: str | None) -> bool:
+    server = (c.get("server") or "https://api.day.app").rstrip("/")
+    payload = {"device_key": c["key"], "title": title, "body": body, "group": "OhmyTesla"}
+    if level == "critical" and c.get("critical", True):
+        payload.update({"level": "critical", "volume": 8, "sound": "alarm"})
+    elif level == "warning":
+        payload["level"] = "timeSensitive"
+    if url:
+        payload["url"] = url
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as cli:
+        r = await cli.post(f"{server}/push", json=payload)
+    ok = r.status_code < 400 and (r.json().get("code") == 200 if r.content else True)
+    if not ok:
+        log.warning("bark rejected the alert: HTTP %s", r.status_code)
+    return ok
+
+
+async def _telegram(c: dict, title: str, body: str, attach: str | None) -> bool:
+    api = f"https://api.telegram.org/bot{c['token']}"
+    text = f"{title}\n{body}"
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as cli:
+        file = await _read(attach)
+        if file:
+            r = await cli.post(f"{api}/sendPhoto", data={"chat_id": c["chat_id"], "caption": text[:1000]},
+                               files={"photo": file})
+        else:
+            r = await cli.post(f"{api}/sendMessage", json={"chat_id": c["chat_id"], "text": text[:4000],
+                                                           "disable_web_page_preview": True})
+    if r.status_code >= 400:
+        # Don't log r.text: Telegram echoes the request, and the URL carries the token.
+        log.warning("telegram rejected the alert: HTTP %s", r.status_code)
+    return r.status_code < 400
+
+
+async def _webhook(c: dict, title: str, body: str, payload: dict) -> bool:
+    async with httpx.AsyncClient(timeout=_TIMEOUT, follow_redirects=False) as cli:
+        r = await cli.post(c["url"], json={"title": title, "body": body, **payload})
+    return r.is_success
+
+
+def _apprise_sync(urls: list[str], title: str, body: str, attach: str | None) -> bool:
+    import apprise
+
     ap = apprise.Apprise()
     for u in urls:
         ap.add(u)
-    kwargs = {}
-    if attach:
-        kwargs["attach"] = attach
+    kwargs = {"attach": attach} if attach and os.path.isfile(attach) else {}
     return bool(ap.notify(title=title, body=body, **kwargs))
 
 
-async def send(title: str, body: str, payload: dict | None = None, attach: str | None = None) -> tuple[bool, list[str]]:
-    """向所有已配置渠道发送；返回 (至少一个成功, 渠道列表)。"""
-    channels = await configured_channels()
-    if not channels:
+def _email_url(c: dict) -> str:
+    port = int(c.get("port") or 587)
+    scheme = "mailtos" if port in (465, 587) else "mailto"
+    user = quote(str(c.get("user") or ""), safe="")
+    pw = quote(str(c.get("password") or ""), safe="")
+    auth = f"{user}:{pw}@" if user else ""
+    url = f"{scheme}://{auth}{c['host']}:{port}/?to={quote(c['to'], safe='')}"
+    if c.get("sender"):
+        url += f"&from={quote(c['sender'], safe='')}"
+    if port == 465:
+        url += "&mode=ssl"
+    elif port == 587:
+        url += "&mode=starttls"
+    return url
+
+
+async def _send_one(name: str, c: dict, title: str, body: str, level: str, payload: dict,
+                    url: str | None, attach: str | None) -> bool:
+    try:
+        if name == "ntfy":
+            return await _ntfy(c, title, body, level, url, attach, payload.get("map_url"))
+        if name == "bark":
+            return await _bark(c, title, body, level, url)
+        if name == "telegram":
+            return await _telegram(c, title, body, attach)
+        if name == "webhook":
+            return await _webhook(c, title, body, payload)
+        if name == "email":
+            return await asyncio.to_thread(_apprise_sync, [_email_url(c)], title, body, attach)
+        if name == "apprise":
+            urls = [u.strip() for u in str(c.get("urls") or "").split(",") if u.strip()]
+            return await asyncio.to_thread(_apprise_sync, urls, title, body, attach)
+    except Exception as e:  # noqa: BLE001 — one channel failing must not affect the others
+        log.warning("%s delivery failed: %s", name, e.__class__.__name__)
+    return False
+
+
+def _absolute(url: str | None) -> str | None:
+    """Phones can only open absolute links."""
+    if not url:
+        return None
+    if urlparse(url).scheme:
+        return url
+    from ..config import settings
+
+    base = (settings.public_url or "").rstrip("/")
+    return f"{base}{url}" if base else None
+
+
+async def send(title: str, body: str, payload: dict | None = None, attach: str | None = None,
+               *, level: str | None = None, url: str | None = None,
+               only: list[str] | None = None) -> tuple[bool, list[str]]:
+    """Send to every active channel. Returns (any delivered, [channel names that delivered]).
+
+    ``only`` restricts delivery to those channels (used by per-channel tests).
+    """
+    payload = dict(payload or {})
+    level = level or payload.get("level") or "info"
+    link = _absolute(url)
+    active = await chan.active()
+    if only is not None:
+        active = {k: v for k, v in active.items() if k in only}
+
+    names = list(active)
+    tasks = [_send_one(n, c, title, body, level, payload, link, attach) for n, c in active.items()]
+
+    want_webpush = (only is None or "webpush" in only)
+    if want_webpush:
+        from . import webpush
+
+        if await webpush.count():
+            names.append("webpush")
+            tasks.append(webpush.send(title, body, url=url or "/security", level=level,
+                                      tag=payload.get("tag")))
+    if not tasks:
         log.warning("no notification channel configured; alert dropped: %s", title)
         return False, []
 
-    ok = False
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    delivered = [n for n, r in zip(names, results, strict=True) if r is True]
+    failed = [n for n, r in zip(names, results, strict=True) if r is not True]
+    if failed and level == "critical":
+        asyncio.get_running_loop().create_task(
+            _retry(failed, title, body, level, payload, link, attach, active))
+    return bool(delivered), delivered
 
-    if "webpush" in channels:
-        try:
-            from . import webpush
 
-            # /alerts 是旧路径，会 301 到 /security。推送里给的链接直接给终点，
-            # 别让手机上点开先吃一次跳转。
-            url = "/security"
-            if payload and payload.get("rule", "").startswith(("sentry_", "new_sentry")):
-                url = "/dashcam"
-            ok = await webpush.send(
-                title, body, url=url, level=(payload or {}).get("level", "info")
-            ) or ok
-        except Exception:
-            log.exception("web push send failed")
+async def _retry(failed: list[str], title: str, body: str, level: str, payload: dict,
+                 link: str | None, attach: str | None, active: dict) -> None:
+    pending = list(failed)
+    for delay in _RETRY_DELAYS:
+        await asyncio.sleep(delay)
+        still = []
+        for n in pending:
+            if n == "webpush":
+                from . import webpush
 
-    if any(c in channels for c in ("email", "ntfy", "telegram", "apprise")):
-        try:
-            ok = await asyncio.to_thread(_send_apprise_sync, title, body, attach) or ok
-        except Exception:
-            log.exception("apprise send failed")
+                ok = await webpush.send(title, body, url=link or "/security", level=level,
+                                        tag=payload.get("tag"))
+            else:
+                ok = await _send_one(n, active[n], title, body, level, payload, link, attach)
+            if not ok:
+                still.append(n)
+            else:
+                log.info("critical alert delivered to %s on retry", n)
+        pending = still
+        if not pending:
+            return
+    log.error("critical alert never reached: %s", ", ".join(pending))
 
-    if settings.alert_webhook_url:
-        try:
-            async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post(
-                    settings.alert_webhook_url,
-                    json={"title": title, "body": body, **(payload or {})},
-                )
-                ok = ok or resp.is_success
-        except Exception:
-            log.exception("webhook send failed")
 
-    return ok, channels
+async def verify_ntfy(marker: str, wait_s: float = 8.0) -> bool:
+    """Read the topic back to prove a test message really arrived on the server."""
+    c = (await chan.config())["ntfy"]
+    if chan.problem("ntfy", c):
+        return False
+    base = (c.get("url") or "https://ntfy.sh").rstrip("/")
+    headers = {"Authorization": f"Bearer {c['token']}"} if c.get("token") else {}
+    deadline = asyncio.get_running_loop().time() + wait_s
+    async with httpx.AsyncClient(timeout=_TIMEOUT) as cli:
+        while asyncio.get_running_loop().time() < deadline:
+            r = await cli.get(f"{base}/{c['topic']}/json", params={"poll": "1", "since": "60s"},
+                              headers=headers)
+            if r.status_code == 200 and marker in r.text:
+                return True
+            await asyncio.sleep(1.5)
+    return False

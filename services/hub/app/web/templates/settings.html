@@ -58,13 +58,18 @@
     <summary><span data-i18n="settings.push.heading">Notifications</span><span class="value" id="v-push"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
     </summary>
     <div class="body">
-      <p class="body-sm" style="margin:0 0 16px;max-width:64ch" data-i18n="settings.push.intro"></p>
-      <div class="row">
+      <p class="body-sm" style="margin:0 0 16px;max-width:64ch" data-i18n="ch.intro"></p>
+      <div id="channels"></div>
+      <div class="eyebrow mt3" data-i18n="ch.this_device">This browser</div>
+      <div class="row mt">
         <button id="push-toggle" class="btn primary" data-i18n="settings.push.enable">Turn on push</button><span id="push-status" class="body-sm"></span>
       </div>
-      <p class="body-sm mt2" style="max-width:64ch" data-i18n="settings.channels_note"></p>
+      <p class="body-sm mt" style="max-width:64ch" data-i18n="settings.push.intro"></p>
     </div>
   </details>
+
+  {% include "_settings_v2.html" %}
+  {% include "_settings_dashcam.html" %}
 
   <details class="disclose" id="s-rates">
     <summary><span data-i18n="settings.tariff.heading">Electricity rates</span><span class="value" id="v-rates"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
@@ -202,6 +207,9 @@
     <div class="body">
       <div id="car-settings"></div>
       <p class="body-sm mt2" style="max-width:64ch" data-i18n="settings.sleep_note"></p>
+      <div class="eyebrow mt3" data-i18n="models.heading">3D models</div>
+      <p class="body-sm mt" style="max-width:64ch" data-i18n="models.intro"></p>
+      <div id="models" class="mt"></div>
     </div>
   </details>
 
@@ -244,6 +252,8 @@
 {% endblock %}
 
 {% block scripts %}
+<script src="/static/js/pages/settings2.js"></script>
+<script src="/static/js/pages/settings_dashcam.js"></script>
 <script>
 /* 标题跟着语言走：apply() 每次切换语言都会派发 omt:locale */
 window.addEventListener("omt:locale", () => { document.title = t("settings.page_title"); });
@@ -251,8 +261,8 @@ window.addEventListener("omt:locale", () => { document.title = t("settings.page_
 /* ---------------- 地点与车辆（接管自 TeslaMate 界面）---------------- */
 apiGet("/api/config").then(c => {
   const g = document.getElementById("lnk-grafana"), tm = document.getElementById("lnk-teslamate");
-  if (g) g.href = c.grafana_url;
-  if (tm) tm.href = c.teslamate_url;
+  if (g) { if (c.grafana_url) g.href = c.grafana_url; else g.hidden = true; }
+  if (tm) { if (c.teslamate_url) tm.href = c.teslamate_url; else tm.hidden = true; }
 }).catch(() => {});
 
 async function loadGeofences() {
@@ -309,7 +319,7 @@ async function loadCarSettings() {
     div.innerHTML = cars.length ? cars.map(c => `
       <div style="border-bottom:1px solid var(--grid);padding:10px 0" data-car="${c.id}">
         <div class="row">
-          <input type="text" class="c-name" value="${esc(c.name || "")}" placeholder="${t('settings.car_name_ph')}" style="width:170px"><span class="muted small">${esc(c.marketing_name || c.model || "")} · VIN …${esc((c.vin || "").slice(-6))}</span>
+          <input type="text" class="c-name" value="${esc(c.name || "")}" placeholder="${t('settings.car_name_ph')}" style="width:170px"><span class="muted small">${esc([Car.label({ vin: c.vin, model: c.model }), Car.variant(c)].filter(Boolean).join(" · "))} · VIN …${esc((c.vin || "").slice(-6))}${Car.info(c.id) && Car.info(c.id).active === false ? " · " + esc(t("cars.archived")) : ""}</span>
         </div>
         <div class="row mt">
           <label class="small muted" style="width:150px">${t("settings.car_sleep_wait")}</label>
@@ -696,7 +706,7 @@ function paintSummaries() {
     length: U.distLabel(), temp: U.tempLabel(),
   }));
   apiGet("/api/alerts/push/key").then((k) =>
-    set("v-push", k.devices ? t("settings.push_on", { n: k.devices }) : t("settings.push_off"))).catch(() => {});
+    void k).catch(() => {});
   apiGet("/api/setup/geofences").then((g) =>
     set("v-places", t("settings.n_places", { n: g.length }))).catch(() => {});
   apiGet("/api/setup/cars").then((c) =>

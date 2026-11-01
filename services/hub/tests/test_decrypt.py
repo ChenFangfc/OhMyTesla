@@ -34,7 +34,7 @@ def chk(name, cond, extra=""):
         FAILS.append(name)
 
 
-def make_container(plaintext: bytes, file_key: bytes, vin: str = "7G2CEHED0RA000002",
+def make_container(plaintext: bytes, file_key: bytes, vin: str = "7G2CEHED0RA000000",
                    key_id: int = 42, timestamp: int = 1787000000) -> bytes:
     """按规格造一个加密容器。加密方向用的是和解密器**独立**写的代码路径
     （Cipher.encryptor 而不是 decryptor），所以往返成功不是自己证明自己。"""
@@ -83,7 +83,7 @@ def main() -> int:
     # ── 头部解析 ────────────────────────────────────────────
     h = D.read_header(enc_path)
     chk("明文长度正确", h.plaintext_size == len(plain), h.plaintext_size)
-    chk("VIN 正确", h.vin == "7G2CEHED0RA000002", h.vin)
+    chk("VIN 正确", h.vin == "7G2CEHED0RA000000", h.vin)
     chk("key_id 正确", h.key_id == 42, h.key_id)
     chk("timestamp 正确", h.timestamp == 1787000000, h.timestamp)
     chk("wrapped_key 长度 44", len(h.wrapped_key) == 44, len(h.wrapped_key))

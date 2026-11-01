@@ -116,7 +116,14 @@ async def count() -> int:
     return len(await store.get_setting("push_subs", []) or [])
 
 
-def _send_sync(sub: dict, payload: str, priv_pem: str) -> tuple[bool, int]:
+# How long the push service keeps an undelivered message, and how urgently it
+# wakes the device. pywebpush's defaults (TTL 0, no Urgency) mean a phone in
+# Doze or briefly offline simply never sees the alert (audit F5).
+_TTL = {"critical": 6 * 3600, "warning": 3600, "info": 1800}
+_URGENCY = {"critical": "high", "warning": "high", "info": "normal"}
+
+
+def _send_sync(sub: dict, payload: str, priv_pem: str, level: str = "info") -> tuple[bool, int]:
     from py_vapid import Vapid01
     from pywebpush import WebPushException, webpush
 
@@ -129,6 +136,8 @@ def _send_sync(sub: dict, payload: str, priv_pem: str) -> tuple[bool, int]:
             data=payload,
             vapid_private_key=vapid,
             vapid_claims={"sub": "mailto:ohmytesla@localhost"},
+            ttl=_TTL.get(level, 1800),
+            headers={"Urgency": _URGENCY.get(level, "normal")},
             timeout=15,
         )
         return True, 200
@@ -141,17 +150,21 @@ def _send_sync(sub: dict, payload: str, priv_pem: str) -> tuple[bool, int]:
         return False, 0
 
 
-async def send(title: str, body: str, url: str = "/", level: str = "info") -> bool:
+async def send(title: str, body: str, url: str = "/", level: str = "info",
+               tag: str | None = None) -> bool:
     subs = await store.get_setting("push_subs", []) or []
     if not subs:
         return False
     kp = await keys()
+    # `tag` groups the pushes of one sentry incident: an escalation replaces the
+    # earlier notification (and re-alerts) instead of stacking a second one.
     payload = json.dumps(
-        {"title": title, "body": body, "url": url, "level": level}, ensure_ascii=False
+        {"title": title, "body": body, "url": url, "level": level, "tag": tag},
+        ensure_ascii=False,
     )
 
     results = await asyncio.gather(
-        *[asyncio.to_thread(_send_sync, s, payload, kp["private_pem"]) for s in subs],
+        *[asyncio.to_thread(_send_sync, s, payload, kp["private_pem"], level) for s in subs],
         return_exceptions=True,
     )
     ok_any = False

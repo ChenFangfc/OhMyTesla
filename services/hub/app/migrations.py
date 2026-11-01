@@ -8,8 +8,10 @@
 1. **迁移一经发布就不可修改。** 已应用的迁移会记下 SQL 的 sha256；下次启动
    发现对不上就报警而不是默默重跑——那说明有人改了历史，两台机器的 schema
    会悄悄分叉。要改就追加新的一版。
-2. **每一版单独一个事务。** 中途失败只回滚那一版，前面成功的仍然记账，
-   重启后从断点继续，不会出现"跑了一半又从头来"。
+2. **每一版单独一个事务，记账行也在里面。** 中途失败只回滚那一版，前面成功的
+   仍然记账，重启后从断点继续，不会出现"跑了一半又从头来"。
+   ADD COLUMN 这种没有 IF NOT EXISTS 的语句，执行前对照实际表结构跳过已生效的，
+   所以任何一版都可以安全重跑（见 _pending_sql）。
 3. **对既有安装无痛。** 第 1 版就是历史上那段 `CREATE TABLE IF NOT EXISTS`，
    在老库上是空操作，跑完只是把版本号补记上。
 4. **可查。** `/healthz` 会带上当前版本号，出问题时先看这个。
@@ -17,6 +19,7 @@
 
 import hashlib
 import logging
+import re
 
 import aiosqlite
 
@@ -209,8 +212,52 @@ async def current_version(db: aiosqlite.Connection) -> int:
         return 0          # 表还不存在 = 全新库
 
 
+_ADD_COLUMN = re.compile(
+    r"ALTER\s+TABLE\s+\"?(\w+)\"?\s+ADD\s+(?:COLUMN\s+)?\"?(\w+)\"?[^;]*;?",
+    re.IGNORECASE,
+)
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9_]+$")
+
+
+async def _columns(db: aiosqlite.Connection, table: str) -> set[str]:
+    try:
+        async with db.execute(f'PRAGMA table_info("{table}")') as cur:
+            return {row[1] async for row in cur}
+    except aiosqlite.OperationalError:
+        return set()
+
+
+async def _pending_sql(db: aiosqlite.Connection, sql: str) -> str:
+    """去掉"列已经存在"的 ADD COLUMN 语句，其余原样保留。
+
+    SQLite 的 `ALTER TABLE … ADD COLUMN` 没有 IF NOT EXISTS。第 4、5 版就是这种
+    语句：进程在 ALTER 之后、记账之前被杀（或者磁盘满了），列已经加上、版本却没
+    记上，以后每次启动都会报 duplicate column name，hub 起不来、restart: always
+    无限重启（审计 F9）。这里在执行前对照实际表结构，跳过已经生效的那一句 ——
+    已发布的 SQL 文本一个字都不改，checksum 不漂移。
+    """
+    out: list[str] = []
+    pos = 0
+    for m in _ADD_COLUMN.finditer(sql):
+        out.append(sql[pos:m.start()])
+        table, col = m.group(1), m.group(2)
+        if col in await _columns(db, table):
+            log.info("migration: %s.%s already exists, skipping its ADD COLUMN", table, col)
+        else:
+            out.append(m.group(0))
+        pos = m.end()
+    out.append(sql[pos:])
+    return "".join(out)
+
+
 async def migrate(db: aiosqlite.Connection) -> dict:
-    """把库推进到最新版，返回这次做了什么。"""
+    """把库推进到最新版，返回这次做了什么。
+
+    每一版连同它的记账行在**同一个事务**里提交（SQLite 的 DDL 是事务性的）：
+    中途失败或进程被杀，这一版要么全有要么全无，下次启动从这一版重来。
+    再加上 _pending_sql 对 ADD COLUMN 的幂等处理，就算是旧版本代码留下的
+    "列加了、账没记"的库，也能自己走完。
+    """
     import time
 
     await db.executescript(_TRACKER)
@@ -239,20 +286,25 @@ async def migrate(db: aiosqlite.Connection) -> dict:
                 )
             continue
 
+        if not (_SAFE_NAME.match(name) and _SAFE_NAME.match(digest)):
+            raise ValueError(f"migration v{version}: unsafe name/checksum")
+        body = (await _pending_sql(db, sql)).strip()
+        # 记账值是本模块的常量（整数版本号、[A-Za-z0-9_] 的名字和十六进制摘要），
+        # 直接写进脚本，才能和 DDL 放进同一个 BEGIN … COMMIT。
+        script = (
+            "BEGIN;\n"
+            f"{body}\n;\n"
+            "INSERT INTO schema_migrations (version, name, checksum, applied_at)"
+            f" VALUES ({int(version)}, '{name}', '{digest}', {time.time():.3f});\n"
+            "COMMIT;"
+        )
         try:
-            await db.executescript(sql)
-            await db.execute(
-                "INSERT INTO schema_migrations (version, name, checksum, applied_at)"
-                " VALUES (?,?,?,?)",
-                (version, name, digest, time.time()),
-            )
-            await db.commit()
+            await db.executescript(script)
         except Exception:
-            # executescript 会隐式提交，所以这里的 rollback 只能兜住记账那一步。
-            # 真正的保障是每一版都写成可重入的（IF NOT EXISTS / 幂等 UPDATE），
-            # 失败重启后再跑一遍不会二次损伤。
-            await db.rollback()
-            log.exception("migration v%s (%s) failed", version, name)
+            # 脚本在 COMMIT 之前失败：整版回滚，库停在上一版，下次启动重来
+            if db.in_transaction:
+                await db.execute("ROLLBACK")
+            log.exception("migration v%s (%s) failed; rolled back", version, name)
             raise
         ran.append(f"v{version} {name}")
         log.info("applied migration v%s %s", version, name)

@@ -1,472 +1,1139 @@
 {% extends "shell.html" %}
 {% block title %}{{ t('player.page_title') }}{% endblock %}
+
+{# The player answers three things in order: what happened (title, place,
+   reason, length), what it looked like (video with the HUD), and what you can
+   take away (export, evidence package). Everything on the timeline is in
+   measured seconds: segments are not 60 s long, and RecentClips have gaps
+   that the timeline closes up. #}
 {% block content %}
-<div class="page" style="padding-bottom:96px">
-<div class="subhead">
-  <a href="/dashcam" class="back" data-i18n-title="player.back">
-    <span class="ico-slot" data-icon="arrow" data-size="15"></span><span data-i18n="nav.dashcam">Dashcam</span>
-  </a>
-  <h1 id="ev-title"><span data-i18n="common.loading">Loading…</span></h1><span class="spacer"></span><span class="crumb" data-i18n="player.telemetry_car">Telemetry vehicle</span>
-  <select id="car-picker"></select>
-</div>
+<div class="page pl-page">
+  <div class="subhead pl-sub">
+    <a href="/dashcam" class="back" data-i18n-title="player.back">
+      <span class="ico-slot" data-icon="arrow" data-size="15"></span><span data-i18n="nav.dashcam">Dashcam</span>
+    </a>
+  </div>
 
-<div class="player-wrap">
-  <div>
-    <div class="video-stage">
-      <video id="main" class="main" muted playsinline></video>
+  <header class="pl-head">
+    <div class="eyebrow" id="pl-kind">&nbsp;</div>
+    <h1 class="display-sm" id="ev-title"><span data-i18n="common.loading">Loading…</span></h1>
+    <div class="pl-facts" id="pl-facts"></div>
+  </header>
+
+  <section class="pl-lock" id="pl-lock" hidden></section>
+
+  <div class="player-wrap" id="pl-wrap">
+    <div class="pl-main">
+      <div class="video-stage" id="stage">
+        <video id="main" class="main" muted playsinline></video>
+        <span class="pl-camtag" id="pl-camtag" hidden></span>
+        <div class="pl-veil" id="pl-veil" hidden></div>
+        <div class="hud" id="hud" hidden>
+          <div class="item speed"><div class="l" data-i18n="player.hud.speed">Speed</div><div class="v"><span id="h-speed">–</span><small id="h-speed-unit">km/h</small></div></div>
+          <div class="item"><div class="l" data-i18n="player.hud.gear">Gear / Autopilot</div><div class="v" id="h-gear">–</div></div>
+          <div class="item"><div class="l" data-i18n="player.hud.power">Power</div><div class="v" id="h-power">–</div></div>
+          <div class="item"><div class="l" data-i18n="common.battery">Battery</div><div class="v" id="h-soc">–</div></div>
+          <div class="item opt"><div class="l" data-i18n="player.hud.elevation">Elevation</div><div class="v" id="h-elev">–</div></div>
+          <div class="item opt"><div class="l" data-i18n="player.hud.steering">Steering</div><div class="v" id="h-steer">–</div></div>
+          <div class="item opt"><div class="l" data-i18n="player.hud.pedal">Accelerator</div><div class="v" id="h-pedal">–</div></div>
+          <div class="clock" id="h-clock"></div>
+        </div>
+      </div>
+
+      <div class="pl-transport">
+        <button class="pl-play" id="btn-play" type="button"></button>
+        <span class="pl-time" id="time-label">0:00 / 0:00</span>
+        <div class="pl-scrub">
+          <div class="pl-track" id="track"></div>
+          <input type="range" id="seek" min="0" max="1" step="any" value="0" data-i18n-title="player.seek">
+        </div>
+        <select id="rate" class="pl-rate" aria-label="Speed">
+          <option value="0.5">0.5×</option>
+          <option value="1" selected>1×</option>
+          <option value="2">2×</option>
+          <option value="4">4×</option>
+        </select>
+        <span class="pl-keys" data-i18n-title="player.keys_help" tabindex="0"><span class="ico-slot" data-icon="info" data-size="17"></span></span>
+      </div>
+
       <div class="pip-row" id="pips"></div>
-      <div class="hud" id="hud" style="display:none">
-        <div class="speed"><span id="h-speed">--</span> <small id="h-speed-unit">km/h</small></div>
-        <div class="item"><div class="l" data-i18n="player.hud.gear">Gear / Autopilot</div><div id="h-gear">–</div></div>
-        <div class="item"><div class="l" data-i18n="player.hud.power">Power</div><div id="h-power">–</div></div>
-        <div class="item"><div class="l" data-i18n="common.battery">Battery</div><div id="h-soc">–</div></div>
-        <div class="item"><div class="l" data-i18n="player.hud.elevation">Elevation</div><div id="h-elev">–</div></div>
-        <div class="item"><div class="l" data-i18n="player.hud.steering">Steering</div><div id="h-steer">–</div></div>
-        <div class="item"><div class="l" data-i18n="player.hud.pedal">Accelerator</div><div id="h-pedal">–</div></div>
-        <div class="clock" id="h-clock"></div>
-      </div>
-    </div>
-    <div class="controls">
-      <button id="btn-play" class="primary">▶ <span data-i18n="player.play">Play</span></button>
-      <input type="range" id="seek" min="0" max="100" step="0.1" value="0"><span id="time-label" class="small muted" style="min-width:90px;text-align:right">0:00 / 0:00</span>
-      <span class="small muted" data-i18n-title="player.keys_help" title="" style="cursor:help;user-select:none">⌨</span>
-      <select id="rate">
-        <option value="0.5">0.5×</option>
-        <option value="1" selected>1×</option>
-        <option value="2">2×</option>
-        <option value="4">4×</option>
-      </select>
-    </div>
-    <div class="seg-list" id="segs"></div>
-    <!-- 文案含 <b> 标签，data-i18n 只能写 textContent，改由脚本注入 innerHTML -->
-    <div id="hevc-tip" class="small muted mt" style="display:none"></div>
-  </div>
-
-  <div>
-    <div class="card">
-      <h2 style="margin:0 0 10px" data-i18n="player.export.title">Export video</h2>
-      <div class="row mt"><label style="width:64px" data-i18n="player.export.layout">Layout</label>
-        <select id="x-layout">
-          <option value="grid" data-i18n="player.export.layout_grid">Grid (all cameras)</option>
-          <option value="front_pip" data-i18n="player.export.layout_front_pip">Front camera + PiP</option>
-          <option value="vertical" data-i18n="player.export.layout_vertical">Vertical 9:16</option>
-          <option value="wide" data-i18n="player.export.layout_wide">Wide strip</option>
-          <option value="back_pip" data-i18n="player.export.layout_back_pip">Rear camera + PiP</option>
-        </select>
-      </div>
-      <div class="row mt"><label style="width:64px" data-i18n="player.export.quality">Quality</label>
-        <select id="x-quality">
-          <option value="standard" selected data-i18n="player.export.quality_standard">Standard (CRF 23)</option>
-          <option value="high" data-i18n="player.export.quality_high">High (CRF 18)</option>
-          <option value="fast" data-i18n="player.export.quality_fast">Fast (CRF 27)</option>
-        </select>
-      </div>
-      <div class="row mt"><label style="width:64px" data-i18n="player.export.range">Include</label>
-        <select id="x-range">
-          <option value="all" data-i18n="player.export.range_all">Entire clip</option>
-          <option value="seg" data-i18n="player.export.range_seg">Current minute only</option>
-        </select>
-      </div>
-      <div class="mt" id="x-cams"></div>
-      <label class="check mt"><input type="checkbox" id="x-overlay" checked><span data-i18n="player.export.overlay">Overlay telemetry (speed, power, battery + SEI gear, steering, accelerator)</span></label>
-      <div class="mt"><button id="x-go" class="primary" style="width:100%" data-i18n="player.export.start">Start export</button></div>
+      <div class="pl-segs" id="segs"></div>
+      <div id="hevc-tip" class="body-sm mt" hidden></div>
     </div>
 
-    <div class="card mt">
-      <h2 style="margin:0 0 6px" data-i18n="player.jobs.title">Export jobs</h2>
-      <div id="jobs" class="small"><div class="muted" data-i18n="player.jobs.empty">No export jobs</div></div>
-    </div>
+    <aside class="pl-side">
+      <section class="pl-card" id="x-card">
+        <div class="eyebrow" data-i18n="player.export.title">Export video</div>
+        <div class="pl-form mt">
+          <label for="x-layout" data-i18n="player.export.layout">Layout</label>
+          <select id="x-layout">
+            <option value="grid" data-i18n="player.export.layout_grid">Grid (all cameras)</option>
+            <option value="front_pip" data-i18n="player.export.layout_front_pip">Front camera + PiP</option>
+            <option value="back_pip" data-i18n="player.export.layout_back_pip">Rear camera + PiP</option>
+            <option value="vertical" data-i18n="player.export.layout_vertical">Vertical 9:16</option>
+            <option value="wide" data-i18n="player.export.layout_wide">Wide strip</option>
+          </select>
+          <label for="x-quality" data-i18n="player.export.quality">Quality</label>
+          <select id="x-quality">
+            <option value="standard" selected data-i18n="player.export.quality_standard">Standard (CRF 23)</option>
+            <option value="high" data-i18n="player.export.quality_high">High (CRF 18)</option>
+            <option value="fast" data-i18n="player.export.quality_fast">Fast (CRF 27)</option>
+          </select>
+        </div>
 
-    <div class="card mt small">
-      <b data-i18n="player.align.title">Clock calibration</b>
-      <div class="muted mt" data-i18n="player.align.desc">Video and TeslaMate telemetry out of sync? Match the SEI speed trace to find the exact offset.</div>
-      <div class="mt"><button id="btn-align" style="width:100%" data-i18n="player.align.btn"> Calibrate clock</button></div>
-      <div id="align-result" class="muted mt"></div>
-    </div>
+        <div class="pl-label mt" data-i18n="player.range.label">Range</div>
+        <div class="seg2 pl-range" id="x-range">
+          <button type="button" data-r="all" class="on" data-i18n="player.range.all">Whole clip</button>
+          <button type="button" data-r="seg" data-i18n="player.range.seg">This segment</button>
+          <button type="button" data-r="sel" data-i18n="player.range.sel">Selection</button>
+        </div>
+        <div class="pl-sel" id="x-sel" hidden>
+          <button type="button" class="cbtn" id="sel-in"></button><span class="tertiary">→</span>
+          <button type="button" class="cbtn" id="sel-out"></button>
+        </div>
+        <div class="pl-rnote" id="x-range-note"></div>
 
-    <div class="card mt small" id="sei-stats"></div>
-    <div class="card mt small" id="ev-meta"></div>
+        <div class="pl-label mt" data-i18n="player.export.cameras">Cameras</div>
+        <div class="pl-cams" id="x-cams"></div>
+
+        <div class="pl-toggle mt">
+          <div class="info">
+            <div class="name" data-i18n="player.export.overlay_label">Telemetry overlay</div>
+            <div class="desc" id="x-overlay-desc" data-i18n="player.export.overlay_sub"></div>
+          </div>
+          <label class="switch"><input type="checkbox" id="x-overlay" checked><span class="slider"></span></label>
+        </div>
+        <div class="pl-encoder" id="x-encoder"></div>
+
+        <button class="btn accent big pl-go" id="x-go" type="button" data-i18n="player.export.start">Start export</button>
+        <div class="pl-rnote" id="x-go-note" hidden></div>
+
+        <div class="pl-jobs" id="jobs"></div>
+      </section>
+
+      <section class="pl-card">
+        <div class="eyebrow" data-i18n="player.evidence.title">Evidence package</div>
+        <p class="body-sm pl-p" data-i18n="player.evidence.body"></p>
+        <a class="btn pl-dl" id="evidence" href="#" download><span class="ico-slot" data-icon="download" data-size="16"></span><span data-i18n="player.evidence.btn">Download ZIP</span></a>
+        <p class="meta pl-p" data-i18n="player.evidence.note"></p>
+      </section>
+
+      <details class="disclose" id="d-align">
+        <summary><span data-i18n="player.align.title">Clock calibration</span><span class="value" id="v-align"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span></summary>
+        <div class="body">
+          <p class="body-sm pl-p" data-i18n="player.align.desc"></p>
+          <button class="btn" id="btn-align" type="button" data-i18n="player.align.btn">Calibrate clock</button>
+          <div class="pl-note" id="align-result" hidden></div>
+        </div>
+      </details>
+
+      <details class="disclose" id="d-sei">
+        <summary><span data-i18n="player.sei.heading">This segment</span><span class="value" id="v-sei"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span></summary>
+        <div class="body body-sm" id="sei-stats"></div>
+      </details>
+    </aside>
   </div>
 </div>
-</div>
+
+<style>
+  /* amber as text needs more weight on a light background */
+  .pl-page { --amber-ink: var(--amber); }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .pl-page { --amber-ink: #9a5b00; } }
+  :root[data-theme="light"] .pl-page { --amber-ink: #9a5b00; }
+  .pl-page { padding-bottom: 96px; }
+  .pl-sub { padding-bottom: 10px; }
+  .pl-head { margin-bottom: 22px; }
+  .pl-head h1 { margin-top: 6px; }
+  .pl-facts { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13.5px; color: var(--text-secondary); }
+  .pl-facts span, .pl-facts a { display: inline-flex; align-items: center; gap: 6px; }
+  .pl-facts a { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line-strong); }
+  .pl-facts .warn { color: var(--amber-ink); }
+
+  /* stage */
+  .pl-page .video-stage video.main { aspect-ratio: 4 / 3; object-fit: contain; }
+  .pl-camtag { position: absolute; top: 12px; left: 12px; font-size: 12px; padding: 3px 9px; border-radius: 8px;
+    background: rgba(0, 0, 0, .55); color: #fff; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  .pl-veil { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 8px; padding: 24px;
+    text-align: center; color: #fff; background: radial-gradient(80% 80% at 50% 45%, rgba(30, 32, 36, .92), rgba(0, 0, 0, .96)); }
+  .pl-veil .t { font-size: 17px; font-weight: 550; }
+  .pl-veil .s { font-size: 13.5px; color: #b7b9be; max-width: 44ch; }
+  .pl-veil svg { color: var(--amber); }
+  .pl-page .hud .v { font-size: 17px; font-weight: 500; letter-spacing: -.3px; white-space: nowrap; }
+  .pl-page .hud .speed .v { font-size: 30px; letter-spacing: -1px; line-height: 1; }
+  .pl-page .hud .speed small { font-size: 12px; color: var(--text-tertiary); margin-left: 4px; letter-spacing: 0; }
+  .pl-page .hud .clock { font-size: 13px; color: #d5d7db; }
+
+  /* transport */
+  .pl-transport { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+  .pl-play { width: 42px; height: 42px; padding: 0; border-radius: 50%; flex: none; display: grid; place-items: center;
+    background: var(--text-primary); color: var(--bg-primary); border: 0; }
+  .pl-play:hover { background: var(--text-primary); opacity: .9; }
+  .pl-time { font-size: 13px; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 84px; }
+  .pl-scrub { position: relative; flex: 1; min-width: 0; height: 30px; }
+  .pl-track { position: absolute; left: 0; right: 0; top: 13px; height: 4px; border-radius: 2px; }
+  .pl-track i { position: absolute; top: 0; bottom: 0; display: block; }
+  .pl-track .tk-seg { background: var(--line-strong); }
+  .pl-track .tk-seg.unknown { background: repeating-linear-gradient(90deg, var(--amber) 0 3px, transparent 3px 6px); opacity: .7; }
+  .pl-track .tk-fill { left: 0; background: var(--text-primary); border-radius: 2px 0 0 2px; pointer-events: none; }
+  .pl-track .tk-cut { width: 2px; margin-left: -1px; background: var(--bg-primary); }
+  .pl-track .tk-sel { top: -6px; bottom: -6px; border-radius: 4px; background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
+  .pl-track .tk-trig { top: -7px; bottom: -7px; width: 2px; margin-left: -1px; background: var(--red); border-radius: 1px; }
+  .pl-scrub input[type="range"] { position: absolute; inset: 0; width: 100%; height: 30px; margin: 0; background: transparent;
+    -webkit-appearance: none; appearance: none; cursor: pointer; }
+  .pl-scrub input[type="range"]::-webkit-slider-runnable-track { height: 30px; background: transparent; }
+  .pl-scrub input[type="range"]::-moz-range-track { height: 30px; background: transparent; }
+  .pl-scrub input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: 8px;
+    border-radius: 50%; background: var(--text-primary); box-shadow: 0 0 0 4px rgba(0, 0, 0, .25); }
+  .pl-scrub input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: var(--text-primary); }
+  .pl-rate { width: 72px; flex: none; }
+  .pl-keys { color: var(--text-tertiary); display: grid; place-items: center; cursor: help; flex: none; }
+
+  /* cameras and segments */
+  .pl-page .pip-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 8px; margin-top: 14px; }
+  .pip { position: relative; height: auto; padding: 0; border-radius: 10px; overflow: hidden; border: 1px solid var(--line);
+    background: #000; cursor: pointer; display: block; }
+  .pip:hover { border-color: var(--line-strong); background: #000; }
+  .pl-page .pip video { width: 100%; display: block; aspect-ratio: 4 / 3; object-fit: cover; border: 0; border-radius: 0; pointer-events: none; }
+  .pip > span { position: absolute; left: 6px; bottom: 6px; font-size: 11px; padding: 2px 6px; border-radius: 6px; background: rgba(0, 0, 0, .6); color: #fff; }
+  .pip .lockpip { aspect-ratio: 4 / 3; display: grid; place-items: center; color: var(--amber); }
+  .pl-segs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; max-height: 128px; overflow-y: auto; }
+  .pl-segs button { height: 30px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg-secondary);
+    color: var(--text-secondary); font-size: 12.5px; font-weight: 450; font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 7px; }
+  .pl-segs button small { color: var(--text-tertiary); font-size: 11.5px; }
+  .pl-segs button.on { background: var(--bg-hover); color: var(--text-primary); border-color: var(--line-strong); }
+  .pl-segs button.unknown small { color: var(--amber-ink); }
+
+  /* side column */
+  .pl-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .pl-card { padding: 18px; border-radius: var(--radius); background: var(--bg-secondary); border: 1px solid var(--line); min-width: 0; }
+  .pl-p { margin: 8px 0 12px; line-height: 1.55; }
+  .pl-form { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 10px 12px; align-items: center; }
+  .pl-form label, .pl-label { font-size: 12.5px; color: var(--text-secondary); }
+  .pl-form select { width: 100%; }
+  .pl-label { margin-bottom: 8px; }
+  .pl-range { display: flex; }
+  .pl-range button { flex: 1 1 auto; padding: 0 4px; font-size: 12.5px; white-space: nowrap; }
+  .pl-rnote { margin-top: 7px; font-size: 12px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; min-height: 1em; }
+  .pl-rnote.bad { color: var(--amber-ink); }
+  .pl-sel { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+  .pl-sel .cbtn { flex: 1; font-variant-numeric: tabular-nums; padding: 0 8px; }
+  .pl-cams { display: flex; flex-wrap: wrap; gap: 6px; }
+  .cam-chip { position: relative; display: inline-flex; align-items: center; height: 30px; padding: 0 11px; border-radius: 9px;
+    border: 1px solid var(--line-strong); font-size: 12.5px; color: var(--text-secondary); cursor: pointer; user-select: none; }
+  .cam-chip input { position: absolute; opacity: 0; pointer-events: none; }
+  .cam-chip:has(input:checked) { background: var(--accent-soft); border-color: transparent; color: var(--text-primary); }
+  .cam-chip:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .pl-toggle { display: flex; align-items: flex-start; gap: 14px; }
+  .pl-toggle .info { flex: 1; min-width: 0; }
+  .pl-toggle .name { font-size: 14px; }
+  .pl-toggle .desc { font-size: 12.5px; color: var(--text-tertiary); margin-top: 2px; line-height: 1.5; }
+  .pl-toggle .desc.warn { color: var(--amber-ink); }
+  .pl-encoder { margin-top: 10px; font-size: 12px; color: var(--text-tertiary); }
+  .pl-encoder details summary { cursor: pointer; list-style: none; text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line-strong); display: inline; }
+  .pl-encoder details summary::-webkit-details-marker { display: none; }
+  .pl-encoder ul { margin: 6px 0 0; padding-left: 16px; }
+  .pl-encoder li { margin: 2px 0; word-break: break-word; }
+  .pl-go { width: 100%; margin-top: 16px; }
+
+  /* export jobs */
+  .pl-jobs:not(:empty) { margin-top: 18px; border-top: 1px solid var(--line); }
+  .job { padding: 14px 0 0; }
+  .job + .job { margin-top: 14px; border-top: 1px solid var(--line); }
+  .job-h { display: flex; align-items: center; gap: 8px; font-size: 13.5px; }
+  .job-h .st { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 8px; background: var(--bg-hover); color: var(--text-secondary); }
+  .job-h .st.done { background: var(--green-soft); color: var(--green); }
+  .job-h .st.failed { background: var(--red-soft); color: var(--red); }
+  .job-h .st.running { background: var(--accent-soft); color: var(--text-primary); }
+  .job-h .len { color: var(--text-tertiary); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .job-h .sp { flex: 1; }
+  .job progress { width: 100%; height: 4px; margin-top: 10px; appearance: none; -webkit-appearance: none; border: 0; border-radius: 2px; background: var(--bg-hover); overflow: hidden; }
+  .job progress::-webkit-progress-bar { background: var(--bg-hover); }
+  .job progress::-webkit-progress-value { background: var(--accent); }
+  .job progress::-moz-progress-bar { background: var(--accent); }
+  .job ul { list-style: none; margin: 8px 0 0; padding: 0; }
+  .job li { font-size: 12.5px; color: var(--text-secondary); line-height: 1.5; padding: 3px 0 3px 14px; position: relative; }
+  .job li::before { content: ""; position: absolute; left: 2px; top: 10px; width: 5px; height: 5px; border-radius: 50%; background: var(--text-tertiary); }
+  .job li.warn::before { background: var(--amber); }
+  .job li.ok::before { background: var(--green); }
+  .job li.bad { color: var(--text-primary); }
+  .job li.bad::before { background: var(--red); }
+  .job .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .job pre { margin: 8px 0 0; max-height: 84px; overflow: auto; white-space: pre-wrap; word-break: break-word; font-size: 11.5px;
+    color: var(--text-tertiary); font-family: ui-monospace, Menlo, monospace; }
+  .job .enc { margin-top: 6px; font-size: 11.5px; color: var(--text-tertiary); }
+  .job .scope { margin-top: 4px; font-size: 12.5px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+
+  .pl-dl { width: 100%; }
+  .pl-note { margin-top: 12px; padding: 12px 14px; border-radius: 12px; background: var(--bg-hover); font-size: 13px; line-height: 1.55; }
+  .pl-note.ok { background: var(--green-soft); }
+  .pl-note.bad { background: var(--red-soft); }
+  .pl-note .src { display: block; margin-top: 6px; color: var(--text-secondary); }
+  .pl-side details.disclose > summary { padding: 13px 2px; }
+  .pl-side details.disclose > summary .value { white-space: nowrap; }
+
+  /* encrypted event */
+  .pl-lock { margin-bottom: 22px; padding: 22px 24px; border-radius: var(--radius-lg); border: 1px solid rgba(255, 179, 64, .32);
+    background: linear-gradient(100deg, var(--amber-soft), transparent 60%), var(--bg-secondary); }
+  .pl-lock .top { display: flex; gap: 18px; align-items: flex-start; }
+  .pl-lock .ic { width: 52px; height: 52px; border-radius: 16px; display: grid; place-items: center; flex: none; background: var(--amber-soft); color: var(--amber); }
+  .pl-lock .eyebrow { color: var(--amber-ink); }
+  .pl-lock h2 { font-size: 20px; font-weight: 550; letter-spacing: -.3px; margin-top: 4px; }
+  .pl-lock .lead { margin: 8px 0 0; max-width: 70ch; line-height: 1.6; }
+  .pl-lock .grow { flex: 1; min-width: 0; }
+  .pl-lock .row { margin-top: 16px; flex-wrap: wrap; gap: 10px; }
+  .pl-lock form { margin-top: 18px; max-width: 640px; }
+  .pl-lock input[type="password"] { width: 100%; font-family: ui-monospace, Menlo, monospace; }
+  .pl-lock .help { margin: 8px 0 0; font-size: 12.5px; color: var(--text-secondary); line-height: 1.55; }
+  .pl-lock .keep { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; font-size: 13.5px; cursor: pointer; }
+  .pl-lock .keep input { margin-top: 3px; accent-color: var(--accent); width: 15px; height: 15px; flex: none; }
+  .pl-lock .keep small { display: block; color: var(--text-tertiary); font-size: 12.5px; margin-top: 2px; }
+  .pl-lock details.disclose { margin-top: 14px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .pl-lock pre { margin: 0; max-height: 260px; overflow: auto; padding: 12px 14px; border-radius: 12px; background: var(--bg-primary);
+    font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; line-height: 1.55; color: var(--text-secondary); white-space: pre; }
+  .pl-lock .bar { height: 4px; border-radius: 2px; background: var(--bg-hover); overflow: hidden; margin-top: 14px; max-width: 520px; }
+  .pl-lock .bar i { display: block; height: 100%; background: var(--amber); transition: width 300ms var(--ease-out); }
+  .pl-lock ul { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--text-secondary); }
+  .pl-lock .msg { margin-top: 12px; font-size: 13.5px; }
+  .pl-lock .msg.bad { color: var(--red); }
+
+  @media (max-width: 640px) {
+    .pl-sub { padding-top: 4px; }
+    .pl-head { margin-bottom: 16px; }
+    .pl-transport { flex-wrap: wrap; gap: 8px 12px; }
+    .pl-scrub { order: -1; flex: 1 0 100%; }
+    .pl-time { flex: 1; }
+    .pl-page .video-stage { border-radius: 14px; }
+    .pl-page .hud { position: static; border-radius: 0; border: 0; border-top: 1px solid rgba(255, 255, 255, .08);
+      gap: 10px 16px; padding: 10px 12px; background: #0c0c0d; }
+    .pl-page .hud .opt { display: none; }
+    .pl-page .hud .speed .v { font-size: 24px; }
+    .pl-page .hud .clock { flex-basis: 100%; text-align: left; margin-left: 0; font-size: 12px; }
+    .pl-page .pip-row { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+    .pl-lock { padding: 18px; }
+    .pl-lock .top { flex-direction: column; gap: 12px; }
+    .pl-lock .ic { width: 44px; height: 44px; border-radius: 14px; }
+  }
+</style>
 {% endblock %}
 
 {% block scripts %}
 <script>
-/* 机位名不能在解析时用 t() 建成常量 —— 那会把词表加载前的原始 key
-   永久固化进去。改成渲染时才取。 */
-const camName = (c) => t("dashcam.cam." + c, undefined) === "dashcam.cam." + c ? c : t("dashcam.cam." + c);
-const evId = new URLSearchParams(location.search).get("id");
-let ev = null, segIdx = 0, mainCam = "front", playing = false;
-let tmSamples = [], seiCache = {}, hudTimer = null;
-let carId = null;  // 遥测/校准/合成叠加所针对的车辆
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const QS = new URLSearchParams(location.search);
+  const evId = QS.get("id");
+  const $main = $("main"), $pips = $("pips"), $seek = $("seek");
 
-const $main = document.getElementById("main");
-const $pips = document.getElementById("pips");
-const $seek = document.getElementById("seek");
-
-function segCams() { return ev.segments[segIdx].cameras; }
-function camList() { return ev.cameras; }
-
-function mediaUrl(rel) { return "/media/" + rel.split("/").map(encodeURIComponent).join("/"); }
-
-function currentRate() { return +document.getElementById("rate").value; }
-
-function loadSegment(idx, keepTime = 0) {
-  segIdx = idx;
-  const cams = segCams();
-  if (!cams[mainCam]) mainCam = Object.keys(cams)[0];
-  $main.src = mediaUrl(cams[mainCam]);
-  $main.currentTime = keepTime;
-  $main.playbackRate = currentRate(); // 换 src 会把倍速重置回 1×
-  // 先停掉旧的副视角再清 DOM。只 innerHTML="" 的话，浏览器会把那些
-  // <video> 留在后台继续解码和缓冲 —— 6 机位事件里连换几段之后，
-  // 内存和 CPU 都下不来。removeAttribute("src") + load() 是断源的标准做法。
-  $pips.querySelectorAll("video").forEach((v) => {
-    v.pause();
-    v.removeAttribute("src");
-    v.load();
-  });
-  $pips.innerHTML = "";
-  for (const cam of camList()) {
-    if (cam === mainCam || !cams[cam]) continue;
-    const v = document.createElement("video");
-    v.muted = true; v.playsInline = true;
-    v.src = mediaUrl(cams[cam]);
-    v.currentTime = keepTime;
-    v.playbackRate = currentRate();
-    v.title = camName(cam);
-    v.dataset.cam = cam;
-    v.addEventListener("click", () => { mainCam = cam; loadSegment(segIdx, $main.currentTime); });
-    $pips.appendChild(v);
-  }
-  document.querySelectorAll("#segs button").forEach((b, i) => b.classList.toggle("active", i === idx));
-  if (playing) playAll();
-  loadSei(idx);
-}
-
-function playAll() {
-  playing = true;
-  $main.play().catch(() => document.getElementById("hevc-tip").style.display = "block");
-  $pips.querySelectorAll("video").forEach(v => v.play().catch(() => {}));
-  document.getElementById("btn-play").textContent = "⏸ " + t("player.pause");
-}
-function pauseAll() {
-  playing = false;
-  $main.pause();
-  $pips.querySelectorAll("video").forEach(v => v.pause());
-  document.getElementById("btn-play").textContent = "▶ " + t("player.play");
-}
-
-document.getElementById("btn-play").addEventListener("click", () => playing ? pauseAll() : playAll());
-document.getElementById("rate").addEventListener("change", (e) => {
-  const r = +e.target.value;
-  $main.playbackRate = r;
-  $pips.querySelectorAll("video").forEach(v => v.playbackRate = r);
-});
-let previewTried = {};
-$main.addEventListener("error", async () => {
-  document.getElementById("hevc-tip").style.display = "block";
-  // 自动请求服务端 H.264 转码预览（每分段只试一次）
-  const cams = ev && segCams();
-  const rel = cams && cams[mainCam];
-  if (!rel || previewTried[rel]) return;
-  previewTried[rel] = true;
-  const tip = document.getElementById("hevc-tip");
-  tip.innerHTML = t("player.preview.transcoding");
-  try {
-    const fd = new FormData();
-    fd.append("path", rel);
-    const r = await fetch("/api/dashcam/preview", { method: "POST", body: fd });
-    if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
-    const { url } = await r.json();
-    // 转码要 10-30 秒，期间用户可能已切换分段/机位——核对后再替换
-    if (!ev || segCams()[mainCam] !== rel) return;
-    const keep = $main.currentTime;
-    $main.src = url;
-    $main.currentTime = keep;
-    $main.playbackRate = currentRate();
-    tip.innerHTML = t("player.preview.ready");
-    if (playing) $main.play().catch(() => {});
-  } catch (e) {
-    // e.message 来自后端的 detail 字段，里面会拼进文件路径。走 innerHTML
-    // 就必须转义 —— 这些路径有一部分是用户通过 U 盘导入自己命名的。
-    tip.innerHTML = t("player.preview.failed", { message: esc(e.message || "") });
-  }
-});
-$main.addEventListener("ended", () => {
-  if (segIdx < ev.segments.length - 1) loadSegment(segIdx + 1);
-  else pauseAll();
-});
-
-/* 同步画中画与主画面 */
-setInterval(() => {
-  if (!playing) return;
-  $pips.querySelectorAll("video").forEach(v => {
-    if (Math.abs(v.currentTime - $main.currentTime) > 0.3) v.currentTime = $main.currentTime;
-  });
-}, 1000);
-
-/* 全局时间轴 */
-$main.addEventListener("timeupdate", () => {
-  const total = ev ? ev.segments.length * 60 : 0;
-  const pos = segIdx * 60 + $main.currentTime;
-  $seek.value = total ? (pos / total) * 100 : 0;
-  document.getElementById("time-label").textContent = fmt.ts(pos) + " / " + fmt.ts(total);
-});
-$seek.addEventListener("input", () => {
-  const total = ev.segments.length * 60;
-  const want = (+$seek.value / 100) * total;
-  const idx = Math.min(Math.floor(want / 60), ev.segments.length - 1);
-  const within = want - idx * 60;
-  if (idx !== segIdx) loadSegment(idx, within);
-  else $main.currentTime = within;
-});
-
-/* ---------------- HUD 遥测 ---------------- */
-async function loadTelemetry() {
-  try {
-    const start = ev.segments[0].start;
-    const endT = new Date(new Date(ev.segments[ev.segments.length - 1].start).getTime() + 60000);
-    const end = endT.getFullYear() + "-" + String(endT.getMonth() + 1).padStart(2, "0") + "-" + String(endT.getDate()).padStart(2, "0") +
-      "T" + String(endT.getHours()).padStart(2, "0") + ":" + String(endT.getMinutes()).padStart(2, "0") + ":" + String(endT.getSeconds()).padStart(2, "0");
-    const q = `/api/dashcam/telemetry?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&step=1` +
-              (carId ? `&car_id=${carId}` : "");
-    const r = await apiGet(q);
-    tmSamples = r.samples;
-    if (r.clock_offset) {
-      document.getElementById("align-result").innerHTML =
-        t("player.align.current", { offset: (r.clock_offset > 0 ? "+" : "") + r.clock_offset });
-    }
-  } catch (e) { tmSamples = []; }
-}
-async function loadSei(idx) {
-  const cams = ev.segments[idx].cameras;
-  const rel = cams.front || cams[Object.keys(cams)[0]];
-  if (!rel || seiCache[idx] !== undefined) { updateSeiStats(); return; }
-  seiCache[idx] = null;
-  try {
-    const r = await apiGet(`/api/dashcam/sei?path=${encodeURIComponent(rel)}`);
-    seiCache[idx] = r.available ? r.samples : [];
-  } catch (e) { seiCache[idx] = []; }
-  updateSeiStats();
-}
-
-function updateSeiStats() {
-  const s = seiCache[segIdx];
-  const div = document.getElementById("sei-stats");
-  if (!s || !s.length) { div.innerHTML = `<b>${t("dashcam.sei.title")}</b><div class='muted mt'>${t("dashcam.sei.none")}</div>`; return; }
-  let apN = 0, brakes = 0, prev = false, maxG = 0, maxV = 0;
-  for (const x of s) {
-    if (x.ap) apN++;
-    if (x.brake && !prev) brakes++;
-    prev = x.brake;
-    if (x.accel_x != null && x.accel_y != null) maxG = Math.max(maxG, Math.hypot(x.accel_x, x.accel_y) / 9.81);
-    if (x.speed_kmh) maxV = Math.max(maxV, x.speed_kmh);
-  }
-  div.innerHTML = `<b>${t("dashcam.sei.title")}</b><div class="muted mt">
-    ${t("dashcam.sei.summary_ap", { pct: Math.round(apN / s.length * 100), brakes })}<br>
-    ${t("dashcam.sei.summary_max", { speed: U.speed(maxV), unit: U.speedLabel(), g: maxG.toFixed(2) })}</div>`;
-}
-// 形参原名 t，会遮蔽全局的 t()——改名 tSec
-function nearest(arr, tSec, key = "t") {
-  if (!arr || !arr.length) return null;
-  let best = null, bd = Infinity;
-  for (const s of arr) { const d = Math.abs(s[key] - tSec); if (d < bd) { bd = d; best = s; } }
-  return bd <= 3 ? best : null;
-}
-function set(id, v) { document.getElementById(id).textContent = v; }
-hudTimer = setInterval(() => {
-  if (!ev) return;
-  document.getElementById("hud").style.display = "flex";
-  set("h-speed-unit", U.speedLabel());
-  const tGlobal = segIdx * 60 + $main.currentTime;
-  const tm = nearest(tmSamples, tGlobal);
-  const se = nearest(seiCache[segIdx], $main.currentTime);
-  const speed = (se && se.speed_kmh != null) ? se.speed_kmh : (tm && tm.speed != null ? tm.speed : null);
-  set("h-speed", speed != null ? U.speed(speed) : "--");
-  set("h-gear", se ? `${se.gear || "–"}${se.ap ? " · " + se.ap : ""}${se.brake ? " · " + t("player.hud.brake") : ""}` : "–");
-  set("h-power", tm && tm.power != null ? Math.round(tm.power) + " kW" : "–");
-  set("h-soc", tm && tm.usable_battery_level != null ? Math.round(tm.usable_battery_level) + "%" : (tm && tm.battery_level != null ? Math.round(tm.battery_level) + "%" : "–"));
-  set("h-elev", tm && tm.elevation != null ? Math.round(tm.elevation) + " m" : "–");
-  set("h-steer", se && se.steering_angle != null ? (se.steering_angle > 0 ? "+" : "") + Math.round(se.steering_angle) + "°" : "–");
-  set("h-pedal", se && se.accel_pedal != null ? Math.round(se.accel_pedal) + "%" : "–");
-  const clk = new Date(new Date(ev.segments[segIdx].start).getTime() + $main.currentTime * 1000);
-  set("h-clock", clk.toLocaleString(localeTag()));
-}, 300);
-
-/* ---------------- 合成导出 ---------------- */
-document.getElementById("x-go").addEventListener("click", async () => {
-  const cams = [...document.querySelectorAll("#x-cams input:checked")].map(i => i.value);
-  const range = document.getElementById("x-range").value;
-  const body = {
-    event_id: evId,
-    layout: document.getElementById("x-layout").value,
-    quality: document.getElementById("x-quality").value,
-    cameras: cams.length ? cams : null,
-    overlay: document.getElementById("x-overlay").checked,
-    car_id: carId,
-    // 用分段起始时间定位而非偏移量——掉段时偏移会指到错误的分钟
-    segment: range === "seg" ? ev.segments[segIdx].start : null,
+  /* Reason codes → catalog keys; resolved at render time. */
+  const REASON_KEYS = {
+    sentry_aware_object_detection: "dashcam.reason.object_detected",
+    sentry_panic_alarm: "dashcam.reason.panic_alarm",
+    user_interaction_dashcam_icon_tapped: "dashcam.reason.saved_icon",
+    user_interaction_dashcam_panel_save: "dashcam.reason.saved_panel",
+    user_interaction_honk: "dashcam.reason.honk",
   };
-  try {
-    await apiPost("/api/dashcam/compose", body);
-    pollJobs();
-  } catch (e) { alert(t("player.export.submit_failed", { message: e.message })); }
-});
+  const CAM_ORDER = ["front", "back", "left_repeater", "right_repeater", "left_pillar", "right_pillar"];
 
-async function pollJobs() {
-  try {
-    const rows = (await apiGet("/api/dashcam/jobs")).filter(j => j.event_id === evId).slice(0, 6);
-    const div = document.getElementById("jobs");
-    if (!rows.length) { div.innerHTML = `<div class="muted">${t("player.jobs.empty")}</div>`; return; }
-    const S = { queued: t("player.jobs.queued"), running: t("player.jobs.running"), done: t("player.jobs.done"), failed: t("player.jobs.failed"), cancelled: t("player.jobs.cancelled") };
-    // 这一段的每一个插值都要过 esc()。j.error 是 ffmpeg 的原始 stderr，
-    // 里面会带用户可控的文件名（U 盘导入的路径、事件目录名）；j.output 进
-    // href；layout 来自任务参数。任何一处漏掉，导出失败一次就能在这个
-    // 能解锁车辆的门户里执行脚本。
-    div.innerHTML = rows.map((j) => {
-      let layout = "";
-      try { layout = JSON.parse(j.params).layout || ""; } catch (e) { /* 参数损坏就不显示 */ }
-      return `
-      <div class="rule-row">
-        <div class="name">#${j.id} ${esc(layout)} <span class="muted">${esc(S[j.status] || j.status)}</span>
-          ${j.status === "running" ? `<progress max="100" value="${+j.progress || 0}" style="width:100%"></progress>` : ""}
-          ${j.status === "failed" ? `<div class="muted" style="white-space:pre-wrap;max-height:60px;overflow:auto">${esc((j.error || "").slice(-300))}</div>` : ""}
+  let ev = null;                 // GET /event
+  let segIdx = 0, mainCam = "front", playing = false;
+  let tmSamples = [], clockOffset = null, seiCache = {};
+  let tmBase = NaN, tmEnd = NaN, tmLoading = false;   // naive-ms window the samples cover
+  let carId = null, encoderInfo = null;
+  let scan = null;               // GET /decrypt/scan
+  let locked = new Set();        // relative paths of encrypted clips
+  let lockUi = "intro";          // intro | form | running | done | failed
+  let decryptState = null;
+  let rangeMode = "all", selIn = null, selOut = null;
+  let triggerPos = null;
+  let jobsTimer = null, decryptTimer = null;
+  const previewTried = {};
+
+  const camName = (c) => { const k = "dashcam.cam." + c; const s = t(k); return s === k ? c : s; };
+  const mediaUrl = (rel) => "/media/" + rel.split("/").map(encodeURIComponent).join("/");
+  const rate = () => +$("rate").value;
+  const pauseIcon = (s) => `<svg viewBox="0 0 24 24" width="${s}" height="${s}" fill="currentColor" aria-hidden="true"><rect x="6.5" y="5" width="3.6" height="14" rx="1"/><rect x="13.9" y="5" width="3.6" height="14" rx="1"/></svg>`;
+
+  /* Clip names carry the car's local time with no zone. Treat them as UTC
+     internally and format with timeZone "UTC": differences come out right
+     and the digits shown are the ones the car wrote. */
+  function naiveMs(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(\.\d+)?/.exec(iso || "");
+    if (!m) return NaN;
+    return Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) + (m[7] ? Math.round(parseFloat(m[7]) * 1000) : 0);
+  }
+  const naiveIso = (ms) => new Date(ms).toISOString().slice(0, 19);
+  const clock = (ms, opts) => new Date(ms).toLocaleString(localeTag(), { timeZone: "UTC", ...opts });
+  const hms = (ms) => clock(ms, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const secs = (s) => (s < 60 ? s.toFixed(s < 10 ? 1 : 0) + " s" : fmt.ts(s));
+  const len = (s) => fmt.ts(Math.round(s));      // a length, rounded; the playhead floors
+
+  /* ------------------------------------------------------------ timeline
+     Segments sit end to end: segment i covers [offset, offset + duration).
+     Gaps between RecentClips are closed up, so wall-clock time comes from
+     the segment's own start, never from the event start. */
+  const seg = (i) => ev.segments[i];
+  const total = () => (ev ? ev.duration : 0);
+  const position = () => (ev ? seg(segIdx).offset + ($main.currentTime || 0) : 0);
+
+  function locate(pos) {
+    const p = Math.max(0, Math.min(pos, total()));
+    let i = 0;
+    while (i < ev.segments.length - 1 && p >= seg(i + 1).offset) i++;
+    return { idx: i, within: Math.max(0, Math.min(p - seg(i).offset, seg(i).duration - 0.05)) };
+  }
+  /* wall clock (naive ms) → timeline position; a moment inside a gap maps to the next segment */
+  function locateWall(ms) {
+    for (const s of ev.segments) {
+      const st = naiveMs(s.start);
+      if (ms < st) return s.offset;
+      if (ms < st + s.duration * 1000) return s.offset + (ms - st) / 1000;
+    }
+    return total();
+  }
+  const segLocked = (s) => Object.values(s.cameras).some((p) => locked.has(p));
+
+  function seekTo(pos) {
+    if (!ev) return;
+    const { idx, within } = locate(pos);
+    if (idx !== segIdx || !$main.getAttribute("src")) loadSegment(idx, within);
+    else { $main.currentTime = within; $pips.querySelectorAll("video").forEach((v) => { v.currentTime = within; }); }
+    paintTime();
+  }
+
+  function loadSegment(idx, keep = 0) {
+    segIdx = idx;
+    const cams = seg(idx).cameras;
+    if (!cams[mainCam]) mainCam = cams.front ? "front" : Object.keys(cams)[0];
+    const rel = cams[mainCam];
+    const lockedMain = locked.has(rel);
+    if (lockedMain) { $main.removeAttribute("src"); $main.load(); }
+    else {
+      $main.src = mediaUrl(rel);
+      $main.currentTime = keep;
+      $main.playbackRate = rate();           // a new src resets the rate to 1×
+    }
+    paintVeil(lockedMain ? "locked" : null);
+    $("pl-camtag").hidden = false;
+    $("pl-camtag").textContent = camName(mainCam);
+    // Stop the old angles before dropping them, or the browser keeps decoding
+    // them in the background — six angles × a few segment changes adds up.
+    $pips.querySelectorAll("video").forEach((v) => { v.pause(); v.removeAttribute("src"); v.load(); });
+    $pips.innerHTML = "";
+    const order = [...CAM_ORDER, ...Object.keys(cams).filter((c) => !CAM_ORDER.includes(c))];
+    for (const cam of order) {
+      if (cam === mainCam || !cams[cam]) continue;
+      const b = document.createElement("button");
+      b.type = "button"; b.className = "pip"; b.title = camName(cam);
+      if (locked.has(cams[cam])) {
+        b.innerHTML = `<div class="lockpip">${icon("lock", 18)}</div><span>${esc(camName(cam))}</span>`;
+      } else {
+        const v = document.createElement("video");
+        v.muted = true; v.playsInline = true; v.preload = "auto";
+        v.src = mediaUrl(cams[cam]);
+        v.currentTime = keep; v.playbackRate = rate();
+        b.append(v);
+        b.insertAdjacentHTML("beforeend", `<span>${esc(camName(cam))}</span>`);
+      }
+      b.addEventListener("click", () => { mainCam = cam; loadSegment(segIdx, $main.currentTime || keep); });
+      $pips.append(b);
+    }
+    $("segs").querySelectorAll("button").forEach((b, i) => b.classList.toggle("on", i === idx));
+    $("hevc-tip").hidden = true;
+    if (playing) playAll();
+    loadSei(idx);
+    paintRangeNote();
+    paintTime();
+  }
+
+  function paintVeil(kind) {
+    const v = $("pl-veil");
+    v.hidden = !kind;
+    if (!kind) return;
+    v.innerHTML = kind === "locked"
+      ? `${icon("lock", 28)}<div class="t">${esc(t("player.veil.locked_title"))}</div><div class="s">${esc(t("player.veil.locked_body"))}</div>`
+      : `${icon("warn", 28)}<div class="t">${esc(t("player.veil.bad_title"))}</div><div class="s">${esc(t("player.veil.bad_body"))}</div>`;
+  }
+
+  function paintPlay() {
+    $("btn-play").innerHTML = playing ? pauseIcon(18) : icon("play", 18);
+    $("btn-play").setAttribute("aria-label", playing ? t("player.pause") : t("player.play"));
+  }
+  function playAll() {
+    playing = true;
+    if ($main.getAttribute("src")) $main.play().catch(() => {});
+    $pips.querySelectorAll("video").forEach((v) => v.play().catch(() => {}));
+    paintPlay();
+  }
+  function pauseAll() {
+    playing = false;
+    $main.pause();
+    $pips.querySelectorAll("video").forEach((v) => v.pause());
+    paintPlay();
+  }
+
+  $("btn-play").addEventListener("click", () => (playing ? pauseAll() : playAll()));
+  $("rate").addEventListener("change", () => {
+    $main.playbackRate = rate();
+    $pips.querySelectorAll("video").forEach((v) => { v.playbackRate = rate(); });
+  });
+  $main.addEventListener("ended", () => {
+    if (segIdx < ev.segments.length - 1) loadSegment(segIdx + 1);
+    else pauseAll();
+  });
+  $main.addEventListener("error", async () => {
+    if (!ev || !$main.getAttribute("src")) return;
+    const rel = seg(segIdx).cameras[mainCam];
+    if (!rel || locked.has(rel)) return;
+    if (!seg(segIdx).duration_known) { paintVeil("bad"); return; }   // truncated: a transcode can't help
+    const tip = $("hevc-tip");
+    tip.hidden = false;
+    if (previewTried[rel]) return;
+    previewTried[rel] = true;
+    // Ask the hub for an H.264 preview (once per clip)
+    tip.textContent = plain(t("player.preview.transcoding"));
+    try {
+      const fd = new FormData();
+      fd.append("path", rel);
+      const r = await fetch("/api/dashcam/preview", { method: "POST", body: fd });
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText);
+      const { url } = await r.json();
+      // Transcoding takes 10–30 s; the viewer may have moved on meanwhile
+      if (!ev || seg(segIdx).cameras[mainCam] !== rel) return;
+      const keep = $main.currentTime;
+      $main.src = url;
+      $main.currentTime = keep;
+      $main.playbackRate = rate();
+      tip.textContent = t("player.preview.ready");
+      if (playing) $main.play().catch(() => {});
+    } catch (e) {
+      tip.textContent = t("player.preview.failed", { message: e.message || "" });
+    }
+  });
+
+  // keep the other angles in step with the main one
+  setInterval(() => {
+    if (!playing) return;
+    $pips.querySelectorAll("video").forEach((v) => {
+      if (Math.abs(v.currentTime - $main.currentTime) > 0.3) v.currentTime = $main.currentTime;
+    });
+  }, 1000);
+
+  function paintTime() {
+    if (!ev) return;
+    const pos = position(), T = total();
+    $seek.value = pos;
+    $("time-label").textContent = fmt.ts(pos) + " / " + len(T);
+    const fill = $("tk-fill");
+    if (fill) fill.style.width = (T ? (pos / T) * 100 : 0) + "%";
+  }
+  $main.addEventListener("timeupdate", paintTime);
+  $seek.addEventListener("input", () => seekTo(+$seek.value));
+
+  function paintTrack() {
+    const T = total() || 1, pct = (x) => ((x / T) * 100).toFixed(3) + "%";
+    let h = ev.segments.map((s) =>
+      `<i class="tk-seg${s.duration_known ? "" : " unknown"}" style="left:${pct(s.offset)};width:${pct(s.duration)}"></i>`).join("");
+    h += `<i class="tk-fill" id="tk-fill"></i>`;
+    h += ev.segments.slice(1).map((s) => `<i class="tk-cut" style="left:${pct(s.offset)}"></i>`).join("");
+    if (rangeMode === "sel" && selIn != null && selOut != null && selOut > selIn) {
+      h += `<i class="tk-sel" style="left:${pct(selIn)};width:${pct(selOut - selIn)}"></i>`;
+    }
+    if (triggerPos != null) h += `<i class="tk-trig" style="left:${pct(triggerPos)}" title="${esc(t(ev.type === "sentry" ? "player.trigger.sentry" : "player.trigger.saved"))}"></i>`;
+    $("track").innerHTML = h;
+    $seek.max = T;
+    paintTime();
+  }
+
+  function paintSegs() {
+    $("segs").innerHTML = ev.segments.map((s, i) => {
+      const lockedSeg = segLocked(s);
+      const note = !s.duration_known ? (lockedSeg ? t("player.seg.locked") : t("player.seg.unknown")) : "";
+      return `<button type="button" class="${s.duration_known ? "" : "unknown"}${i === segIdx ? " on" : ""}" data-i="${i}" title="${esc(note)}">
+        ${esc(hms(naiveMs(s.start)))}<small>${s.duration_known ? esc(len(s.duration)) : lockedSeg ? icon("lock", 12) : "?"}</small></button>`;
+    }).join("");
+    $("segs").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => loadSegment(+b.dataset.i)));
+  }
+
+  /* --------------------------------------------------------------- HUD
+     TeslaMate samples are keyed by wall-clock seconds since the first
+     segment's start; SEI samples by seconds into the current clip. */
+  function nearestT(arr, tt, maxGap = 3) {
+    if (!arr || !arr.length) return null;
+    let lo = 0, hi = arr.length - 1;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (arr[mid].t < tt) lo = mid + 1; else hi = mid; }
+    let best = arr[lo];
+    if (lo > 0 && Math.abs(arr[lo - 1].t - tt) < Math.abs(best.t - tt)) best = arr[lo - 1];
+    return Math.abs(best.t - tt) <= maxGap ? best : null;
+  }
+  const setText = (id, v) => { const n = $(id); if (n.textContent !== v) n.textContent = v; };
+
+  function paintHud() {
+    if (!ev) return;
+    $("hud").hidden = !$("pl-veil").hidden;
+    const cur = $main.currentTime || 0;
+    const startMs = naiveMs(seg(segIdx).start);
+    const nowMs = startMs + cur * 1000;
+    if (!tmLoading && !isNaN(tmBase) && (nowMs < tmBase || nowMs > tmEnd)) loadTelemetry();
+    const tm = nearestT(tmSamples, (nowMs - tmBase) / 1000);
+    const se = nearestT(seiCache[segIdx], cur, 1.5);
+    const speed = se && se.speed_kmh != null ? se.speed_kmh : tm && tm.speed != null ? tm.speed : null;
+    setText("h-speed", speed != null ? String(U.speed(speed)) : "–");
+    setText("h-speed-unit", U.speedLabel());
+    setText("h-gear", se ? [se.gear || "–", se.ap, se.brake ? t("player.hud.brake") : ""].filter(Boolean).join(" · ") : "–");
+    setText("h-power", tm && tm.power != null ? Math.round(tm.power) + " kW" : "–");
+    const soc = tm && (tm.usable_battery_level ?? tm.battery_level);
+    setText("h-soc", soc != null ? Math.round(soc) + "%" : "–");
+    setText("h-elev", tm && tm.elevation != null ? Math.round(tm.elevation) + " m" : "–");
+    setText("h-steer", se && se.steering_angle != null ? (se.steering_angle > 0 ? "+" : "") + Math.round(se.steering_angle) + "°" : "–");
+    setText("h-pedal", se && se.accel_pedal != null ? Math.round(se.accel_pedal) + "%" : "–");
+    setText("h-clock", clock(startMs + cur * 1000, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+  }
+  setInterval(paintHud, 250);
+
+  /* TeslaMate samples, keyed by seconds since the requested start. The hub
+     caps a request at 4.5 h, so a long drive is fetched as a 4-hour window
+     around the playhead and moved when playback leaves it. */
+  const TM_WINDOW_MS = 4 * 3600 * 1000;
+  async function loadTelemetry() {
+    if (!ev) return;
+    const last = seg(ev.segments.length - 1);
+    let from = naiveMs(seg(0).start), to = naiveMs(last.start) + (last.duration + 2) * 1000;
+    if (to - from > TM_WINDOW_MS) {
+      from = Math.max(from, naiveMs(seg(segIdx).start) - 30 * 60 * 1000);
+      to = Math.min(to, from + TM_WINDOW_MS);
+    }
+    tmLoading = true;
+    try {
+      const r = await apiGet(`/api/dashcam/telemetry?start=${encodeURIComponent(naiveIso(from))}&end=${encodeURIComponent(naiveIso(to))}&step=1`
+                             + (carId ? `&car_id=${carId}` : ""));
+      tmSamples = r.samples || [];
+      clockOffset = r.clock_offset ?? 0;
+    } catch (e) { tmSamples = []; clockOffset = null; }
+    tmBase = from; tmEnd = to; tmLoading = false;
+    $("v-align").textContent = clockOffset == null ? "" : clockOffset
+      ? t("player.align.value", { offset: (clockOffset > 0 ? "+" : "") + clockOffset })
+      : t("player.align.value_none");
+  }
+
+  async function loadSei(idx) {
+    const cams = seg(idx).cameras;
+    const rel = cams.front || cams[Object.keys(cams)[0]];
+    if (seiCache[idx] !== undefined || !rel || locked.has(rel)) { paintSei(); return; }
+    seiCache[idx] = null;
+    try {
+      const r = await apiGet(`/api/dashcam/sei?path=${encodeURIComponent(rel)}`);
+      seiCache[idx] = r.available ? r.samples : [];
+    } catch (e) { seiCache[idx] = []; }
+    paintSei();
+  }
+
+  function paintSei() {
+    const s = seiCache[segIdx];
+    const box = $("sei-stats");
+    if (!s || !s.length) {
+      $("v-sei").textContent = "";
+      box.textContent = t("dashcam.sei.none");
+      return;
+    }
+    let apN = 0, brakes = 0, prev = false, maxG = 0, maxV = 0;
+    for (const x of s) {
+      if (x.ap) apN++;
+      if (x.brake && !prev) brakes++;
+      prev = x.brake;
+      if (x.accel_x != null && x.accel_y != null) maxG = Math.max(maxG, Math.hypot(x.accel_x, x.accel_y) / 9.81);
+      if (x.speed_kmh) maxV = Math.max(maxV, x.speed_kmh);
+    }
+    const pct = Math.round((apN / s.length) * 100);
+    $("v-sei").textContent = t("player.sei.value", { speed: U.speed(maxV), unit: U.speedLabel() });
+    box.innerHTML = `<div class="tertiary">${esc(t("player.sei.scope", { time: hms(naiveMs(seg(segIdx).start)) }))}</div>
+      <div class="mt">${esc(t("dashcam.sei.summary_ap", { pct, brakes }))}</div>
+      <div class="mt">${esc(t("dashcam.sei.summary_max", { speed: U.speed(maxV), unit: U.speedLabel(), g: maxG.toFixed(2) }))}</div>`;
+  }
+
+  /* -------------------------------------------------------------- header */
+  function paintHead() {
+    const typeKey = { sentry: "dashcam.sentry", saved: "dashcam.saved", recent: "dashcam.driving" }[ev.type];
+    $("pl-kind").textContent = [typeKey ? t(typeKey) : ev.type, ev.city].filter(Boolean).join(" · ");
+    const at = naiveMs(ev.timestamp);
+    const title = isNaN(at) ? ev.timestamp
+      : clock(at, { weekday: "long", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    $("ev-title").textContent = title;
+    document.title = `${title} · ${t("player.page_title")}`;
+    const facts = [];
+    if (ev.reason) facts.push(`<span>${esc(REASON_KEYS[ev.reason] ? t(REASON_KEYS[ev.reason]) : ev.reason)}</span>`);
+    const unknown = ev.segments.filter((s) => !s.duration_known).length;
+    facts.push(`<span>${icon("clock", 15)}${esc(len(ev.duration))}${unknown ? " " + esc(t("player.facts.approx")) : ""}</span>`);
+    facts.push(`<span>${icon("film", 15)}${esc(t(ev.cameras.length === 1 ? "player.facts.camera_one" : "player.facts.cameras", { n: ev.cameras.length }))}</span>`);
+    if (ev.est_lat && ev.est_lon) {
+      facts.push(`<a target="_blank" rel="noopener" href="https://maps.google.com/?q=${encodeURIComponent(ev.est_lat + "," + ev.est_lon)}">${icon("pin", 15)}${esc(t("player.facts.map"))}</a>`);
+    }
+    $("pl-facts").innerHTML = facts.join("");
+  }
+
+  /* -------------------------------------------------------------- export */
+  function paintCams() {
+    const prev = new Set([...$("x-cams").querySelectorAll("input")].filter((i) => !i.checked).map((i) => i.value));
+    $("x-cams").innerHTML = [...ev.cameras].sort((a, b) => CAM_ORDER.indexOf(a) - CAM_ORDER.indexOf(b)).map((c) =>
+      `<label class="cam-chip"><input type="checkbox" value="${esc(c)}" ${prev.has(c) ? "" : "checked"}>${esc(camName(c))}</label>`).join("");
+  }
+
+  function setRange(mode) {
+    rangeMode = mode;
+    $("x-range").querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.r === mode));
+    if (mode === "sel" && (selIn == null || selOut == null)) {
+      selIn = Math.max(0, Math.min(position(), total() - 1));
+      selOut = Math.min(total(), selIn + 30);
+    }
+    $("x-sel").hidden = mode !== "sel";
+    paintRangeNote();
+    paintTrack();
+  }
+  $("x-range").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => setRange(b.dataset.r)));
+  $("sel-in").addEventListener("click", () => markSel("in"));
+  $("sel-out").addEventListener("click", () => markSel("out"));
+  function markSel(which) {
+    if (rangeMode !== "sel") setRange("sel");
+    const p = Math.round(position() * 10) / 10;
+    if (which === "in") { selIn = p; if (selOut != null && selOut <= selIn) selOut = Math.min(total(), selIn + 10); }
+    else { selOut = p; if (selIn != null && selIn >= selOut) selIn = Math.max(0, selOut - 10); }
+    paintRangeNote();
+    paintTrack();
+  }
+  const selValid = () => selIn != null && selOut != null && selOut - selIn >= 0.5;
+
+  function paintRangeNote() {
+    if (!ev) return;
+    const note = $("x-range-note");
+    note.classList.remove("bad");
+    if (rangeMode === "all") {
+      note.textContent = t("player.range.all_note", { len: len(total()) });
+    } else if (rangeMode === "seg") {
+      const s = seg(segIdx);
+      note.textContent = t("player.range.seg_note", { time: hms(naiveMs(s.start)), len: len(s.duration) });
+    } else {
+      $("sel-in").textContent = t("player.range.in", { time: fmt.ts(selIn) + "." + Math.floor((selIn % 1) * 10) });
+      $("sel-out").textContent = t("player.range.out", { time: fmt.ts(selOut) + "." + Math.floor((selOut % 1) * 10) });
+      if (selValid()) note.textContent = t("player.range.sel_note", { len: secs(selOut - selIn) });
+      else { note.textContent = t("player.range.sel_invalid"); note.classList.add("bad"); }
+    }
+    // nothing in a fully encrypted event can be read, so an export could only fail
+    const allLocked = !!(scan && scan.clips && scan.encrypted >= scan.clips);
+    $("x-go").disabled = (rangeMode === "sel" && !selValid()) || allLocked;
+    $("x-go-note").hidden = !allLocked;
+    if (allLocked) $("x-go-note").textContent = t("player.export.locked");
+  }
+
+  async function loadEncoder() {
+    try { encoderInfo = await apiGet("/api/dashcam/encoder"); } catch (e) { encoderInfo = null; }
+    paintEncoder();
+  }
+  function paintEncoder() {
+    const ov = $("x-overlay"), desc = $("x-overlay-desc"), box = $("x-encoder");
+    if (!encoderInfo) { box.textContent = ""; return; }
+    if (encoderInfo.overlay_supported === false) {
+      ov.checked = false; ov.disabled = true;
+      desc.textContent = t("player.export.no_libass");
+      desc.classList.add("warn");
+    } else {
+      ov.disabled = false;
+      desc.textContent = t("player.export.overlay_sub");
+      desc.classList.remove("warn");
+    }
+    const name = encoderInfo.encoder + (encoderInfo.mode ? ` (${encoderInfo.mode})` : "");
+    const failed = (encoderInfo.tried || []).filter((x) => !x.ok);
+    const line = esc(t(encoderInfo.hardware ? "player.export.encoder_hw" : "player.export.encoder_sw", { name }));
+    box.innerHTML = failed.length
+      ? `<details><summary>${line}</summary><ul>${(encoderInfo.tried || []).map((x) =>
+          `<li>${esc(x.encoder)}${x.mode ? ` (${esc(x.mode)})` : ""} — ${esc(x.ok ? t("player.export.encoder_ok") : (x.error || "").split("\n").filter(Boolean).pop() || "?")}</li>`).join("")}</ul></details>`
+      : line;
+  }
+
+  function exportBody() {
+    const cams = [...$("x-cams").querySelectorAll("input:checked")].map((i) => i.value);
+    const body = {
+      event_id: evId,
+      layout: $("x-layout").value,
+      quality: $("x-quality").value,
+      cameras: cams.length === ev.cameras.length ? null : cams,
+      overlay: $("x-overlay").checked,
+      car_id: carId,
+      lang: i18n.state.locale,
+    };
+    // A segment is addressed by its start time, not by an offset
+    if (rangeMode === "seg") body.segment = seg(segIdx).start;
+    if (rangeMode === "sel") { body.start_offset = +selIn.toFixed(2); body.end_offset = +selOut.toFixed(2); }
+    return { body, cams };
+  }
+
+  async function submit(body) {
+    try {
+      await apiPost("/api/dashcam/compose", body);
+      toast(t("player.export.queued"), "ok");
+      pollJobs();
+    } catch (e) {
+      toast(t("player.export.submit_failed", { message: e.message }), "err");
+    }
+  }
+  $("x-go").addEventListener("click", () => {
+    const { body, cams } = exportBody();
+    if (!cams.length) { toast(t("player.export.need_camera"), "err"); return; }
+    submit(body);
+  });
+
+  /* ---------------------------------------------------------- export jobs */
+  const JOB_STATES = { queued: "player.jobs.queued", running: "player.jobs.running", done: "player.jobs.done",
+                       failed: "player.jobs.failed", cancelled: "player.jobs.cancelled" };
+  const LAYOUT_KEYS = { grid: "player.export.layout_grid", front_pip: "player.export.layout_front_pip",
+                        back_pip: "player.export.layout_back_pip", vertical: "player.export.layout_vertical",
+                        wide: "player.export.layout_wide" };
+  // Warnings the report already carries as structured fields; shown from those, translated.
+  const COVERED = [/segment\(s\) skipped/i, /no libass/i, /no telemetry for this time range/i];
+  const SEI_ONLY = /TeslaMate database unavailable/i;
+  const segTime = (iso) => hms(naiveMs(iso));
+  const shortLayout = (l) => plain(t(LAYOUT_KEYS[l] || "player.export.layout_grid")).replace(/\s*[(（].*$/, "");
+
+  function reportLines(j, rep) {
+    const out = [];
+    if (j.status === "done") {
+      const ov = rep.overlay;
+      if (ov === "burned") out.push(["ok", t("player.report.burned")]);
+      else if (ov === "unavailable") out.push(["warn", t("player.report.unavailable")]);
+      else if (ov === "no_telemetry") out.push(["warn", t("player.report.no_telemetry")]);
+      if (rep.output_seconds != null && rep.duration && rep.output_seconds < rep.duration - 1) {
+        out.push(["warn", t("player.report.shorter", { out: len(rep.output_seconds), planned: len(rep.duration) })]);
+      }
+    }
+    for (const d of rep.dropped || []) {
+      const when = segTime(d.segment);
+      if ((d.unreadable || []).length) {
+        out.push(["warn", t("player.report.dropped_unreadable", { time: when, cams: listOf(d.unreadable.map((u) => camName(u.camera))) })]);
+      }
+      if ((d.missing || []).length) {
+        out.push(["warn", t("player.report.dropped_missing", { time: when, cams: listOf(d.missing.map(camName)) })]);
+      }
+    }
+    for (const s of rep.short_clips || []) {
+      out.push(["warn", t("player.report.short", { cam: camName(s.camera), time: segTime(s.segment),
+                                                    dur: s.duration, expected: s.expected })]);
+    }
+    for (const w of rep.warnings || []) {
+      if (COVERED.some((re) => re.test(w))) continue;
+      out.push(["warn", SEI_ONLY.test(w) ? t("player.report.sei_only") : w]);
+    }
+    return out;
+  }
+
+  function retryCams(j, rep) {
+    const bad = new Set();
+    for (const d of rep.dropped || []) {
+      (d.unreadable || []).forEach((u) => bad.add(u.camera));
+      (d.missing || []).forEach((c) => bad.add(c));
+    }
+    let params = {};
+    try { params = JSON.parse(j.params || "{}") || {}; } catch (e) { params = {}; }
+    const used = params.cameras || rep.cameras || ev.cameras;
+    return [...bad].filter((c) => used.includes(c) && used.length > 1).map((c) => ({ cam: c, params, cams: used.filter((x) => x !== c) }));
+  }
+
+  const listOf = (arr) => {
+    try { return new Intl.ListFormat(localeTag(), { style: "short", type: "conjunction" }).format(arr); }
+    catch (e) { return arr.join(", "); }
+  };
+  /* What a job covered, in words: "Without Rear · 0:03–0:12" */
+  function jobScope(params) {
+    const parts = [];
+    const used = params.cameras;
+    if (used && used.length) {
+      const left = ev.cameras.filter((c) => !used.includes(c));
+      if (left.length) parts.push(left.length < used.length ? t("player.jobs.without", { cams: listOf(left.map(camName)) })
+                                                            : t("player.jobs.only", { cams: listOf(used.map(camName)) }));
+    }
+    if (params.segment) parts.push(t("player.jobs.segment", { time: hms(naiveMs(params.segment)) }));
+    else if (params.end_offset) parts.push(`${fmt.ts(params.start_offset || 0)}–${fmt.ts(params.end_offset)}`);
+    return parts.join(" · ");
+  }
+
+  async function pollJobs() {
+    clearTimeout(jobsTimer);
+    let rows;
+    try { rows = (await apiGet("/api/dashcam/jobs")).filter((j) => j.event_id === evId).slice(0, 6); }
+    catch (e) { return; }
+    const box = $("jobs");
+    box.innerHTML = rows.map((j) => {
+      const rep = j.report || {};
+      let params = {};
+      try { params = JSON.parse(j.params || "{}") || {}; } catch (e) { /* damaged params: show the job anyway */ }
+      const st = j.status;
+      const lines = reportLines(j, rep);
+      let err = "";
+      if (st === "failed") {
+        const why = rep.error || j.error || "";
+        err = why === "cancelled" ? "" : `<pre>${esc(why.slice(-400))}</pre>`;
+      }
+      const length = st === "done" && rep.output_seconds != null ? len(rep.output_seconds) : rep.duration ? len(rep.duration) : "";
+      const retries = (st === "done" || st === "failed") ? retryCams(j, rep) : [];
+      return `<div class="job" data-id="${+j.id}">
+        <div class="job-h"><span>${esc(shortLayout(params.layout || rep.layout || "grid"))}</span>
+          <span class="st ${st === "done" ? "done" : st === "failed" ? "failed" : st === "running" ? "running" : ""}">${esc(t(JOB_STATES[st] || "player.jobs.queued"))}</span>
+          ${length ? `<span class="len">${esc(length)}</span>` : ""}<span class="sp"></span>
+          ${st === "done" && j.output ? `<a class="btn sm" href="${esc(j.output)}" download>${icon("download", 14)}${esc(t("common.download"))}</a>` : ""}
+          ${st === "running" || st === "queued" ? `<button class="btn ghost sm" type="button" data-cancel="${+j.id}">${esc(t("common.cancel"))}</button>` : ""}
         </div>
-        ${j.status === "done" ? `<a class="btn" href="${esc(j.output)}" download>${esc(t("common.download"))}</a>` : ""}
-        ${(j.status === "running" || j.status === "queued") ? `<button onclick="cancelJob(${+j.id})">${esc(t("common.cancel"))}</button>` : ""}
+        ${jobScope(params) ? `<div class="scope">${esc(jobScope(params))}</div>` : ""}
+        ${st === "running" ? `<progress max="100" value="${+j.progress || 0}"></progress>` : ""}
+        ${lines.length ? `<ul>${lines.map(([k, s]) => `<li class="${k}">${esc(s)}</li>`).join("")}</ul>` : ""}
+        ${err}
+        ${retries.length ? `<div class="acts">${retries.map((r, i) =>
+            `<button class="btn sm" type="button" data-retry="${+j.id}" data-i="${i}">${esc(t("player.report.without", { cam: camName(r.cam) }))}</button>`).join("")}</div>` : ""}
+        ${st === "done" && rep.encoder ? `<div class="enc">${esc(rep.encoder)}</div>` : ""}
       </div>`;
     }).join("");
-    if (rows.some(j => j.status === "running" || j.status === "queued")) setTimeout(pollJobs, 2000);
-  } catch (e) { /* ignore */ }
-}
-async function cancelJob(id) { await apiPost(`/api/dashcam/jobs/${id}`, undefined, "DELETE"); pollJobs(); }
-
-/* ---------------- 时钟自动校准 ---------------- */
-document.getElementById("btn-align").addEventListener("click", async () => {
-  const btn = document.getElementById("btn-align");
-  const out = document.getElementById("align-result");
-  btn.disabled = true;
-  out.textContent = t("player.align.running");
-  try {
-    const fd = new FormData();
-    fd.append("event_id", evId);
-    if (carId) fd.append("car_id", carId);
-    const r = await fetch("/api/dashcam/align", { method: "POST", body: fd });
-    const data = await r.json();
-    if (!r.ok) throw new Error(data.detail || r.statusText);
-    out.innerHTML = t("player.align.result", {
-      offset: (data.offset > 0 ? "+" : "") + data.offset,
-      rmse: U.speed(data.rmse_kmh, 1),
-      unit: U.speedLabel(),
-      samples: data.samples,
-    });
-    loadTelemetry();  // 用新偏移刷新 HUD 数据
-  } catch (e) {
-    out.textContent = t("player.align.failed", { message: e.message });
+    box.querySelectorAll("[data-cancel]").forEach((b) => b.addEventListener("click", async () => {
+      b.disabled = true;
+      await apiPost(`/api/dashcam/jobs/${b.dataset.cancel}`, undefined, "DELETE").catch(() => {});
+      pollJobs();
+    }));
+    box.querySelectorAll("[data-retry]").forEach((b) => b.addEventListener("click", () => {
+      const j = rows.find((x) => String(x.id) === b.dataset.retry);
+      const r = retryCams(j, j.report || {})[+b.dataset.i];
+      if (!r) return;
+      b.disabled = true;
+      const p = r.params;
+      submit({ event_id: evId, layout: p.layout || "grid", quality: p.quality || "standard", cameras: r.cams,
+               overlay: p.overlay !== false, car_id: p.car_id ?? carId, lang: p.lang || i18n.state.locale,
+               segment: p.segment || null, start_offset: p.start_offset || 0, end_offset: p.end_offset ?? null });
+    }));
+    if (rows.some((j) => j.status === "running" || j.status === "queued")) jobsTimer = setTimeout(pollJobs, 2000);
   }
-  btn.disabled = false;
-});
 
-/* ---------------- 初始化 ---------------- */
-/* i18n.load() 是异步的，目录就绪（以及切换语言）时会派发 omt:locale——
-   标题和含 HTML 标签的文案在这里注入，避免早于目录加载取到 key 本身 */
-window.addEventListener("omt:locale", () => {
-  document.title = t("player.page_title");
-  document.getElementById("hevc-tip").innerHTML = t("player.hevc_tip");
-});
+  /* ---------------------------------------------------------- evidence */
+  function paintEvidence() {
+    // A plain link: the ZIP streams, and a 10-minute HW4 event is ~2 GB —
+    // fetch()→blob would hold all of it in the tab's memory.
+    $("evidence").href = `/api/dashcam/evidence?id=${encodeURIComponent(evId)}` + (carId ? `&car_id=${carId}` : "");
+  }
 
-/* 整块启动逻辑要等词表：里面全是 t()，早一步就会把
-   "player.type.sentry"、"dashcam.cam.front" 这些原始 key 显示给用户。 */
-/* ---------------- 键盘操作 ----------------
-   回看行车记录仪的核心动作是"停在某一帧看清楚"，鼠标拖进度条做不到。
-   快捷键沿用视频播放器的通用约定（空格/方向键/JK/L），不自创一套。
-   逐帧步进用 1/30 秒：HW3/HW4 的行驶片段都是 30fps 左右，
-   没有精确帧率时这个步长仍然是"看清下一帧"的正确量级。 */
-const FRAME_S = 1 / 30;
-
-function nudge(seconds) {
-  if (!$main.duration) return;
-  $main.pause();
-  $pips.querySelectorAll("video").forEach((v) => v.pause());
-  const t = Math.max(0, Math.min($main.duration, $main.currentTime + seconds));
-  $main.currentTime = t;
-  // 副视角必须跟着走，否则逐帧之后画面对不上，这个功能就没有意义
-  $pips.querySelectorAll("video").forEach((v) => { v.currentTime = t; });
-}
-
-document.addEventListener("keydown", (e) => {
-  // 在输入框里打字时不要抢键
-  const tag = (e.target.tagName || "").toLowerCase();
-  if (tag === "input" || tag === "textarea" || tag === "select" || e.target.isContentEditable) return;
-  if (e.metaKey || e.ctrlKey || e.altKey) return;
-
-  const keys = {
-    " ":          () => ($main.paused ? playAll() : pauseAll()),
-    k:            () => ($main.paused ? playAll() : pauseAll()),
-    ArrowLeft:    () => nudge(-5),
-    ArrowRight:   () => nudge(5),
-    j:            () => nudge(-10),
-    l:            () => nudge(10),
-    ",":          () => nudge(-FRAME_S),   // 通用约定：逗号/句号 = 上一帧/下一帧
-    ".":          () => nudge(FRAME_S),
-    Home:         () => nudge(-1e9),
-    End:          () => nudge(1e9),
-  };
-  const fn = keys[e.key];
-  if (!fn) return;
-  e.preventDefault();
-  fn();
-});
-
-function playAll() {
-  $main.play().catch(() => {});
-  $pips.querySelectorAll("video").forEach((v) => v.play().catch(() => {}));
-}
-function pauseAll() {
-  $main.pause();
-  $pips.querySelectorAll("video").forEach((v) => v.pause());
-}
-
-i18nReady.catch(() => {}).then(async () => {
-  // 车辆选择器：多车账号必须显式指定，否则遥测/校准会张冠李戴
-  carId = await initCarPicker("#car-picker", (id) => {
-    carId = id;
-    localStorage.setItem("omt_car", id);
-    loadTelemetry();
+  /* ---------------------------------------------------- clock calibration */
+  $("btn-align").addEventListener("click", async () => {
+    const btn = $("btn-align"), out = $("align-result");
+    btn.disabled = true;
+    out.hidden = false; out.className = "pl-note";
+    out.textContent = t("player.align.running");
+    try {
+      const fd = new FormData();
+      fd.append("event_id", evId);
+      if (carId) fd.append("car_id", carId);
+      const r = await fetch("/api/dashcam/align", { method: "POST", body: fd });
+      const data = await r.json().catch(() => ({}));
+      if (r.ok) {
+        out.className = "pl-note ok";
+        out.textContent = t("player.align.ok", {
+          offset: (data.offset > 0 ? "+" : "") + data.offset,
+          rmse: U.speed(data.rmse_kmh, 1), unit: U.speedLabel(), samples: data.samples });
+        loadTelemetry();
+      } else if (r.status === 422) {
+        // A poor fit is an answer, not a failure: say why, and that nothing changed
+        out.className = "pl-note";
+        out.innerHTML = `${esc(t("player.align.kept"))}<span class="src">${esc(typeof data.detail === "string" ? data.detail : "")}</span>`;
+      } else {
+        out.className = "pl-note bad";
+        out.textContent = t("player.align.failed", { message: (typeof data.detail === "string" && data.detail) || r.statusText });
+      }
+    } catch (e) {
+      out.className = "pl-note bad";
+      out.textContent = t("player.align.failed", { message: e.message });
+    }
+    btn.disabled = false;
   });
-  const saved = +localStorage.getItem("omt_car");
-  if (saved) {
-    const sel = document.querySelector("#car-picker");
-    if (sel && [...sel.options].some(o => +o.value === saved)) { sel.value = saved; carId = saved; }
+
+  /* ---------------------------------------------------------- decryption */
+  async function checkLocked() {
+    let st = null;
+    try { st = await apiGet("/api/dashcam/decrypt/status"); } catch (e) { /* optional */ }
+    if (st && st.event_id === evId && st.state !== "idle") { decryptState = st; lockUi = st.state === "running" ? "running" : lockUi; }
+    if (ev.segments.some((s) => !s.duration_known) || lockUi === "running") {
+      try { scan = await apiGet(`/api/dashcam/decrypt/scan?id=${encodeURIComponent(evId)}`); } catch (e) { scan = null; }
+    } else scan = null;
+    locked = new Set((scan && scan.encrypted_paths) || []);
+    paintLock();
+    if (lockUi === "running") pollDecrypt();
   }
 
-  ev = await apiGet(`/api/dashcam/event?id=${encodeURIComponent(evId)}`);
-  const typeTag = { sentry: " " + t("player.type.sentry"), saved: " " + t("player.type.saved"), recent: " " + t("player.type.recent") };
-  document.getElementById("ev-title").textContent = `${typeTag[ev.type] || ev.type} · ${fmt.dt(ev.timestamp)}`;
-  document.getElementById("ev-meta").innerHTML = `
-    <div><b>${t("player.meta.title")}</b></div>
-    <div class="muted mt">${ev.city ? t("common.city") + ": " + esc(ev.city) + "<br>" : ""}${ev.reason ? t("common.reason") + ": " + esc(ev.reason) + "<br>" : ""}
-    ${t("common.duration")}: ${ev.segment_count} ${t("common.minutes")} · ${t("common.cameras")}: ${ev.cameras.map(camName).join(" / ")}
-    ${ev.est_lat ? `<br>${t("common.location")}: <a target="_blank" href="https://uri.amap.com/marker?position=${ev.est_lon},${ev.est_lat}">${t("player.meta.map_amap")}</a> · <a target="_blank" href="https://maps.google.com/?q=${ev.est_lat},${ev.est_lon}">${t("player.meta.map_google")}</a>` : ""}</div>`;
-  document.getElementById("segs").innerHTML = ev.segments.map((s, i) =>
-    `<button onclick="loadSegment(${i})">${new Date(s.start).toLocaleTimeString(localeTag(), { hour: "2-digit", minute: "2-digit" })}</button>`).join("");
-  document.getElementById("x-cams").innerHTML = ev.cameras.map(c =>
-    `<label class="check"><input type="checkbox" value="${c}" checked> ${camName(c)}</label>`).join("");
-  // 定位: URL 带 t 参数（行程页跳转）优先；哨兵事件默认跳到触发时刻前 1 分钟
-  let startIdx = 0, startWithin = 0;
-  const tParam = +(new URLSearchParams(location.search).get("t") || 0);
-  if (tParam > 0) {
-    startIdx = Math.min(Math.floor(tParam / 60), ev.segments.length - 1);
-    startWithin = tParam - startIdx * 60;
-  } else if (ev.type === "sentry" && ev.timestamp) {
-    const trigger = new Date(ev.timestamp).getTime();
-    ev.segments.forEach((s, i) => { if (new Date(s.start).getTime() <= trigger - 55000) startIdx = i; });
+  function paintLock() {
+    const box = $("pl-lock");
+    const n = scan ? scan.encrypted : 0;
+    if (!n && lockUi !== "running" && lockUi !== "done" && lockUi !== "failed") { box.hidden = true; return; }
+    box.hidden = false;
+    const totalClips = scan ? scan.clips : 0;
+    const title = n && n === totalClips ? t("decrypt.title_all", { n }) : t("decrypt.title", { n, total: totalClips });
+    let body = "";
+    if (lockUi === "intro") {
+      body = `<div class="row"><button class="btn accent" type="button" id="dc-open">${icon("key", 16)}${esc(t("decrypt.start"))}</button></div>`;
+    } else if (lockUi === "form") {
+      const preview = JSON.stringify({ items: scan.request_preview || [] }, null, 2);
+      body = `<form id="dc-form" autocomplete="off">
+          <label class="pl-label" for="dc-token">${esc(t("decrypt.token"))}</label>
+          <input type="password" id="dc-token" spellcheck="false" autocomplete="off" placeholder="${esc(t("decrypt.token_ph"))}">
+          <p class="help">${esc(t("decrypt.token_help"))}</p>
+          <label class="keep"><input type="checkbox" id="dc-keep" checked><span>${esc(t("decrypt.keep"))}<small>${esc(t("decrypt.keep_sub"))}</small></span></label>
+          <details class="disclose"><summary><span>${esc(t("decrypt.preview"))}</span><span class="value">${esc(t("decrypt.preview_n", { n: (scan.request_preview || []).length }))}</span><span class="chev">${icon("chevron", 16)}</span></summary>
+            <div class="body"><p class="help" style="margin:0 0 10px">${esc(t("decrypt.preview_note"))}</p>
+              <pre>POST ${esc(scan.key_service || "")}\n\n${esc(preview)}</pre></div></details>
+          <div class="row"><button class="btn accent" type="submit" id="dc-go">${esc(t("decrypt.go", { n }))}</button>
+            <button class="btn ghost" type="button" id="dc-cancel">${esc(t("common.cancel"))}</button></div>
+          <div class="msg bad" id="dc-msg" hidden></div>
+        </form>`;
+    } else if (lockUi === "running") {
+      const s = decryptState || {};
+      const pct = s.total ? Math.round(((s.done || 0) / s.total) * 100) : 0;
+      body = `<div class="bar"><i style="width:${pct}%"></i></div><div class="msg">${esc(t("decrypt.running", { done: s.done || 0, total: s.total || n }))}</div>`;
+    } else {
+      const s = decryptState || {};
+      const fails = s.failed || [];
+      body = lockUi === "failed"
+        ? `<div class="msg bad">${esc(t("decrypt.failed", { message: s.error || "" }))}</div>`
+        : `<div class="msg">${esc(t("decrypt.done", { n: s.decrypted || 0 }))}${s.keep_encrypted !== false && s.decrypted ? " " + esc(t("decrypt.done_kept")) : ""}</div>`;
+      if (fails.length) body += `<div class="msg">${esc(t("decrypt.partial", { n: fails.length }))}</div><ul>${fails.slice(0, 12).map((f) =>
+          `<li>${esc((f.path || "").split("/").pop())} — ${esc(f.reason || "")}</li>`).join("")}</ul>`;
+      if (n) body += `<div class="row"><button class="btn accent" type="button" id="dc-open">${esc(t("decrypt.retry"))}</button></div>`;
+    }
+    const headTitle = lockUi === "running" ? t("decrypt.title_running") : (lockUi === "done" && !n) ? t("decrypt.title_done") : title;
+    box.innerHTML = `<div class="top"><div class="ic">${icon("lock", 24)}</div><div class="grow">
+        <div class="eyebrow">${esc(t("decrypt.eyebrow"))}</div>
+        <h2>${esc(headTitle)}</h2>
+        ${lockUi === "intro" || lockUi === "form" ? `<p class="body-sm lead">${esc(t("decrypt.body"))}</p>` : ""}
+        ${body}</div></div>`;
+    const open = $("dc-open");
+    if (open) open.addEventListener("click", () => { lockUi = "form"; paintLock(); const tk = $("dc-token"); if (tk) tk.focus(); });
+    const cancel = $("dc-cancel");
+    if (cancel) cancel.addEventListener("click", () => { lockUi = "intro"; paintLock(); });
+    const form = $("dc-form");
+    if (form) form.addEventListener("submit", (e) => { e.preventDefault(); startDecrypt(); });
   }
-  loadTelemetry();
-  loadSegment(startIdx, startWithin);
-  pollJobs();
-});
+
+  async function startDecrypt() {
+    const token = $("dc-token").value.trim();
+    const msg = $("dc-msg");
+    if (!token) { msg.hidden = false; msg.textContent = t("decrypt.need_token"); return; }
+    $("dc-go").disabled = true;
+    try {
+      const r = await fetch("/api/dashcam/decrypt", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ event_id: evId, token, keep_encrypted: $("dc-keep").checked }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (r.status === 409) { msg.hidden = false; msg.textContent = t("decrypt.busy_other"); $("dc-go").disabled = false; return; }
+      if (!r.ok) throw new Error(typeof j.detail === "string" ? j.detail : r.statusText);
+      if (j.state === "nothing_to_do") { toast(t("decrypt.nothing"), "ok"); await reloadEvent(); return; }
+      decryptState = j; lockUi = "running";
+      paintLock();
+      pollDecrypt();
+    } catch (e) {
+      msg.hidden = false; msg.textContent = t("decrypt.failed", { message: e.message });
+      $("dc-go").disabled = false;
+    }
+  }
+
+  async function pollDecrypt() {
+    clearTimeout(decryptTimer);
+    let s;
+    try { s = await apiGet("/api/dashcam/decrypt/status"); } catch (e) { decryptTimer = setTimeout(pollDecrypt, 2000); return; }
+    decryptState = s;
+    if (s.state === "running") { lockUi = "running"; paintLock(); decryptTimer = setTimeout(pollDecrypt, 1000); return; }
+    lockUi = s.state === "failed" ? "failed" : "done";
+    await reloadEvent();
+  }
+
+  async function reloadEvent() {
+    const pos = ev ? position() : 0;
+    try { ev = await apiGet(`/api/dashcam/event?id=${encodeURIComponent(evId)}`); } catch (e) { return; }
+    seiCache = {};
+    await checkLocked();
+    paintHead(); paintSegs(); paintCams(); paintTrack();
+    loadSegment(locate(pos).idx, locate(pos).within);
+    loadTelemetry();
+  }
+
+  /* ------------------------------------------------------------ keyboard
+     The everyday action when reviewing footage is "stop on a frame and look",
+     which a mouse on a seek bar can't do. Keys follow the usual player
+     conventions; I and O mark an export selection like a video editor. */
+  const FRAME_S = 1 / 30;
+  function nudge(seconds) {
+    if (!ev) return;
+    pauseAll();
+    seekTo(position() + seconds);
+  }
+  document.addEventListener("keydown", (e) => {
+    const tag = (e.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea" || tag === "select" || e.target.isContentEditable) return;
+    if (e.metaKey || e.ctrlKey || e.altKey || !ev) return;
+    const keys = {
+      " ": () => (playing ? pauseAll() : playAll()),
+      k: () => (playing ? pauseAll() : playAll()),
+      ArrowLeft: () => nudge(-5), ArrowRight: () => nudge(5),
+      j: () => nudge(-10), l: () => nudge(10),
+      ",": () => nudge(-FRAME_S), ".": () => nudge(FRAME_S),
+      Home: () => { pauseAll(); seekTo(0); }, End: () => { pauseAll(); seekTo(total() - 0.05); },
+      i: () => markSel("in"), o: () => markSel("out"),
+    };
+    const fn = keys[e.key];
+    if (!fn) return;
+    // Space always means play/pause here (Enter still activates a focused
+    // button): a Space landing on the export button that was clicked last
+    // would otherwise start the same export again.
+    e.preventDefault();
+    fn();
+  });
+
+  /* --------------------------------------------------------------- start */
+  window.addEventListener("omt:locale", () => {
+    if (!ev) return;
+    paintHead(); paintSegs(); paintCams(); paintTrack(); paintRangeNote(); paintEncoder(); paintPlay(); paintSei(); paintLock();
+    pollJobs();
+  });
+
+  function startPosition() {
+    // Deep links: ?t= seconds on this timeline, ?at= a wall-clock moment,
+    // ?clip=&seek= a moment inside one clip (driving events)
+    const tParam = parseFloat(QS.get("t"));
+    if (tParam > 0) return tParam;
+    const at = naiveMs(QS.get("at"));
+    if (!isNaN(at)) return locateWall(at);
+    const clip = QS.get("clip");
+    if (clip) {
+      const i = ev.segments.findIndex((s) => Object.values(s.cameras).includes(clip));
+      if (i >= 0) return seg(i).offset + (parseFloat(QS.get("seek")) || 0);
+    }
+    // A Sentry Mode event opens just before the moment it was triggered
+    if (ev.type === "sentry" && triggerPos != null) return Math.max(0, triggerPos - 10);
+    return 0;
+  }
+
+  i18nReady.catch(() => {}).then(async () => {
+    paintPlay();
+    carId = await initCarPicker("#car-picker", (id) => { carId = id; loadTelemetry(); paintEvidence(); });
+    paintEvidence();
+    try {
+      ev = await apiGet(`/api/dashcam/event?id=${encodeURIComponent(evId)}`);
+    } catch (e) {
+      $("ev-title").textContent = t("player.missing");
+      $("pl-wrap").hidden = true;
+      return;
+    }
+    const trig = naiveMs(ev.timestamp);
+    triggerPos = (ev.type === "sentry" || ev.type === "saved") && !isNaN(trig)
+      && trig >= naiveMs(seg(0).start) && trig <= naiveMs(seg(ev.segments.length - 1).start) + seg(ev.segments.length - 1).duration * 1000
+      ? locateWall(trig) : null;
+    await checkLocked();
+    paintHead(); paintSegs(); paintCams(); paintTrack();
+    const p = locate(startPosition());
+    loadSegment(p.idx, p.within);
+    paintRangeNote();
+    loadTelemetry();
+    loadEncoder();
+    pollJobs();
+  });
+})();
 </script>
 {% endblock %}

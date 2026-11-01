@@ -1,235 +1,342 @@
-"""Tesla 车辆指令下发。
+"""Send a vehicle command over whichever path this car accepts.
 
-支持三种后端（由 TESLA_API_HOST 决定，与 TeslaMate 用同一个）：
-- owner-api.teslamotors.com（旧接口，仍可用于部分老车）
-- owner-api.vn.cloud.tesla.cn（中国大陆）
-- 第三方代理 / Fleet API（fleet-api.prd.*.vn.cloud.tesla.com）
+Two transports:
 
-2021 年后的车经 Fleet API 下发指令需要"签名指令"，必须走
-teslamotors/vehicle-command 代理（TESLA_COMMAND_PROXY），
-否则会收到 "unsigned command" 类错误——UI 会如实显示这个错误。
+* **signed** — Tesla Fleet API through ``tesla_fleet_api``, which implements
+  the vehicle-command protocol (session handshake, HMAC/AES-GCM signing) in
+  process. Required by every 2021+ car, Cybertruck included. Needs the owner's
+  own developer app and a paired virtual key (see ``fleet.py``).
+* **unsigned** — the legacy REST endpoint with TeslaMate's token. Tesla still
+  accepts it only from pre-2021 Model S/X; everything newer answers 403.
+
+Callers (HTTP API, MCP, automations) all come through ``send`` and get either
+a result or a ``CommandError`` whose ``code`` says what to do next
+(``needs_setup``, ``not_paired``, ``asleep``, ``timeout`` …). A ``timeout``
+carries ``maybe_executed=True``: the car may well have done it, and
+``actuate_trunk`` *toggles*, so nothing here ever retries a command that
+might have run.
 """
 
+from __future__ import annotations
+
+import asyncio
+import contextlib
 import logging
+import time
 
 import httpx
 
+from .. import db
 from ..config import settings
-from ..i18n.prefs import get as get_prefs
-from ..i18n.router import t
-from . import tokens
+from ..livestate import live
+from ..vehicle import catalog as vehicle_catalog
+from . import catalog, fleet, tokens
 
 log = logging.getLogger(__name__)
 
-# name -> (endpoint, risky?, catalog key, icon, optional body/param)
-COMMANDS: dict[str, dict] = {
-    "wake_up":            {"ep": "wake_up",                 "risky": False, "key": "cmd.wake_up", "icon": "☀️"},
-    "honk_horn":          {"ep": "command/honk_horn",       "risky": False, "key": "cmd.honk_horn",     "icon": "📢"},
-    "flash_lights":       {"ep": "command/flash_lights",    "risky": False, "key": "cmd.flash_lights",     "icon": "💡"},
-    "door_lock":          {"ep": "command/door_lock",       "risky": False, "key": "cmd.door_lock",     "icon": "🔒"},
-    "door_unlock":        {"ep": "command/door_unlock",     "risky": True,  "key": "cmd.door_unlock",     "icon": "🔓"},
-    "climate_on":         {"ep": "command/auto_conditioning_start", "risky": False, "key": "cmd.climate_on", "icon": "❄️"},
-    "climate_off":        {"ep": "command/auto_conditioning_stop",  "risky": False, "key": "cmd.climate_off", "icon": "🌡️"},
-    "charge_start":       {"ep": "command/charge_start",    "risky": False, "key": "cmd.charge_start", "icon": "⚡"},
-    "charge_stop":        {"ep": "command/charge_stop",     "risky": False, "key": "cmd.charge_stop", "icon": "⏹️"},
-    "charge_port_open":   {"ep": "command/charge_port_door_open",  "risky": False, "key": "cmd.charge_port_open", "icon": "🔌"},
-    "charge_port_close":  {"ep": "command/charge_port_door_close", "risky": False, "key": "cmd.charge_port_close", "icon": "🔌"},
-    "set_charge_limit":   {"ep": "command/set_charge_limit","risky": False, "key": "cmd.set_charge_limit", "icon": "🎚️", "param": "percent"},
-    "set_temps":          {"ep": "command/set_temps",       "risky": False, "key": "cmd.set_temps", "icon": "🌡️", "param": "driver_temp"},
-    "vent_windows":       {"ep": "command/window_control",  "risky": False, "key": "cmd.vent_windows", "icon": "🪟",
-                           "body": {"command": "vent", "lat": 0, "lon": 0}},
-    "close_windows":      {"ep": "command/window_control",  "risky": False, "key": "cmd.close_windows", "icon": "🪟",
-                           "body": {"command": "close", "lat": 0, "lon": 0}},
-    "frunk":              {"ep": "command/actuate_trunk",   "risky": True,  "key": "cmd.frunk", "icon": "🧳",
-                           "body": {"which_trunk": "front"}},
-    "trunk":              {"ep": "command/actuate_trunk",   "risky": True,  "key": "cmd.trunk", "icon": "🧳",
-                           "body": {"which_trunk": "rear"}},
-    "sentry_on":          {"ep": "command/set_sentry_mode", "risky": False, "key": "cmd.sentry_on", "icon": "🛡️",
-                           "body": {"on": True}},
-    "sentry_off":         {"ep": "command/set_sentry_mode", "risky": True,  "key": "cmd.sentry_off", "icon": "🛡️",
-                           "body": {"on": False}},
-
-    # ── 以下为补齐的指令。选取标准是"车主真的会用、且语义无歧义"，
-    #    不是把 Fleet API 的 74 条全塞进来 —— 那里面有一半是给车队管理和
-    #    第三方司机用的（valet PIN、guest mode、驾驶员邀请），
-    #    对单车主是噪声，而每多一条就多一条要维护和翻译的东西。
-    "seat_heater_left":   {"ep": "command/remote_seat_heater_request", "risky": False,
-                           "key": "cmd.seat_heater_left", "icon": "🔥",
-                           "param": "level", "body": {"heater": 0}},
-    "seat_heater_right":  {"ep": "command/remote_seat_heater_request", "risky": False,
-                           "key": "cmd.seat_heater_right", "icon": "🔥",
-                           "param": "level", "body": {"heater": 1}},
-    "steering_heater_on": {"ep": "command/remote_steering_wheel_heater_request", "risky": False,
-                           "key": "cmd.steering_heater_on", "icon": "🔥", "body": {"on": True}},
-    "steering_heater_off": {"ep": "command/remote_steering_wheel_heater_request", "risky": False,
-                            "key": "cmd.steering_heater_off", "icon": "🔥", "body": {"on": False}},
-    "defrost_on":         {"ep": "command/set_preconditioning_max", "risky": False,
-                           "key": "cmd.defrost_on", "icon": "🌨️", "body": {"on": True}},
-    "defrost_off":        {"ep": "command/set_preconditioning_max", "risky": False,
-                           "key": "cmd.defrost_off", "icon": "🌨️", "body": {"on": False}},
-    "set_charge_amps":    {"ep": "command/set_charging_amps", "risky": False,
-                           "key": "cmd.set_charge_amps", "icon": "🔋", "param": "charging_amps"},
-    "dog_mode_on":        {"ep": "command/set_climate_keeper_mode", "risky": False,
-                           "key": "cmd.dog_mode_on", "icon": "🐕", "body": {"climate_keeper_mode": 2}},
-    "camp_mode_on":       {"ep": "command/set_climate_keeper_mode", "risky": False,
-                           "key": "cmd.camp_mode_on", "icon": "🏕️", "body": {"climate_keeper_mode": 3}},
-    "keeper_off":         {"ep": "command/set_climate_keeper_mode", "risky": False,
-                           "key": "cmd.keeper_off", "icon": "🌡️", "body": {"climate_keeper_mode": 0}},
-    "cabin_overheat_on":  {"ep": "command/set_cabin_overheat_protection", "risky": False,
-                           "key": "cmd.cabin_overheat_on", "icon": "☀️",
-                           "body": {"on": True, "fan_only": False}},
-    "cabin_overheat_off": {"ep": "command/set_cabin_overheat_protection", "risky": False,
-                           "key": "cmd.cabin_overheat_off", "icon": "☀️",
-                           "body": {"on": False, "fan_only": False}},
-    "media_toggle":       {"ep": "command/media_toggle_playback", "risky": False,
-                           "key": "cmd.media_toggle", "icon": "⏯️"},
-    "media_next":         {"ep": "command/media_next_track", "risky": False,
-                           "key": "cmd.media_next", "icon": "⏭️"},
-    "media_prev":         {"ep": "command/media_prev_track", "risky": False,
-                           "key": "cmd.media_prev", "icon": "⏮️"},
-    "boombox":            {"ep": "command/remote_boombox", "risky": True,
-                           "key": "cmd.boombox", "icon": "📻", "body": {"sound": 0}},
-    "schedule_charge":    {"ep": "command/set_scheduled_charging", "risky": False,
-                           "key": "cmd.schedule_charge", "icon": "🕐",
-                           "param": "time", "body": {"enable": True}},
-    "schedule_charge_off": {"ep": "command/set_scheduled_charging", "risky": False,
-                            "key": "cmd.schedule_charge_off", "icon": "🕐",
-                            "body": {"enable": False, "time": 0}},
-}
-
-
-# 带参指令的取值范围。超出范围 Tesla 会回 400，先在本地挡住并说明白。
-_PARAM_RANGE = {
-    "percent": (50, 100),        # 充电上限：低于 50% 特斯拉不接受
-    "driver_temp": (15, 28),     # 车内空调设定温度（摄氏）
-    "level": (0, 3),             # 座椅加热档位：0 关，1-3 由弱到强
-    "charging_amps": (0, 48),    # 充电电流。0 = 暂停；上限随车型和线缆而定，
-                                 # 给到 48 是家用壁挂充电桩的常见上限
-    "time": (0, 1439),           # 定时充电：从当天 00:00 起的分钟数
-}
+# Model-year letter (VIN position 10) → year. Unsigned commands died with the
+# 2021 refresh of S/X; earlier S/X still take them.
+_YEAR = {c: 2010 + i for i, c in enumerate("ABCDEFGHJKLMNPRSTVWXY")}
 
 
 class CommandError(Exception):
-    pass
+    def __init__(self, message: str, code: str = "error", *, maybe_executed: bool = False,
+                 transport: str | None = None, detail: str | None = None):
+        super().__init__(message)
+        self.code = code
+        self.maybe_executed = maybe_executed
+        self.transport = transport
+        self.detail = detail
+
+    def as_dict(self) -> dict:
+        return {"ok": False, "error": str(self), "code": self.code,
+                "maybe_executed": self.maybe_executed, "transport": self.transport,
+                "detail": self.detail}
 
 
-def _api_base() -> str:
-    host = (settings.tesla_command_proxy or settings.tesla_api_host).rstrip("/")
-    if not host.startswith("http"):
-        host = "https://" + host
-    return host
+# Kept for callers that still look commands up by id (MCP describe, UI lists).
+COMMANDS = {c.id: c.describe() for c in catalog.COMMANDS.values()}
 
 
-def _is_fleet() -> bool:
-    """Fleet API 与 vehicle-command 签名代理都按 VIN 寻址；只有旧 owner-api 用数字 id。"""
-    base = _api_base()
-    return "fleet-api" in base or bool(settings.tesla_command_proxy)
-
-
-async def _vehicle_ref(car_id: int, loc: str = "en") -> str:
-    from .. import db
-
-    row = await db.fetchrow("SELECT eid, vid, vin FROM cars WHERE id = $1", car_id)
+async def _car(car_id: int) -> dict:
+    row = await db.fetchrow("SELECT id, eid, vin, model FROM cars WHERE id = $1", car_id)
     if row is None:
-        raise CommandError(t("cmd.error.car_missing", loc, car_id=car_id))
-    if _is_fleet():
-        if not row["vin"]:
-            raise CommandError(t("cmd.error.no_vin", loc))
-        return row["vin"]
-    if not row["eid"]:
-        raise CommandError(t("cmd.error.no_eid", loc))
-    return str(row["eid"])
+        raise CommandError(f"no car with id {car_id}", "unknown_car")
+    car = dict(row)
+    ident = vehicle_catalog.identify(vin=car.get("vin"), model=car.get("model"))
+    car["model_key"] = ident.key
+    vin = (car.get("vin") or "").upper()
+    car["model_year"] = _YEAR.get(vin[9]) if len(vin) >= 10 else None
+    return car
 
 
-async def _last_location(car_id: int) -> tuple[float, float] | None:
-    """车窗控制要求带当前坐标做就近校验，取 TeslaMate 最后已知位置。"""
-    from .. import db
-
-    row = await db.fetchrow(
-        "SELECT latitude, longitude FROM positions WHERE car_id = $1"
-        " AND latitude IS NOT NULL ORDER BY date DESC LIMIT 1",
-        car_id,
-    )
-    if row is None:
-        return None
-    return float(row["latitude"]), float(row["longitude"])
+def unsigned_allowed(car: dict) -> bool:
+    return car.get("model_key") in ("models", "modelx") and (car.get("model_year") or 9999) <= 2020
 
 
-async def send(car_id: int, command: str, params: dict | None = None) -> dict:
-    loc = (await get_prefs())["locale"]
-    spec = COMMANDS.get(command)
-    if spec is None:
-        raise CommandError(t("cmd.error.unknown_command", loc, command=command))
+async def transport_for(car: dict) -> tuple[str | None, str]:
+    """(transport, reason). transport is None when no path can command this car."""
+    if await fleet.ready():
+        return "signed", ""
+    if unsigned_allowed(car):
+        return "unsigned", ""
+    return None, "needs_setup"
 
+
+async def capabilities(car_id: int) -> dict:
+    car = await _car(car_id)
+    transport, reason = await transport_for(car)
+    st = await fleet.status()
+    vin = car.get("vin") or ""
+    paired = vin in (st.get("paired") or {})
+    cmds = [c.describe() for c in catalog.for_model(car["model_key"])
+            if (transport == "signed" and c.method) or (transport == "unsigned" and c.rest)
+            or transport is None]
+    return {
+        "car_id": car_id, "model": car["model_key"], "transport": transport,
+        "ready": transport is not None and (transport != "signed" or paired),
+        "reason": reason or ("not_paired" if transport == "signed" and not paired else ""),
+        "paired": paired, "fleet": st, "commands": cmds,
+    }
+
+
+# ── signed transport ─────────────────────────────────────────────────────
+
+_api = None
+_session = None
+_vehicles: dict[str, object] = {}
+_api_lock = asyncio.Lock()
+
+
+async def _signed_vehicle(vin: str):
+    """One signed vehicle object per VIN, kept alive so its session survives
+    between commands (a fresh session costs a handshake with both car domains)."""
+    global _api, _session
+    async with _api_lock:
+        if _api is None:
+            import aiohttp
+            from tesla_fleet_api import TeslaFleetApi
+
+            _session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))
+            _api = TeslaFleetApi(_session, access_token=fleet.access_token, region=await fleet.region())
+            fleet.ensure_keypair()
+            await _api.get_private_key(str(fleet.private_key_path()))
+        v = _vehicles.get(vin)
+        if v is None:
+            v = _api.vehicles.createSigned(vin)
+            _vehicles[vin] = v
+        return v
+
+
+async def reset_signed() -> None:
+    """Drop cached clients — after the Fleet app or key changes."""
+    global _api, _session
+    async with _api_lock:
+        _vehicles.clear()
+        if _session is not None:
+            await _session.close()
+        _api, _session = None, None
+
+
+async def shutdown() -> None:
+    await reset_signed()
+
+
+def _classify(e: BaseException) -> CommandError:
+    from tesla_fleet_api import exceptions as x
+
+    name = type(e).__name__
+    if isinstance(e, (x.NotOnWhitelistFault, x.TeslaFleetMessageFaultUnknownKeyId,
+                      x.TeslaFleetMessageFaultInactiveKey)):
+        return CommandError("this car hasn't paired the app's key yet — approve it in the Tesla app",
+                            "not_paired", transport="signed")
+    if isinstance(e, x.VehicleOffline):
+        return CommandError("the car is asleep or offline", "asleep", transport="signed")
+    if isinstance(e, (x.GatewayTimeout, x.TeslaFleetMessageFaultTimeout, asyncio.TimeoutError)):
+        return CommandError("no answer from the car in time — it may have done it anyway",
+                            "timeout", maybe_executed=True, transport="signed")
+    if isinstance(e, x.RateLimited):
+        return CommandError("Tesla is rate-limiting this account — try again in a minute",
+                            "rate_limited", transport="signed")
+    if isinstance(e, (x.InsufficientCredits, x.PaymentRequired)):
+        return CommandError("the Fleet API account is out of credit — check billing on developer.tesla.com",
+                            "billing", transport="signed")
+    if isinstance(e, (x.OAuthExpired, x.InvalidToken, x.OAuthInvalid, x.LoginRequired, x.MissingToken)):
+        return CommandError("the Fleet API sign-in is no longer valid — sign in again", "auth",
+                            transport="signed")
+    if isinstance(e, x.MobileAccessDisabled):
+        return CommandError("remote access is turned off in the car (Controls → Safety → Allow Mobile Access)",
+                            "mobile_access_disabled", transport="signed")
+    if isinstance(e, x.UnsupportedVehicle):
+        return CommandError("Tesla says this vehicle doesn't support that", "not_supported", transport="signed")
+    if isinstance(e, fleet.FleetError):
+        return CommandError(str(e), "needs_setup", transport="signed")
+    msg = getattr(e, "message", None) or str(e) or name
+    return CommandError(f"the car refused: {msg}", "rejected", transport="signed", detail=name)
+
+
+def _check_result(res) -> None:
+    resp = res.get("response") if isinstance(res, dict) else None
+    if isinstance(resp, dict) and resp.get("result") is False:
+        reason = resp.get("reason") or "rejected"
+        raise CommandError(f"the car refused: {reason}", "rejected", transport="signed", detail=reason)
+
+
+def _lib_error() -> type[BaseException]:
+    from tesla_fleet_api.exceptions import TeslaFleetError
+
+    return TeslaFleetError
+
+
+async def _wake_signed(vehicle, car_id: int, wait_s: float = 40) -> None:
+    await vehicle.wake_up()
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        await asyncio.sleep(2)
+        state = (live.cars.get(str(car_id)) or {}).get("state")
+        if state and state not in ("asleep", "offline", "suspended"):
+            return
+        try:
+            info = await vehicle.vehicle()
+            if ((info or {}).get("response") or {}).get("state") == "online":
+                return
+        # The library's errors derive from BaseException, so `except Exception`
+        # alone would let them escape the polling loop.
+        except (Exception, _lib_error()):
+            log.debug("wake poll failed", exc_info=True)
+    raise CommandError("the car didn't wake up within 40 s", "asleep", transport="signed")
+
+
+async def _send_signed(car: dict, spec: catalog.Cmd, p: dict, allow_wake: bool = True) -> dict:
+    from tesla_fleet_api import exceptions as x
+
+    vin = car.get("vin")
+    if not vin:
+        raise CommandError("this car has no VIN on record", "unknown_car")
+    vehicle = await _signed_vehicle(vin)
+    method = getattr(vehicle, spec.method, None)
+    if method is None:
+        raise CommandError(f"{spec.id} isn't supported by this version of the signing library",
+                           "not_supported", transport="signed")
+    kwargs = spec.args(p)
+    try:
+        res = await asyncio.wait_for(method(**kwargs), timeout=25)
+    except x.VehicleOffline:
+        # Offline means it certainly didn't run, so one retry after waking is safe —
+        # even for toggles.
+        if not (spec.wake and allow_wake):
+            raise CommandError("the car is asleep", "asleep", transport="signed") from None
+        try:
+            await _wake_signed(vehicle, car["id"])
+            res = await asyncio.wait_for(method(**kwargs), timeout=25)
+        except CommandError:
+            raise
+        except (x.TeslaFleetError, asyncio.TimeoutError, fleet.FleetError) as e:
+            raise _classify(e) from e
+    except (x.TeslaFleetError, asyncio.TimeoutError, fleet.FleetError) as e:
+        err = _classify(e)
+        if err.code == "not_paired":
+            await fleet.mark_paired(vin, False)
+        raise err from e
+    _check_result(res)
+    await fleet.mark_paired(vin, True)
+    return res if isinstance(res, dict) else {"response": {"result": True}}
+
+
+# ── unsigned transport (pre-2021 S/X) ────────────────────────────────────
+
+def _rest_base() -> str:
+    host = (settings.tesla_api_host or "https://owner-api.teslamotors.com").rstrip("/")
+    return host if host.startswith("http") else "https://" + host
+
+
+async def _send_unsigned(car: dict, spec: catalog.Cmd, p: dict, allow_wake: bool = True) -> dict:
+    if not spec.rest:
+        raise CommandError("this command needs signed commands (Fleet API)", "needs_setup",
+                           transport="unsigned")
     token = await tokens.access_token()
     if not token:
-        raise CommandError(t("cmd.error.no_token", loc))
-
-    ref = await _vehicle_ref(car_id, loc)
-    url = f"{_api_base()}/api/1/vehicles/{ref}/{spec['ep']}"
-    body: dict = dict(spec.get("body") or {})
-    need = spec.get("param")
-    if need:
-        # 缺参数就直接说清楚。以前是"没传就发空 body"，Tesla 回 400，
-        # 用户看到的是一句莫名其妙的 502。
-        if not params or params.get(need) is None:
-            raise CommandError(t("cmd.error.missing_param", loc, param=need))
-        try:
-            value = float(params[need])
-        except (TypeError, ValueError):
-            raise CommandError(t("cmd.error.missing_param", loc, param=need)) from None
-        lo, hi = _PARAM_RANGE.get(need, (None, None))
-        if lo is not None and not (lo <= value <= hi):
-            raise CommandError(
-                t("cmd.error.param_range", loc, param=need, lo=lo, hi=hi))
-        body[need] = int(value) if float(value).is_integer() else value
-    if params:
-        for k, v in params.items():
-            if k != need and k in (spec.get("body") or {}):
-                body[k] = v
-    if command == "set_temps" and "driver_temp" in body:
-        body.setdefault("passenger_temp", body["driver_temp"])
-    if spec["ep"].endswith("window_control"):
-        # Tesla 要求 close 带上车辆当前坐标做就近校验，0,0 会被拒绝
-        # 变量名不能叫 loc —— 那是语言代码，覆盖了会让后面所有报错的语言失效
-        pos = await _last_location(car_id)
-        if pos is None:
-            raise CommandError(t("cmd.error.no_location", loc))
-        body["lat"], body["lon"] = pos
-
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        raise CommandError("no Tesla token — sign in first", "auth", transport="unsigned")
+    if not car.get("eid"):
+        raise CommandError("TeslaMate hasn't recorded this car's API id yet", "unknown_car")
+    url = f"{_rest_base()}/api/1/vehicles/{car['eid']}/command/{spec.rest}"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+               "Accept": "application/json"}
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
-            resp = await client.post(url, json=body or None, headers=headers)
+        async with httpx.AsyncClient(timeout=30) as cli:
+            r = await cli.post(url, json=spec.body(p) or {}, headers=headers)
+            if r.status_code == 408 and spec.wake and allow_wake:
+                await cli.post(f"{_rest_base()}/api/1/vehicles/{car['eid']}/wake_up", headers=headers)
+                for _ in range(15):
+                    await asyncio.sleep(2)
+                    st = (live.cars.get(str(car["id"])) or {}).get("state")
+                    if st and st not in ("asleep", "offline"):
+                        break
+                r = await cli.post(url, json=spec.body(p) or {}, headers=headers)
+    except httpx.TimeoutException as e:
+        raise CommandError("no answer in time — it may have run anyway", "timeout",
+                           maybe_executed=True, transport="unsigned") from e
     except httpx.HTTPError as e:
-        raise CommandError(t("cmd.error.request_failed", loc, error=str(e))) from e
+        raise CommandError(f"couldn't reach Tesla: {e.__class__.__name__}", "network",
+                           transport="unsigned") from e
+    if r.status_code == 401:
+        tokens.invalidate_cache()
+        raise CommandError("Tesla rejected the token", "auth", transport="unsigned")
+    if r.status_code == 403:
+        raise CommandError("this car only accepts signed commands — set up the Fleet API",
+                           "needs_setup", transport="unsigned")
+    if r.status_code == 408:
+        raise CommandError("the car is asleep", "asleep", transport="unsigned")
+    if r.status_code >= 400:
+        raise CommandError(f"Tesla returned HTTP {r.status_code}", "rejected",
+                           transport="unsigned", detail=r.text[:300])
+    data = r.json() if r.content else {}
+    resp = data.get("response") or {}
+    if isinstance(resp, dict) and resp.get("result") is False:
+        raise CommandError(f"the car refused: {resp.get('reason') or 'rejected'}", "rejected",
+                           transport="unsigned")
+    return data
 
-    if resp.status_code == 401:
-        tokens.invalidate_cache()  # 强制下次重新读取 TeslaMate 刷新后的 token
-        raise CommandError(t("cmd.error.token_expired", loc))
-    if resp.status_code == 408:
-        raise CommandError(t("cmd.error.asleep", loc))
-    if resp.status_code >= 400:
-        detail = resp.text[:300]
-        low = detail.lower()
-        # 2021+ 的车（含 Cybertruck）拒绝未签名指令。Tesla 有时给一句
-        # "unsigned command"，但**更多时候只回一个光秃秃的 403**，报文里
-        # 什么都不说。没配签名代理时把 403 直接当成这件事来解释 ——
-        # 否则用户看到的就只是 "HTTP 403"，完全不知道该去做什么。
-        if (
-            "unsigned" in low
-            or "signed command" in low
-            or (resp.status_code == 403 and not settings.tesla_command_proxy)
-        ):
-            raise CommandError(t("cmd.error.unsigned", loc))
-        raise CommandError(t("cmd.error.http", loc, status=resp.status_code, detail=detail))
 
+# ── entry point ──────────────────────────────────────────────────────────
+
+async def _last_location(car_id: int) -> tuple[float, float] | None:
+    c = live.cars.get(str(car_id)) or {}
+    with contextlib.suppress(TypeError, ValueError):
+        if c.get("latitude") and c.get("longitude"):
+            return float(c["latitude"]), float(c["longitude"])
+    row = await db.fetchrow("SELECT latitude, longitude FROM positions WHERE car_id = $1"
+                            " AND latitude IS NOT NULL ORDER BY date DESC LIMIT 1", car_id)
+    return (float(row["latitude"]), float(row["longitude"])) if row else None
+
+
+async def send(car_id: int, command: str, params: dict | None = None, *,
+               allow_wake: bool = True) -> dict:
+    """Send one command. `allow_wake=False` (the AI interface) never wakes a
+    sleeping car; it gets code "asleep" instead."""
     try:
-        data = resp.json()
-    except ValueError:
-        data = {"raw": resp.text[:200]}
-    result = data.get("response") or {}
-    if isinstance(result, dict) and result.get("result") is False:
-        raise CommandError(result.get("reason") or t("cmd.error.rejected", loc))
-    log.info("command %s sent to car %s", command, car_id)
-    return {"ok": True, "response": result}
+        spec, p = catalog.resolve(command, params)
+    except KeyError:
+        raise CommandError(f"unknown command: {command}", "unknown_command") from None
+    except ValueError as e:
+        raise CommandError(str(e), "invalid_param") from None
+    car = await _car(int(car_id))
+    if not spec.applies_to(car["model_key"]):
+        raise CommandError(f"{spec.id} doesn't apply to this vehicle", "not_supported")
+    if spec.needs_location:
+        pos = await _last_location(car["id"])
+        if pos is None:
+            raise CommandError("the car's location isn't known yet", "no_location")
+        p["_lat"], p["_lon"] = pos
+    transport, reason = await transport_for(car)
+    if transport is None:
+        raise CommandError(
+            "this car only accepts signed commands — finish the vehicle-command setup in Settings",
+            reason)
+    started = time.monotonic()
+    if transport == "signed":
+        await _send_signed(car, spec, p, allow_wake)
+    else:
+        await _send_unsigned(car, spec, p, allow_wake)
+    log.info("command %s → car %s via %s in %.1fs", spec.id, car_id, transport, time.monotonic() - started)
+    return {"ok": True, "command": spec.id, "transport": transport, "expect": spec.expect}

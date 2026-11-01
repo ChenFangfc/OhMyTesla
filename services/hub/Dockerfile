@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 # ffmpeg 用于视频合成；Noto CJK 字体用于视频叠加层的中文渲染
 RUN apt-get update \

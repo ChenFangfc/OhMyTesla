@@ -123,7 +123,6 @@
   "cmd.error.request_failed": "Request failed: {error}",
   "cmd.error.token_expired": "Token expired (401). It refreshes on its own — retry in a minute.",
   "cmd.error.unknown_command": "Unknown command: {command}",
-  "cmd.error.unsigned": "This vehicle requires signed commands. Deploy Tesla's vehicle-command proxy and set TESLA_COMMAND_PROXY. See docs/COMMANDS.md",
   "cmd.flash_lights": "Flash lights",
   "cmd.frunk": "Frunk",
   "cmd.honk_horn": "Honk horn",

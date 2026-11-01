@@ -89,7 +89,7 @@ async def _charging(car_id: int, c: dict) -> dict | None:
             "added_kwh": _f(c.get("charge_energy_added")),
         }
     row = await db.fetchrow(
-        "SELECT end_date, charge_energy_added, cost, end_battery_level,"
+        "SELECT id, end_date, charge_energy_added, charge_energy_used, end_battery_level,"
         " (SELECT name FROM geofences g WHERE g.id = cp.geofence_id) AS place"
         " FROM charging_processes cp WHERE car_id = $1 AND end_date IS NOT NULL"
         " ORDER BY end_date DESC LIMIT 1",
@@ -97,11 +97,17 @@ async def _charging(car_id: int, c: dict) -> dict | None:
     )
     if row is None:
         return None
+    # 费用走唯一真源（TeslaMate 记录的 > 电价引擎算的），与 Energy 页同一个数
+    from ..insights import costs as cost_source
+
+    ci = (await cost_source.session_costs(car_id)).get(row["id"]) or {}
     return {
         "active": False,
         "ended_at": row["end_date"].replace(tzinfo=timezone.utc).timestamp(),
         "added_kwh": _f(row["charge_energy_added"]),
-        "cost": _f(row["cost"]),
+        "used_kwh": _f(row["charge_energy_used"]),
+        "cost": ci.get("cost"),
+        "cost_source": ci.get("source"),
         "end_soc": _f(row["end_battery_level"]),
         "place": row["place"],
     }
@@ -147,8 +153,20 @@ async def overview(car_id: int | None = None, tz_offset_min: int = 0):
     numeric = [k for k in cars if k.isdigit()]
     if not numeric:
         return {"connected": False, "car": None}
-    key = str(car_id) if car_id is not None and str(car_id) in cars and str(car_id).isdigit() \
-        else numeric[0]
+    if car_id is not None and str(car_id) in cars:
+        key = str(car_id)
+    else:
+        # 没指定车时取"最近活跃、未归档"的那辆，而不是字典里的第一辆：
+        # 三车账号里第一辆可能是早已离开账号、只剩数据库残影的车。
+        key = numeric[0]
+        try:
+            from ..insights import cars as registry
+
+            best = await registry.default_car_id()
+            if best is not None and str(best) in cars:
+                key = str(best)
+        except Exception:  # 选不出来就用老办法，首页不能因此挂掉
+            log.debug("default car lookup failed", exc_info=True)
     c = cars[key]
     cid = int(key)
 
@@ -168,9 +186,23 @@ async def overview(car_id: int | None = None, tz_offset_min: int = 0):
         except Exception:
             log.debug("suppressed", exc_info=True)
 
+    archived = None
+    last_seen = None
+    try:
+        from ..insights import cars as registry
+
+        meta = await registry.get_car(cid)
+        if meta:
+            archived, last_seen = meta["archived"], meta["last_seen"]
+    except Exception:
+        log.debug("car registry unavailable", exc_info=True)
+
     out = {
         "connected": True,
         "car_id": cid,
+        # 已离开账号的车：界面应提示"历史数据"，而不是把数据库残影当实时状态
+        "archived": archived,
+        "last_seen": last_seen,
         "name": name or None,
         "model": model or None,
         "state": _car_state(c),

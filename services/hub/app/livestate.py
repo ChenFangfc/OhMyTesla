@@ -13,13 +13,46 @@ import contextlib
 import json
 import logging
 import re
+import secrets
+import socket
 import time
 from collections.abc import Awaitable, Callable
-from datetime import timezone
+from datetime import datetime, timezone
 
 import aiomqtt
 
 from .config import settings
+
+# Fleet Telemetry alerts that mean someone is at the car. Anything older than
+# _FLEET_ALERT_FRESH_S by the car's own clock is a replay from a reconnect.
+# One MQTT client id per process. A fixed id made every second hub on the same
+# broker (a dev copy, a test run, a restart overlapping the old container)
+# take the session over, and the broker then kicked the other one off —
+# live, the production hub was disconnected ~8 times a minute and blind to
+# Sentry for 5 s each time. Nothing relies on a persistent session (clean
+# session, QoS 0 subscriptions, retained state re-sent on connect).
+_MQTT_CLIENT_ID = f"ohmytesla-hub-{socket.gethostname()[:20]}-{secrets.token_hex(3)}"
+
+_FLEET_ALERTS = ("alarmTriggered", "handlePullWithoutAuth")
+_FLEET_ALERT_FRESH_S = 180
+# Older than "fresh" still matters when the car was out of signal (a garage,
+# a jammer, a tow): an alarm is delivered late, marked as such, for this long
+# — or for as long as it's still sounding; a handle pull for half an hour.
+_FLEET_ALARM_LATE_MAX_S = 6 * 3600
+_FLEET_PULL_LATE_MAX_S = 30 * 60
+
+
+def _age_seconds(stamp: str) -> float | None:
+    """Seconds since an RFC 3339 timestamp, or None when there isn't one."""
+    if not stamp:
+        return None
+    try:
+        t = datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return time.time() - t.timestamp()
 
 log = logging.getLogger(__name__)
 
@@ -44,9 +77,23 @@ class LiveState:
         self._vin_map: dict[str, str] = {}
         self._vin_map_at: float = 0.0
         self._fleet_reconnect: dict[str, float] = {}
+        # (VIN, alert name) -> StartedAt already delivered. One alert is
+        # published again when it ends (same StartedAt, now with EndedAt).
+        self._fleet_alert_seen: dict[tuple[str, str], str] = {}
         # 从数据库补出来的值（还没被 MQTT 证实过），以及它们真正成立的时刻
         self._seeded: set[str] = set()
         self.seeded_at: dict[str, float] = {}
+        # Keys whose last message was TeslaMate 4.4's empty payload ("field
+        # missing in this poll"): the last known value is kept but flagged.
+        self._unknown: set[str] = set()
+        # When each car last sent *live* data (not seeded, not replayed). A car
+        # that never does is no longer in the account — the watchdog must not
+        # call that an outage every night (audit F4).
+        self.live_seen: dict[str, float] = {}
+        # Hooks run in one ordered worker per car, off the MQTT reader: a slow
+        # push or command must not stall every other car's messages (audit F12).
+        self._queues: dict[str, asyncio.Queue] = {}
+        self._workers: dict[str, asyncio.Task] = {}
 
     def publish(self, topic: str, payload: str, retain: bool = False) -> None:
         """向 MQTT 发布消息（如哨兵事件回发，供 HomeAssistant/Node-RED 联动）。
@@ -74,6 +121,13 @@ class LiveState:
             if age is not None:
                 # 界面据此说明"这是最后已知状态"，而不是把旧数据当实时值显示
                 v["_seed_age"] = str(int(age))
+            seen = self.live_seen.get(car_id)
+            v["_live"] = "1" if seen else "0"
+            if seen:
+                v["_live_age"] = str(int(time.time() - seen))
+            unknown = [m.split("/", 1)[1] for m in self._unknown if m.startswith(f"{car_id}/")]
+            if unknown:
+                v["_unknown"] = ",".join(sorted(unknown))
             out[car_id] = v
         return out
 
@@ -197,7 +251,15 @@ class LiveState:
         if not any(m.startswith(f"{car_id}/") for m in self._seeded):
             return None
         at = self.seeded_at.get(car_id)
-        return None if at is None else max(0.0, time.time() - at)
+        if at is None:
+            return None
+        # 补位之后实时数据已经在流了，这辆车就是"实时"的。不能等每个补过的键都被
+        # 覆盖一遍：TeslaMate 的 display_name 是 ''、从不 retained，只重启 hub 的话
+        # 那个标记永远清不掉，活着的车会被一直报成"数据库里的旧状态"（审计 F13），
+        # ABRP 中继也会因此永久跳过这辆车。
+        if self.live_seen.get(car_id, 0) > at:
+            return None
+        return max(0.0, time.time() - at)
 
     # ---------- MQTT 循环 ----------
 
@@ -209,6 +271,8 @@ class LiveState:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
+        for w in self._workers.values():
+            w.cancel()
 
     async def _run(self) -> None:
         prefix = "teslamate"
@@ -220,6 +284,7 @@ class LiveState:
 
         while True:
             sender: asyncio.Task | None = None
+            reader: asyncio.Task | None = None
             try:
                 kwargs: dict = {}
                 if settings.mqtt_username:
@@ -228,7 +293,7 @@ class LiveState:
                 async with aiomqtt.Client(
                     hostname=settings.mqtt_host,
                     port=settings.mqtt_port,
-                    identifier="ohmytesla-hub",
+                    identifier=_MQTT_CLIENT_ID,
                     **kwargs,
                 ) as client:
                     log.info("MQTT connected, subscribing %s + %s", topic_filter, fleet_filter)
@@ -292,11 +357,15 @@ class LiveState:
                 log.exception("MQTT listener crashed; restarting in 5s")
                 await asyncio.sleep(5)
             finally:
-                if sender:
-                    sender.cancel()
-                    # sender 可能已带异常退出——不能让它的异常杀掉整个监听循环
-                    with contextlib.suppress(Exception, asyncio.CancelledError):
-                        await sender
+                # 关停时外层任务被取消，上面的 reader.cancel() 走不到；不在这里收掉的话，
+                # 客户端一关 reader 就带着 MqttError 结束，每次正常停机都记一条
+                # "Task exception was never retrieved"，看着像崩溃。
+                for tsk in (sender, reader):
+                    if tsk:
+                        tsk.cancel()
+                        # 可能已带异常退出——不能让它的异常杀掉整个监听循环
+                        with contextlib.suppress(Exception, asyncio.CancelledError):
+                            await tsk
 
     async def _car_key_for_vin(self, vin: str) -> str:
         """VIN → TeslaMate car_id。
@@ -356,6 +425,46 @@ class LiveState:
                 log.info("fleet telemetry connected: VIN…%s (replay gate armed)", vin[-6:])
             return
 
+        if kind == "alerts":
+            # Tesla vehicle alerts (needs `alert_types: ["service"]` in the car's
+            # telemetry config). Topic {base}/{VIN}/alerts/{Name}/current|history;
+            # the name is only in the topic, the payload is
+            # {"StartedAt", "EndedAt"?, "Audiences"}. `history` repeats what
+            # `current` already said, so only `current` counts.
+            if field != "current" or len(parts) < n_prefix + 4:
+                return
+            name = parts[n_prefix + 2]
+            if not any(k in name for k in _FLEET_ALERTS):
+                return
+            try:
+                data = json.loads(text)
+            except ValueError:
+                data = None
+            started = str(data.get("StartedAt") or "") if isinstance(data, dict) else ""
+            if started and self._fleet_alert_seen.get((vin, name)) == started:
+                return                                   # the same alert, now ended
+            if started:
+                self._fleet_alert_seen[(vin, name)] = started
+            age = _age_seconds(started)
+            value = name
+            if age is not None and age > _FLEET_ALERT_FRESH_S:
+                # The car's own timestamp says this happened a while ago (it
+                # was offline). Never drop an alarm for that: deliver it late,
+                # marked, unless it's long over.
+                alarm = "alarmTriggered" in name
+                still_on = isinstance(data, dict) and not data.get("EndedAt")
+                limit = _FLEET_ALARM_LATE_MAX_S if alarm else _FLEET_PULL_LATE_MAX_S
+                if not ((alarm and still_on) or age <= limit):
+                    log.info("fleet alert %s for VIN…%s is %ds old, not alerting", name, vin[-6:], int(age))
+                    return
+                value = f"{name}|late={int(age)}"
+            elif age is None:
+                gate = self._fleet_reconnect.get(vin, 0)
+                if time.time() - gate < settings.fleet_replay_gate_seconds and "alarm" not in name:
+                    return
+            await self._ingest_fleet_field(vin, "fleet_alert", value, force=True)
+            return
+
         if kind != "v":
             return
         # 只关心这两个会产生告警的字段
@@ -367,7 +476,10 @@ class LiveState:
         # 分不出新旧。之前这道门只挡 SentryMode，CenterDisplay 的分支又写在
         # 它前面 —— 一次断网重连就会连发一串"有人碰了你锁着的车"。
         gate = self._fleet_reconnect.get(vin, 0)
-        if time.time() - gate < settings.fleet_replay_gate_seconds:
+        if time.time() - gate < settings.fleet_replay_gate_seconds and not (
+                field == "SentryMode" and "Panic" in text):
+            # An alarm (Panic) is never held back: a car that just reconnected
+            # may be reconnecting *because* something is happening to it.
             log.info("suppressed %s during replay window for VIN…%s", field, vin[-6:])
             return
 
@@ -409,20 +521,26 @@ class LiveState:
                     return v
         return str(value)
 
-    async def _ingest_fleet_field(self, vin: str, key: str, state: str) -> None:
-        """把一条遥测字段喂进引擎。MQTT 直连和托管中转桥接都走这里。"""
+    async def _ingest_fleet_field(self, vin: str, key: str, state: str, force: bool = False) -> None:
+        """把一条遥测字段喂进引擎。MQTT 直连和托管中转桥接都走这里。
+
+        `force`: deliver even when the value repeats (alerts are events, not state).
+        """
         car_key = await self._car_key_for_vin(vin)
-        car = self.cars.setdefault(car_key, {"display_name": f"VIN…{vin[-6:]}"})
+        if car_key.startswith("vin:"):
+            # Unknown VIN (DB not ready, or a car that isn't ours): don't invent
+            # a placeholder car that the watchdog would later call "stale".
+            log.info("fleet %s for unknown VIN…%s ignored", key, vin[-6:])
+            return
+        car = self.cars.setdefault(car_key, {})
         old = car.get(key)
-        if old == state:
+        if old == state and not force:
             return
         car[key] = state
-        self.last_update[car_key] = time.time()
-        for hook in self._hooks:
-            try:
-                await hook(car_key, key, old, state)
-            except Exception:
-                log.exception("fleet transition hook failed for %s", vin)
+        # live_seen, not last_update: last_update is TeslaMate's heartbeat
+        # (the watchdog's "is logging alive"), which Fleet data must not mask.
+        self.live_seen[car_key] = time.time()
+        self._dispatch(car_key, key, old, state)
 
     async def ingest_fleet_sentry(self, vin: str, state: str) -> None:
         """哨兵状态入口。名字保留 —— fleet/bridge.py 也调它。"""
@@ -446,9 +564,21 @@ class LiveState:
             return
         car_id = parts[1]
         key = "/".join(parts[2:])
+        if key == "sentry_event" or not car_id.isdigit():
+            # Our own re-published events (older hubs used teslamate/…) are not
+            # TeslaMate data and must not count as a heartbeat (audit F3).
+            return
         payload = message.payload
         value = payload.decode("utf-8", "replace") if isinstance(payload, (bytes, bytearray)) else str(payload)
+        # MQTT sets RETAIN only on messages replayed because we (re)subscribed.
+        # Those are a snapshot of the past, not something happening now: after
+        # a reconnect they used to arrive as fresh "changes" (audit F6).
+        replay = bool(getattr(message, "retain", False))
+        self.ingest(car_id, key, value, replay=replay)
 
+    def ingest(self, car_id: str, key: str, value: str, *, replay: bool = False,
+               source: str = "teslamate") -> None:
+        """One value for one car — from TeslaMate MQTT, or from the fast sentry poll."""
         car = self.cars.setdefault(car_id, {})
         marker = f"{car_id}/{key}"
         was_seeded = marker in self._seeded
@@ -456,34 +586,78 @@ class LiveState:
 
         # 心跳必须记在"消息到达"上，不能记在"值变了"上。TeslaMate 把 healthy
         # 放在 @do_not_retain 里，每个轮询周期无条件发一条（值恒为 true），
-        # 这就是它给出的存活信号。写在下面的 old==value 之后的话，这条心跳
-        # 会被整条丢掉，看门狗量到的就成了"值有没有变"——车醒着但状态不变
-        # 超过阈值就会误报"采集中断、哨兵告警已失效"。
-        self.last_update[car_id] = time.time()
+        # 这就是它给出的存活信号。
+        # 只有 TeslaMate 的实时消息才算它的心跳：快速检查、重连时补发的
+        # retained 快照都不能把一个已经停了的 TeslaMate 遮成"还活着"。
+        now = time.time()
+        if not replay:
+            self.live_seen[car_id] = now
+            if source == "teslamate":
+                self.last_update[car_id] = now
+
+        if value == "" and key != "geofence":
+            # TeslaMate 4.4 publishes "" when the car omitted a field this poll
+            # (and to clear the retained value). That means *unknown*, not a new
+            # value: keep the last known one, flag it, fire nothing. Treating it
+            # as a value made a real trunk opening invisible while sentry_mode
+            # was "" and re-fired alerts when it came back (audit F2).
+            if key in car:
+                self._unknown.add(marker)
+            return
+        self._unknown.discard(marker)
 
         old = car.get(key)
         if old == value:
             return
-        # 数据库补出来的旧值不能当成"刚刚发生的变化"——否则每次重启，
-        # 停机期间攒下的状态差异会在几秒内集中炸成一串哨兵告警。
-        if was_seeded:
-            old = None
         car[key] = value
+        # 数据库补出来的旧值、以及重连时的保留消息回放，都不能当成"刚刚发生的变化"。
+        if not (was_seeded or replay):
+            self._dispatch(car_id, key, old, value)
 
-        for hook in self._hooks:
-            try:
-                await hook(car_id, key, old, value)
-            except Exception:
-                log.exception("transition hook failed for %s/%s", car_id, key)
-
-        event = json.dumps(
-            {"car_id": car_id, "key": key, "value": value}, ensure_ascii=False
-        )
+        event = json.dumps({"car_id": car_id, "key": key, "value": value}, ensure_ascii=False)
         for q in list(self._subscribers):
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
                 self._subscribers.discard(q)
+
+    def emit(self, payload: dict) -> None:
+        """Push a non-state event (sentry incident, alert) to SSE subscribers."""
+        event = json.dumps(payload, ensure_ascii=False)
+        for q in list(self._subscribers):
+            try:
+                q.put_nowait(event)
+            except asyncio.QueueFull:
+                self._subscribers.discard(q)
+
+    def _dispatch(self, car_id: str, key: str, old: str | None, value: str) -> None:
+        q = self._queues.get(car_id)
+        if q is None:
+            q = self._queues[car_id] = asyncio.Queue(maxsize=2000)
+            self._workers[car_id] = asyncio.get_running_loop().create_task(
+                self._worker(car_id, q), name=f"hooks-{car_id}")
+        if q.full():
+            log.error("hook queue for car %s is full; dropping %s", car_id, key)
+            return
+        q.put_nowait((key, old, value))
+
+    async def _worker(self, car_id: str, q: asyncio.Queue) -> None:
+        while True:
+            key, old, value = await q.get()
+            for hook in self._hooks:
+                try:
+                    await hook(car_id, key, old, value)
+                except Exception:
+                    log.exception("transition hook failed for %s/%s", car_id, key)
+
+    def is_active(self, car_id: str, max_age_s: float = 14 * 86400) -> bool:
+        """Is this car still in the account? True once it has sent live data, or
+        while its last known data is recent. Cars that only exist as old DB rows
+        (sold, removed from the account) are not."""
+        if car_id in self.live_seen:
+            return True
+        age = self.seed_age_seconds(car_id)
+        return age is not None and age < max_age_s
 
 
 live = LiveState()

@@ -1,32 +1,28 @@
-import asyncpg
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import db
 from . import journey, queries
+from .analytics_api import router as analytics_router
+from .guard import guard as _guard_deco
+from .period import clamp
 
 router = APIRouter(prefix="/api", tags=["insights"])
+# Grafana 面板对齐的新接口（/api/analytics/*）。挂在这里是因为 main.py 只 include
+# 了 insights 这个路由；子路由在 include 之前合并进来即可。
+router.include_router(analytics_router)
 
 
 def _guard(fn):
-    async def wrapper(*args, **kwargs):
-        try:
-            return await fn(*args, **kwargs)
-        except db.DbUnavailable as e:
-            raise HTTPException(
-                503, f"TeslaMate 数据库暂不可用（首次启动需等 TeslaMate 完成初始化）: {e}"
-            ) from e
-        except asyncpg.PostgresError as e:
-            # 首次启动时 TeslaMate 还没跑完建表迁移，表不存在也归为"暂不可用"
-            raise HTTPException(
-                503, f"TeslaMate 数据库尚未就绪（可能仍在初始化建表）: {e}"
-            ) from e
+    """数据库异常 → 准确的 HTTP 错误（503 连不上 / 504 超时 / 503 schema / 500 SQL）。
 
-    return wrapper
+    以前一律报"数据库尚未就绪（可能仍在初始化建表）"——连 LIMIT 传负数都是这句。
+    """
+    return _guard_deco(fn)
 
 
 @router.get("/cars")
 async def cars():
+    """车辆列表。每辆车带 archived / last_seen / mqtt_live（见 insights/cars.py）。"""
     return await _guard(queries.cars)()
 
 
@@ -112,17 +108,21 @@ async def set_battery_baseline(car_id: int, body: BatteryBaseline):
     """
     from ..alerts.store import store
 
-    cur = await store.get_setting("battery_baseline", {}) or {}
-    if not body.range_km and not body.kwh:
-        cur.pop(str(car_id), None)          # 清空 = 回到观测最大值
-    else:
-        entry = {}
-        if body.range_km and body.range_km > 0:
-            entry["range_km"] = round(float(body.range_km), 1)
-        if body.kwh and body.kwh > 0:
-            entry["kwh"] = round(float(body.kwh), 1)
-        cur[str(car_id)] = entry
-    await store.set_setting("battery_baseline", cur)
+    # 整块 JSON 的读-改-写必须持锁（两辆车同时改基准时，后写的会冲掉先写的）
+    def apply(cur):
+        cur = dict(cur or {})
+        if not body.range_km and not body.kwh:
+            cur.pop(str(car_id), None)          # 清空 = 回到观测最大值
+        else:
+            entry = {}
+            if body.range_km and body.range_km > 0:
+                entry["range_km"] = round(float(body.range_km), 1)
+            if body.kwh and body.kwh > 0:
+                entry["kwh"] = round(float(body.kwh), 1)
+            cur[str(car_id)] = entry
+        return cur
+
+    cur = await store.mutate_setting("battery_baseline", apply, {})
     return {"ok": True, "baseline": cur.get(str(car_id))}
 
 
@@ -149,13 +149,16 @@ async def charge_curve(cp_id: int):
 # 在装饰时就抓住了函数对象，但任何按名字引用的地方都会拿到错的那个）。
 @router.get("/drives")
 async def drives_list(car_id: int, limit: int = 50):
-    return await _guard(queries.drives_list)(car_id, limit)
+    return await _guard(queries.drives_list)(car_id, clamp(limit, 1, 10000, 50))
 
 
 @router.get("/drives/tracks")
 async def drives_tracks(car_id: int, limit: int = 20):
-    """最近行程的轨迹合集，供行程页落地时直接铺开。"""
-    return await _guard(queries.drive_tracks)(car_id, limit)
+    """最近行程的轨迹合集，供行程页落地时直接铺开。
+
+    limit 夹到 1..200：负数以前会变成 SQL 错误，再被翻译成"数据库尚未就绪"的 503。
+    """
+    return await _guard(queries.drive_tracks)(car_id, clamp(limit, 1, 200, 20))
 
 
 @router.get("/drives/{drive_id}/track")
@@ -188,7 +191,7 @@ async def drive_footage(drive_id: int):
     d_end = to_cam_local(row["end_date"]) if row["end_date"] else d_start + timedelta(hours=2)
 
     matches = []
-    for ev in scanner.scan():
+    for ev in await scanner.ascan():
         if ev.end <= d_start or ev.start >= d_end:
             continue
         # seek 必须映射到播放器的"连续视频时间轴"（分段索引×60+段内偏移），
@@ -207,6 +210,9 @@ async def drive_footage(drive_id: int):
             "event_id": ev.id,
             "type": ev.type,
             "event_start": ev.start.isoformat(),
+            # The player maps `at` (car-local wall clock) onto its real timeline;
+            # `seek` assumes 60 s segments and is kept for older clients.
+            "at": max(d_start, ev.start).isoformat(timespec="seconds"),
             "seek": round(seek),
             "thumb": ev.thumb,
         })

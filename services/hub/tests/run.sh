@@ -15,7 +15,7 @@ TESTS_DIR="services/hub/tests"
 MODE="${1:-host}"
 
 # 需要 app 包依赖（aiosqlite 等）的测试只能在容器里跑
-NEEDS_RUNTIME="test_migrations.py test_sentry_escalation.py test_automation.py test_compose_layouts.py test_decrypt.py"
+NEEDS_RUNTIME="test_migrations.py test_sentry_v2.py test_commands_v2.py test_push_policy.py test_fleet_alerts.py test_mcp_write.py test_data_tariff.py test_data_recompute.py test_data_migrations.py test_data_pg.py test_automation.py test_compose_layouts.py test_decrypt.py"
 # 需要服务真的在跑的契约测试（只用标准库，宿主机上跑更方便）
 NEEDS_SERVER="test_teslamateapi_contract.py"
 
@@ -61,7 +61,8 @@ run_docker() {
       continue
     fi
     echo "▸ $base ${DIM}(容器)${OFF}"
-    if docker exec "$c" python3 "/opt/ohmytesla/tests/$base"; then :; else failed=1; fi
+    # 测试绝不能碰容器里真正的 /data（那是生产的 hub.db）
+    if docker exec -e DATA_DIR="/tmp/omt-test-${base%.py}" "$c" python3 "/opt/ohmytesla/tests/$base"; then :; else failed=1; fi
   done
   return $failed
 }

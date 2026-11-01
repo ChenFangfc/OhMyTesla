@@ -49,6 +49,16 @@ async def signin(body: SignIn):
     # 粗校验：Tesla 的 access token 是 JWT，三段式
     if body.access.count(".") < 2:
         raise HTTPException(400, "That doesn't look like an access token — it should be a long JWT with two dots")
+    # First sign-in only. Once TeslaMate holds tokens it owns them: it caches
+    # them and refreshes them itself, so writing over them here would either be
+    # undone at its next refresh or log it out — data collection would stop.
+    try:
+        if await vault.has_tokens():
+            raise HTTPException(409, "TeslaMate is already signed in. To switch accounts, sign out in "
+                                     "TeslaMate first (its page opens on the server itself, or set "
+                                     "TESLAMATE_BIND_ADDR=0.0.0.0), then connect here.")
+    except db.DbUnavailable as e:
+        raise HTTPException(503, str(e)) from e
     try:
         await vault.save_tokens(body.access, body.refresh)
     except vault.VaultError as e:

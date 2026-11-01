@@ -7,19 +7,56 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 BOLD=$'\033[1m'; DIM=$'\033[2m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'
 RED=$'\033[31m'; CYAN=$'\033[36m'; OFF=$'\033[0m'
 
-port() { grep -E "^$1=" .env 2>/dev/null | head -1 | cut -d= -f2 | tr -d ' ' | cut -d'#' -f1; }
+# 读 .env 里的一个值，规则与 docker compose 一致（它才是真正把值交给容器的那一方）：
+#   - 文件不存在 / 没有这个键 → 空串，**不报错**。以前用 grep 管道，在
+#     `set -euo pipefail` 下没有 .env（或没有某个 *_PORT 行）时整个脚本在
+#     顶层就静默退出（exit 2），preflight 那句".env is missing"根本没机会说话；
+#   - 同一个键写了多次取最后一个（compose 的行为）；允许前缀 `export `；
+#   - 值里的 `=`、`#` 原样保留：只有"空白 + #"才是行内注释（compose 规则），
+#     所以 `OHMYTESLA_PASSWORD=pa=ss#word 1` 读出来是 `pa=ss#word 1`，
+#     以前被截成 `pa`，status/up 拿错密码一律报"没连接"；
+#   - 单/双引号包住的值去掉引号、里面的内容一个字不动；行尾 \r（Windows 换行）去掉。
+# bash 3.2（macOS 自带）可用：不用关联数组和 ${var,,}。
+envget() {
+  [ -f .env ] || return 0
+  local l line="" val
+  while IFS= read -r l || [ -n "$l" ]; do
+    l=${l%$'\r'}
+    l="${l#"${l%%[![:space:]]*}"}"
+    case "$l" in
+      "$1="*|"export $1="*) line=$l ;;
+    esac
+  done < .env
+  [ -n "$line" ] || return 0
+  val=${line#*=}
+  val="${val#"${val%%[![:space:]]*}"}"
+  case "$val" in
+    \"*) val=${val#\"}; val=${val%%\"*} ;;
+    \'*) val=${val#\'}; val=${val%%\'*} ;;
+    *)
+      val=$(printf '%s' "$val" | sed -E 's/[[:space:]]+#.*$//')
+      val="${val%"${val##*[![:space:]]}"}"
+      ;;
+  esac
+  printf '%s' "$val"
+}
+port() { envget "$1"; }
 OHMYTESLA_PORT=$(port OHMYTESLA_PORT); OHMYTESLA_PORT=${OHMYTESLA_PORT:-8800}
 GRAFANA_PORT=$(port GRAFANA_PORT);     GRAFANA_PORT=${GRAFANA_PORT:-3000}
 TESLAMATE_PORT=$(port TESLAMATE_PORT); TESLAMATE_PORT=${TESLAMATE_PORT:-4000}
 
 die() { echo "${RED}$1${OFF}" >&2; exit 1; }
 
+# 数据库账号/库名。compose 用的就是这两个；.env 里没写时 TeslaMate 的惯例是 teslamate。
+db_user() { local v; v=$(envget TM_DB_USER); printf '%s' "${v:-teslamate}"; }
+db_name() { local v; v=$(envget TM_DB_NAME); printf '%s' "${v:-teslamate}"; }
+
 # 设了门户密码之后，除 /healthz 外所有接口都要 Basic 认证。不带凭据的话
 # status/up 会拿到 401，然后一律报「还没连接」「应用没响应」——健康的安装
 # 也是这个显示。用户名在 main.py 里固定为 ohmytesla。
 # （bash 3.2 下空数组配 set -u 会报错，所以用 ${arr[@]+...} 这种写法。）
 CURL_AUTH=()
-_omt_pw=$(port OHMYTESLA_PASSWORD || true)
+_omt_pw=$(envget OHMYTESLA_PASSWORD)
 [ -n "${_omt_pw:-}" ] && CURL_AUTH=(--user "ohmytesla:${_omt_pw}")
 auth() { printf '%s\n' "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}"; }
 
@@ -173,7 +210,7 @@ cmd_backup() {
   # ① Postgres。直接 `pg_dump | gzip > "$out"` 会先把目标文件建好再跑 pg_dump，
   # dump 失败时留下的半截 .sql.gz 看起来和正常备份一模一样 ——
   # 备份最不能有的就是这种"看着成功了"。先写临时文件，成了才改名。
-  if ! docker compose exec -T database pg_dump -U "$(port TM_DB_USER)" "$(port TM_DB_NAME)" \
+  if ! docker compose exec -T database pg_dump -U "$(db_user)" "$(db_name)" \
        | gzip > "$dir/teslamate.sql.gz.partial"; then
     rm -rf "$dir"; die "Backup failed — nothing was written."
   fi
@@ -264,20 +301,35 @@ cmd_restore() {
 
   # 恢复之前先给"现在这份"留个后路。恢复错备份是很常见的失误。
   echo "Snapshotting current state first…"
-  cmd_backup >/dev/null || echo "${YELLOW}  (pre-restore snapshot failed, continuing)${OFF}"
+  # 子 shell：cmd_backup 失败时会 die（= exit），不包一层的话整个恢复就跟着退出了，
+  # 后面这句"continuing"永远走不到
+  ( cmd_backup ) >/dev/null || echo "${YELLOW}  (pre-restore snapshot failed, continuing)${OFF}"
 
   echo "Stopping services that hold the databases open…"
   docker compose stop ohmytesla teslamate grafana >/dev/null
 
   echo "Restoring Postgres…"
+  local dbu dbn
+  dbu=$(db_user); dbn=$(db_name)
+  # hub 的 MCP 只读角色（omt_mcp_readonly）在 dump 里只以 GRANT 的形式出现 ——
+  # 角色是整个集群的对象，pg_dump 不会导出它。新机器上不先建好它，那些 GRANT
+  # 就会失败；而下面的恢复是"遇错即停"，于是整个恢复失败。先建（幂等）。
+  docker compose exec -T database psql -U "$dbu" -d postgres -v ON_ERROR_STOP=1 -q -c \
+    "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'omt_mcp_readonly') THEN CREATE ROLE omt_mcp_readonly NOLOGIN; END IF; END \$\$;" >/dev/null \
+    || die "Could not prepare the database roles. Services are stopped; is the database container running?"
   # 先 drop 再建：直接往有数据的库里灌 dump 会撞主键，一半成功一半失败
-  docker compose exec -T database psql -U "$(port TM_DB_USER)" -d postgres \
-    -c "DROP DATABASE IF EXISTS \"$(port TM_DB_NAME)\" WITH (FORCE)" >/dev/null
-  docker compose exec -T database psql -U "$(port TM_DB_USER)" -d postgres \
-    -c "CREATE DATABASE \"$(port TM_DB_NAME)\"" >/dev/null
+  docker compose exec -T database psql -U "$dbu" -d postgres -v ON_ERROR_STOP=1 \
+    -c "DROP DATABASE IF EXISTS \"$dbn\" WITH (FORCE)" >/dev/null \
+    || die "Could not drop the old database. Services are stopped; fix and retry."
+  docker compose exec -T database psql -U "$dbu" -d postgres -v ON_ERROR_STOP=1 \
+    -c "CREATE DATABASE \"$dbn\"" >/dev/null \
+    || die "Could not create the database. Services are stopped; fix and retry."
+  # ON_ERROR_STOP=1：psql 默认遇到错误**继续往下执行**并以 0 退出 —— 半截恢复
+  # 看起来和成功一模一样。--single-transaction：出错就整体回滚，不留半个库。
   gzip -dc "$dir/teslamate.sql.gz" \
-    | docker compose exec -T database psql -U "$(port TM_DB_USER)" -d "$(port TM_DB_NAME)" -q >/dev/null \
-    || die "Postgres restore failed. Services are stopped; fix and retry."
+    | docker compose exec -T database psql -U "$dbu" -d "$dbn" -q \
+        -v ON_ERROR_STOP=1 --single-transaction >/dev/null \
+    || die "Postgres restore failed at the first error and was rolled back. Services are stopped; fix and retry."
 
   if [ -f "$dir/hub.db" ]; then
     echo "Restoring hub.db…"

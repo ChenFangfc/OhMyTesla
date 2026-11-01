@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -44,6 +45,7 @@ class Settings(BaseSettings):
     teslamate_url: str = "http://teslamate:4000"
     grafana_url: str = "http://grafana:3000"
     teslamate_public_port: int = 4000
+    teslamate_bind_addr: str = ""   # compose 传进来；127.0.0.1 = 只有服务器本机打得开
     # 推送里给的链接要能在手机上点开。留空时只能给相对路径，
     # 手机上等于没有链接 —— 所以这项值得单独配。
     public_url: str = ""
@@ -101,8 +103,11 @@ class Settings(BaseSettings):
     # 车辆指令：与 TeslaMate 共用的 ENCRYPTION_KEY（可自动复用其 token）
     encryption_key: str = ""
     tesla_api_host: str = "https://owner-api.teslamotors.com"
-    tesla_command_proxy: str = ""     # vehicle-command 签名代理地址（2021+ 车型需要）
     tesla_access_token: str = ""      # 手动指定 token（可选，优先级低于界面填写）
+    # 车辆指令设置向导的预填值（界面里保存过就以界面为准）
+    tesla_fleet_domain: str = ""        # 放公钥的 https 域名，例如 yourname.github.io
+    tesla_fleet_redirect_uri: str = ""  # 特斯拉登录后跳回的地址
+    tesla_fleet_region: str = ""        # na / eu / cn
 
     # 充电成本：把算出的费用回写 TeslaMate（Grafana 面板也能看到）
     cost_write_back: bool = False
@@ -127,6 +132,10 @@ class Settings(BaseSettings):
     sentry_escalate_seconds: int = 90
     # 轮询层（center_display_state=7）总开关；有 Fleet 实时流时自动让位
     sentry_polled_alerts: bool = True
+    # Fast sentry check: while a car is awake with Sentry armed, read its
+    # vehicle_state this often (seconds) instead of waiting for TeslaMate's
+    # 60 s poll. 0 = off. Overridable in Settings.
+    sentry_fast_poll_seconds: int = 10
     # 保留期（天）：告警历史 / 哨兵会话 / 合成任务超过这个天数就清掉。
     # 0 = 永久保留。这三张表原本只增不删，而它们和电价、token 共用同一个
     # SQLite 文件，写入还是串行的 —— 跑上几年会拖慢每一次写。
@@ -138,6 +147,19 @@ class Settings(BaseSettings):
     # 多久收不到车辆数据就判定"采集中断"并严重告警（秒）。
     # TeslaMate 停车+哨兵时 30 秒一轮，休眠时最长十几分钟一次，故默认 30 分钟。
     data_stale_seconds: int = 1800
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_env_comments(cls, data):
+        """`KEY=   # note` in .env reaches the container as the note itself:
+        compose keeps the comment when the value is empty (seen live with
+        ALERT_QUIET_HOURS). A comment is prose, so a value that starts with
+        '#' and has a space in it is treated as unset; a password such as
+        '#x9!' is left alone."""
+        if isinstance(data, dict):
+            return {k: v for k, v in data.items()
+                    if not (isinstance(v, str) and v.lstrip().startswith("#") and " " in v.strip())}
+        return data
 
     @property
     def preview_dir(self) -> Path:

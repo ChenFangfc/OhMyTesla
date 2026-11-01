@@ -22,6 +22,7 @@ from ..config import settings
 from ..i18n.router import t
 from ..livestate import live
 from . import notifier
+from .sentry import car_label
 from .sentry import tracker as sentry_tracker
 from .store import store
 
@@ -46,17 +47,32 @@ class Rule:
     title_en: str
     default_enabled: bool = True
     cooldown_factor: float = 1.0
+    # How it reaches you by default: "push" (phone), "app" (recorded and shown
+    # in OhmyTesla, never pushed) or "off". The owner's rule: only Sentry and
+    # genuinely major events push; routine diagnostics stay in the app.
+    mode: str = "app"
+
+
+MODES = ("push", "app", "off")
+# The few that deserve a phone buzz by default.
+_PUSH_BY_DEFAULT = frozenset({
+    "sentry_aware", "sentry_panic", "possible_theft", "data_stale", "tpms_warning",
+    "charging_interrupted",
+})
 
 
 RULES: dict[str, Rule] = {
     r.id: r
     for r in [
-        Rule("sentry_door_opened", "critical", "🚨 哨兵警报：车门被打开", "🚨 Sentry: door opened"),
-        Rule("sentry_trunk_opened", "critical", "🚨 哨兵警报：后备箱被打开", "🚨 Sentry: trunk opened"),
-        Rule("sentry_frunk_opened", "critical", "🚨 哨兵警报：前备箱被打开", "🚨 Sentry: frunk opened"),
-        Rule("sentry_window_opened", "critical", "🚨 哨兵警报：车窗被打开", "🚨 Sentry: window opened"),
-        Rule("sentry_unlocked", "critical", "🚨 哨兵警报：车辆被解锁", "🚨 Sentry: vehicle unlocked"),
-        Rule("possible_theft", "critical", "🚨 疑似盗窃：无人在车但车辆开始移动", "🚨 Possible theft: vehicle moving with no user present"),
+        # Owner-explained activity while Sentry was on (a key unlocked the car).
+        # Recorded on the timeline; off by default — a break-in doesn't unlock the
+        # car, a key does. Forced openings (car still locked) are alarms decided in
+        # sentry.py, not these rules.
+        Rule("sentry_door_opened", "info", "车门被打开（哨兵开启中）", "Door opened while Sentry was on", default_enabled=False),
+        Rule("sentry_trunk_opened", "info", "后备箱被打开（哨兵开启中）", "Trunk opened while Sentry was on", default_enabled=False),
+        Rule("sentry_frunk_opened", "info", "前备箱被打开（哨兵开启中）", "Frunk opened while Sentry was on", default_enabled=False),
+        Rule("sentry_window_opened", "info", "车窗被打开（哨兵开启中）", "Window opened while Sentry was on", default_enabled=False),
+        Rule("sentry_unlocked", "info", "车辆已解锁（哨兵开启中）", "Unlocked while Sentry was on", default_enabled=False),
         # Fleet Telemetry 哨兵真实事件流（需启用 fleet profile，见 docs/FLEET-TELEMETRY.md）
         Rule("sentry_aware", "warning", "👀 哨兵注意：检测到可疑活动", "👀 Sentry: suspicious activity (Aware)", cooldown_factor=0.05),
         Rule("sentry_panic", "critical", "🚨 哨兵警报拉响！", "🚨 Sentry PANIC alarm!", cooldown_factor=0.05),
@@ -80,7 +96,12 @@ RULES: dict[str, Rule] = {
         # 保养提醒（按里程或日期，规则在设置里配）
         Rule("maintenance_due", "info", "🔧 保养项目到期", "🔧 Maintenance due"),
         Rule("tpms_warning", "warning", "⚠️ 胎压异常", "⚠️ Tire pressure warning"),
-        Rule("charging_interrupted", "warning", "⚠️ 充电意外中断", "⚠️ Charging interrupted"),
+        # Power lost mid-charge (breaker, outage, cable). A *stop* below the limit
+        # is usually a schedule (8 of 11 live "interruptions" were the off-peak
+        # window ending at 06:00), so it is its own, quiet rule.
+        Rule("charging_interrupted", "warning", "⚠️ 充电时断电", "⚠️ Charging lost power"),
+        Rule("charging_stopped_early", "info", "充电在上限前停止", "Charging stopped before the limit",
+             default_enabled=False),
         Rule("charge_complete", "info", "🔋 充电完成", "🔋 Charging complete", default_enabled=False),
         Rule("low_battery", "warning", "🪫 电量过低", "🪫 Battery low", cooldown_factor=12),
         Rule("update_available", "info", "⬇️ 有新的软件更新", "⬇️ Software update available"),
@@ -92,15 +113,14 @@ RULES: dict[str, Rule] = {
     ]
 }
 
+for _r in RULES.values():
+    _r.mode = "off" if not _r.default_enabled else ("push" if _r.id in _PUSH_BY_DEFAULT else "app")
+
 # 规则标题优先用字典（原生英文），字典没有的退回内置双语
 from ..i18n.router import catalog as _catalog  # noqa: E402
 
 _CATALOG_KEYS = set(_catalog("en"))
 
-_BODY_LABELS = {
-    "zh": {"vehicle": "车辆", "time": "时间", "location": "位置", "battery": "电量"},
-    "en": {"vehicle": "Vehicle", "time": "Time", "location": "Location", "battery": "Battery"},
-}
 
 _TPMS_KEYS = {
     "tpms_soft_warning_fl": "tire.front_left",
@@ -128,6 +148,11 @@ class AlertEngine:
     # 并发无序发布，车主解锁+关哨兵+开门可能以"开门先到"的顺序出现，
     # 延迟复查可消掉这类误报。
     CONFIRM_DELAY_S = 2.0
+    # A charge that stops short is judged two minutes later: by then an owner
+    # who ended it by hand has usually unplugged, and a session that paused
+    # has resumed. Live, 11 of 11 "stopped early" alerts were false (the end
+    # of the off-peak window, DC sessions, a top-up ended by unplugging).
+    STOP_GRACE_S = 120.0
 
     def __init__(self) -> None:
         self._last_fired: dict[tuple[str, str], float] = {}
@@ -138,25 +163,71 @@ class AlertEngine:
         # 也不能用 fast_charger_present —— 它是 charges 表的列，**不在 MQTT 上**
         # （实测 teslamate/cars/1/# 只有 charger_power / voltage / phases 等）。
         self._charge_peak: dict[str, tuple[float, float]] = {}
+        self._stop_checks: dict[str, asyncio.Task] = {}
+
+    async def _judge_stop(self, car_id: str) -> None:
+        """Charging → Stopped short of the limit: was it really interrupted?"""
+        await asyncio.sleep(self.STOP_GRACE_S)
+        car = live.cars.get(car_id, {})
+        if not _is_true(car.get("plugged_in")) or car.get("charging_state") != "Stopped":
+            return                      # unplugged by hand, resumed, or finished
+        level = _num(car.get("battery_level"))
+        limit = _num(car.get("charge_limit_soc"))
+        if level is None or limit is None or level >= limit - 2:
+            return
+        try:
+            from ..insights.charging_stops import classify_stop
+
+            verdict = await classify_stop(
+                int(car_id), end_soc=level, charge_limit_soc=limit, is_dc=None,
+                scheduled_charging_start_time=car.get("scheduled_charging_start_time"),
+                charging_state="Stopped")
+        except Exception as e:  # noqa: BLE001 — without the DB, judge as before
+            log.info("charge stop on car %s: no learned schedule (%s)", car_id, e)
+            verdict = {"interrupted": True, "reason": "unexplained"}
+        if not verdict.get("interrupted"):
+            log.info("charge stop on car %s not alerted: %s", car_id, verdict.get("reason"))
+            return
+        await self._fire("charging_stopped_early", car_id, extra=f"{level:.0f}% / {limit:.0f}%")
+
+    async def rule_modes(self) -> dict[str, str]:
+        """push / app / off per rule. A rule someone switched off in the old
+        on/off UI stays off; an old "on" does not promote a routine rule to
+        push — that is exactly the noise the owner asked to stop."""
+        modes = await store.get_setting("alert_modes", {}) or {}
+        legacy = await store.get_setting("alert_rules", {}) or {}
+        out = {}
+        for rid, rule in RULES.items():
+            m = modes.get(rid)
+            if m not in MODES:
+                m = "off" if legacy.get(rid) is False else rule.mode
+            out[rid] = m
+        return out
 
     async def rule_states(self) -> dict[str, bool]:
-        saved = await store.get_setting("alert_rules", {}) or {}
-        return {
-            rid: bool(saved.get(rid, rule.default_enabled))
-            for rid, rule in RULES.items()
-        }
+        return {rid: m != "off" for rid, m in (await self.rule_modes()).items()}
 
-    async def set_rule(self, rule_id: str, enabled: bool) -> None:
+    async def set_mode(self, rule_id: str, mode: str) -> None:
+        if mode not in MODES:
+            raise ValueError("mode must be push, app or off")
         async with self._rule_lock:
-            saved = await store.get_setting("alert_rules", {}) or {}
-            saved[rule_id] = enabled
-            await store.set_setting("alert_rules", saved)
+            saved = await store.get_setting("alert_modes", {}) or {}
+            saved[rule_id] = mode
+            await store.set_setting("alert_modes", saved)
             self._enabled_cache = None
 
-    async def _enabled(self, rule_id: str) -> bool:
+    async def set_rule(self, rule_id: str, enabled: bool) -> None:
+        """Old on/off API: on = the rule's default mode (or push if it was off)."""
+        rule = RULES[rule_id]
+        await self.set_mode(rule_id, (rule.mode if rule.mode != "off" else "push") if enabled else "off")
+
+    async def _mode(self, rule_id: str) -> str:
         if self._enabled_cache is None:
-            self._enabled_cache = await self.rule_states()
-        return self._enabled_cache.get(rule_id, True)
+            self._enabled_cache = await self.rule_modes()
+        return self._enabled_cache.get(rule_id, "push")
+
+    async def _enabled(self, rule_id: str) -> bool:
+        return await self._mode(rule_id) != "off"
 
     # ---------- 临时静音 ----------
 
@@ -198,100 +269,44 @@ class AlertEngine:
         loc0 = (await get_prefs())["locale"]
         car = live.cars.get(car_id, {})
 
-        # ---- Fleet Telemetry 实时流（真实哨兵状态边沿）----
-        # 不是 retained 回放，首条消息也要处理：第一条就是 Panic 时绝不能漏报
+        # Every live transition passes through the sentry service first. It only
+        # *collects* here; decisions are made once the message burst settles.
+        sentry_tracker.on_change(car_id, key, old, new)
+
+        # ---- Fleet Telemetry: authoritative, immediate ----
         if key == "fleet_sentry_state":
-            sentry_tracker.note_fleet(car_id)
-            if new in ("Aware", "Panic") and old != new:
-                await sentry_tracker.observe(
-                    car_id, car.get("display_name") or f"Car {car_id}",
-                    source="fleet", state="panic" if new == "Panic" else "aware",
-                    geofence=car.get("geofence") or "", soc=car.get("battery_level") or "",
-                )
+            if old != new:
+                await sentry_tracker.fleet_sentry(car_id, new, await car_label(car_id))
             return
-
-        # ---- Fleet Telemetry 的 DisplayState（与上面 center_display_state 不同编号）----
-        # Lock = 有人触碰了锁着的车。哨兵**没开**时这是唯一能察觉"有人在动我的车"
-        # 的信号（SentryGuard 走的也是这条）。与 center_display_state 一样不是
-        # retained 回放，首条也要处理。
         if key == "fleet_display_state":
-            if new == "Lock" and not _is_true(car.get("is_user_present")):
-                await sentry_tracker.observe(
-                    car_id, car.get("display_name") or f"Car {car_id}",
-                    source="fleet", state="aware",
-                    geofence=car.get("geofence") or "", soc=car.get("battery_level") or "",
-                    extra="body.touched_while_locked",
-                )
+            # Lock = someone touched the locked car — the one signal that works
+            # with Sentry *off*. (Not the Owner-API numbering: there 7 = Sentry.)
+            if new == "Lock":
+                await sentry_tracker.fleet_display_lock(car_id, await car_label(car_id))
+            return
+        if key == "fleet_alert":
+            await sentry_tracker.fleet_alert(car_id, new, await car_label(car_id))
             return
 
-        if old is None:
-            return  # 启动时 retained 消息回放，不算变化
-
-        # ---- 轮询层：center_display_state = 7 表示哨兵已被触发、正在录像 ----
-        # （不是"哨兵已开启"——开启但无事时屏幕是灭的，值为 0）
-        # TeslaMate 停车+哨兵时固定 30 秒轮询一次，所以这一层可能漏掉短事件。
-        #
-        # ⚠️ 这个 7 只对 **Owner API / TeslaMate MQTT** 的编号成立：
-        #     0 Off · 2 待机 · 3 充电 · 4 On · 5 大充电屏 · 6 待解锁 · 7 哨兵 · 8 狗狗 · 9 媒体
-        # Fleet Telemetry 的 DisplayState 是**另一套编号**：
-        #     1 Off · 2 Dim · 3 Accessory · 4 On · 5 Driving · 6 Charging · 7 **Lock** · 8 Sentry · 9 Dog · 10 Entertainment
-        # 两套差一位。把遥测流的值喂进这里，7 会被当成哨兵，实际是"有人碰了锁着的车"——
-        # 一个看起来能跑、但每次都报错事的 bug。遥测流请走 fleet_display_state 那条路。
-        if key == "center_display_state":
-            if (
-                new == "7"
-                and settings.sentry_polled_alerts
-                and not sentry_tracker.has_fleet(car_id)  # 有实时流就不用这个糙的
-                and not _is_true(car.get("is_user_present"))
-            ):
-                await sentry_tracker.observe(
-                    car_id, car.get("display_name") or f"Car {car_id}",
-                    source="polled", state="aware",
-                    geofence=car.get("geofence") or "", soc=car.get("battery_level") or "",
-                )
-            return
-
-        sentry_on = _is_true(car.get("sentry_mode"))
-        user_present = _is_true(car.get("is_user_present"))
-        guarding = sentry_on and not user_present
-
-        if key == "sentry_mode":
+        if key == "sentry_mode" and old is not None:
             await self._fire("sentry_armed" if new == "true" else "sentry_disarmed", car_id)
             return
-
-        if guarding:
-            sentry_rules = {
-                "doors_open": ("sentry_door_opened", "true"),
-                "trunk_open": ("sentry_trunk_opened", "true"),
-                "frunk_open": ("sentry_frunk_opened", "true"),
-                "windows_open": ("sentry_window_opened", "true"),
-                "locked": ("sentry_unlocked", "false"),
-            }
-            if key in sentry_rules and new == sentry_rules[key][1]:
-                rule_id = sentry_rules[key][0]
-                # 同时并入哨兵会话，让事件流里看到"有人靠近 → 开门"的完整过程
-                rule = RULES.get(rule_id)
-                if rule:
-                    await sentry_tracker.note_intrusion(
-                        car_id, car.get("display_name") or f"Car {car_id}",
-                        f"rule.{rule_id}", car.get("geofence") or "",
-                        car.get("battery_level") or "",
-                    )
-                return self._schedule_confirmed(rule_id, car_id, key, new)
-
-        if key == "state" and new == "driving" and not user_present and sentry_on:
-            return self._schedule_confirmed("possible_theft", car_id, key, new)
 
         if key == "geofence":
             # 空字符串表示"不在任何已知地点"。只在两端有一端非空时才有意义，
             # 一次移动会先离开旧地点再到达新地点，两条都发得出去。
+            # Retained replays never reach this hook (livestate filters them), so
+            # old=None here is a live first sighting: treat it as "nowhere" so the
+            # first arrival after a restart isn't dropped (audit F6).
+            old = old or ""
             if old and not new:
-                return await self._fire("geofence_depart", car_id,
-                                        extra=t("body.geofence_left", loc0, place=old))
+                return await self._fire("geofence_depart", car_id, extra=old)
             if new:
-                return await self._fire("geofence_arrive", car_id,
-                                        extra=t("body.geofence_at", loc0, place=new))
+                return await self._fire("geofence_arrive", car_id, extra=new)
             return None
+
+        if old is None:
+            return  # first value of this key since start: not a change
 
         if key == "speed":
             limit = _num(await store.get_setting("speed_limit_kmh"))
@@ -300,9 +315,13 @@ class AlertEngine:
             # 而借车/代客泊车时车里当然有人 —— 加这个条件正好把这条规则的
             # 唯一用途排除掉了。车在开就是有人在开，谁开都一样要提醒。
             if limit and limit > 0 and spd is not None and spd > limit:
-                return await self._fire(
-                    "speed_limit", car_id,
-                    extra=t("body.speed_over", loc0, speed=f"{spd:.0f}", limit=f"{limit:.0f}"))
+                from ..i18n import prefs as _p
+
+                mi = (await _p.get()).get("length") == "mi"
+                f = 0.621371 if mi else 1.0
+                unit = "mph" if mi else "km/h"
+                return await self._fire("speed_limit", car_id,
+                                        extra=f"{spd * f:.0f} {unit} (> {limit * f:.0f})")
             return None
 
         # 充电中持续记录峰值，供结束时判断交流还是直流
@@ -323,24 +342,24 @@ class AlertEngine:
                 # 直流快充：功率高，或电压明显高于交流（家用 110-250V，
                 # 超充 300-500V）。两个条件任一成立即可。
                 if peak_kw >= 50 or peak_v >= 300:
-                    await self._fire("idle_fee_risk", car_id,
-                                     extra=t("body.idle_fee", loc0))
+                    await self._fire("idle_fee_risk", car_id)
 
         if key in _TPMS_KEYS and new == "true":
-            return await self._fire("tpms_warning", car_id, extra=t("body.tpms_position", loc0, corner=t(_TPMS_KEYS[key], loc0)))
+            return await self._fire("tpms_warning", car_id, extra=t(_TPMS_KEYS[key], loc0).lower())
 
         if key == "charging_state" and old == "Charging":
-            if new == "NoPower":
-                return await self._fire("charging_interrupted", car_id, extra=t("body.charging_no_power", loc0))
+            if new == "NoPower" and _is_true(car.get("plugged_in")):
+                return await self._fire("charging_interrupted", car_id)
             if new == "Stopped":
                 level = _num(car.get("battery_level"))
                 limit = _num(car.get("charge_limit_soc"))
                 if level is not None and limit is not None and level < limit - 2:
-                    return await self._fire(
-                        "charging_interrupted", car_id,
-                        extra=t("body.charging_stopped_early", loc0,
-                                level=f"{level:.0f}", limit=f"{limit:.0f}"),
-                    )
+                    old_task = self._stop_checks.get(car_id)
+                    if old_task and not old_task.done():
+                        old_task.cancel()
+                    self._stop_checks[car_id] = asyncio.create_task(
+                        self._judge_stop(car_id), name=f"charge-stop-{car_id}")
+                return None
 
         if key == "charging_state" and new == "Complete":
             return await self._fire("charge_complete", car_id)
@@ -353,30 +372,18 @@ class AlertEngine:
                 and prev > 20 >= level
                 and not _is_true(car.get("plugged_in"))
             ):
-                return await self._fire("low_battery", car_id, extra=t("body.low_battery_level", loc0, level=f"{level:.0f}"))
+                return await self._fire("low_battery", car_id, extra=f"{level:.0f}%")
 
         if key == "update_available" and new == "true":
             version = car.get("update_version") or ""
-            return await self._fire("update_available", car_id, extra=t("body.update_version", loc0, version=version))
+            if not version:
+                return None   # the version arrives in the same burst; an empty one is noise
+            return await self._fire("update_available", car_id, extra=version)
 
         if key == "healthy" and new == "false":
             return await self._fire("teslamate_unhealthy", car_id)
 
     # ---------- 触发 ----------
-
-    def _schedule_confirmed(self, rule_id: str, car_id: str, key: str, expected: str) -> None:
-        """延迟复查后触发（消除同批 MQTT 消息乱序导致的误报）。"""
-
-        async def confirm():
-            await asyncio.sleep(self.CONFIRM_DELAY_S)
-            car = live.cars.get(car_id, {})
-            if not (_is_true(car.get("sentry_mode")) and not _is_true(car.get("is_user_present"))):
-                return  # 车主已解除哨兵/已在车内，视为正常操作
-            if car.get(key) != expected:
-                return  # 状态已恢复（如门又关上且哨兵未响）
-            await self._fire(rule_id, car_id)
-
-        asyncio.get_running_loop().create_task(confirm())
 
     def _quiet_now(self) -> bool:
         spec = settings.alert_quiet_hours.strip()
@@ -393,167 +400,136 @@ class AlertEngine:
             return start <= now <= end
         return now >= start or now <= end  # 跨午夜
 
-    def _location_lines(self, car: dict[str, str], loc: str = "zh",
-                        up: dict | None = None) -> list[str]:
-        """位置行。地图链接按**地区**选而不是按语言——
-        在北美的中文车主要的是 Google 地图，高德在那边没用。"""
-        LBL = _BODY_LABELS.get(loc, _BODY_LABELS["zh"])
-        lines = []
-        geofence = car.get("geofence")
-        if geofence:
-            lines.append(f"{LBL['location']}: {geofence}")
-        lat, lon = car.get("latitude"), car.get("longitude")
-        if lat and lon:
-            in_china = (up or {}).get("market") == "CN"
-            if in_china:
-                lines.append(t("body.map_amap", loc) + f": https://uri.amap.com/marker?position={lon},{lat}")
-            else:
-                lines.append(t("body.map_google", loc) + f": https://maps.google.com/?q={lat},{lon}")
-        return lines
-
     async def fire_custom(
         self, car_id: str, level: str, title: str, body: str,
-        rule: str = "sentry_activity", gate: str | None = None,
+        rule: str = "sentry_activity", gate: str | None = None, *,
+        url: str | None = None, tag: str | None = None, image: str | None = None,
     ) -> bool:
-        """哨兵会话专用发送通道：标题/正文由会话模型给出，不走规则表冷却。
+        """Send an alert whose title/body the caller composed (sentry incidents,
+        watchdog, maintenance, new dashcam clips).
 
-        冷却由会话去重承担（15 秒窗口 + 升级阶梯），这里只做静默时段判断。
+        Returns True once the alert is *handled*: pushed to at least one
+        channel, or recorded in-app when its mode is "app". False means it was
+        switched off, suppressed (quiet hours / snooze) or every push failed —
+        callers retry or keep state on False.
 
-        但**开关还是要认**：`sentry_aware` / `sentry_panic` / `data_stale` /
-        `data_resumed` 四条规则在界面上有开关（走 /api/alerts/rules），
-        以前这条路径完全不查 `_enabled()`，于是关掉它们等于没关。
-
-        `gate` 用来把"存哪条 rule"和"查哪个开关"分开：哨兵会话统一以
-        `sentry_activity` 入库（历史与界面分组依赖它），但要按当次的严重程度
-        分别去查 sentry_aware / sentry_panic 的开关 —— 用户想关掉聒噪的
-        "有人靠近"而保留"警报拉响"，这是个合理且常见的诉求。
+        `gate` separates "which rule it is filed under" from "which switch
+        silences it": every sentry incident is filed as `sentry_activity`, but
+        an Aware is governed by `sentry_aware` and an alarm by `sentry_panic`.
         """
-        if (gate or rule) in RULES and not await self._enabled(gate or rule):
+        key = gate or rule
+        mode = await self._mode(key) if key in RULES else "push"
+        if mode == "off":
             return False
-        if self._quiet_now() and level != "critical":
-            return False
-        if await self._snoozed(level):
-            log.info("alert %s suppressed by snooze", rule)
-            return False
+        push = mode == "push"
+        if push and self._quiet_now() and level != "critical":
+            push = False                     # quiet hours: keep it in the app
+        if push and await self._snoozed(level):
+            log.info("alert %s kept in-app by snooze", rule)
+            push = False
+        return await self._deliver(car_id, rule, level, title, body, push=push,
+                                   url=url, tag=tag, image=image)
+
+    async def _deliver(self, car_id: str, rule: str, level: str, title: str, body: str, *,
+                       push: bool = True, url: str | None = None, tag: str | None = None,
+                       image: str | None = None) -> bool:
+        """Record the alert, and push it when asked.
+
+        Push text is short by design: the title says what happened, the body
+        says where and when, the tap opens the event. Everything else lives in
+        the app."""
         from ..i18n import prefs as user_prefs
 
         up = await user_prefs.get()
-        loc = up["locale"]
-        LBL = _BODY_LABELS[loc]
         car = live.cars.get(car_id, {})
-        car_name = car.get("display_name") or f"Car {car_id}"
-        tz = _tz()
-        lines = [
-            f"{LBL['vehicle']}: {car_name}",
-            f"{LBL['time']}: {datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')}",
-            body,
-        ]
-        lines += self._location_lines(car, loc, up)
-        if car.get("battery_level"):
-            lines.append(f"{LBL['battery']}: {car['battery_level']}%")
-        full = "\n".join(x for x in lines if x)
-
-        delivered, channels = await notifier.send(
-            title, full,
-            payload={"rule": rule, "level": level, "car_id": car_id, "car_name": car_name},
-        )
+        car_name = await car_label(car_id)
+        line = body.strip() if body else await self.where_when(car_id, up["locale"])
+        delivered, channels = False, []
+        if push:
+            payload = {"rule": rule, "level": level, "car_id": car_id, "car_name": car_name, "tag": tag}
+            lat, lon = car.get("latitude"), car.get("longitude")
+            if lat and lon:
+                payload["map_url"] = (f"https://uri.amap.com/marker?position={lon},{lat}" if up.get("market") == "CN"
+                                      else f"https://maps.google.com/?q={lat},{lon}")
+            delivered, channels = await notifier.send(title, line, payload=payload, attach=image,
+                                                      level=level, url=url)
+        alert_id = None
         with contextlib.suppress(Exception):
-            await store.add_alert(car_id, car_name, rule, level, title, full, delivered, channels)
+            alert_id = await store.add_alert(car_id, car_name, rule, level, title, line, delivered,
+                                             channels if push else ["app"])
+        live.emit({"type": "alert", "id": alert_id, "ts": time.time(), "car_id": car_id,
+                   "car_name": car_name, "rule": rule, "level": level, "title": title,
+                   "body": line, "pushed": bool(delivered), "in_app_only": not push, "url": url})
 
-        # 只有哨兵类事件才回发到 sentry_event 主题。fire_custom 现在也被
-        # 看门狗和保养提醒复用，无条件回发的话，HA 那边一条
-        # 「sentry_event → 开车库灯 + 响蜂鸣器」的自动化，会被"雨刮该换了"
-        # 触发一次。与 _fire 里的判断保持一致。
+        # Sentry events are re-published for Home Assistant / Node-RED. Under
+        # our own prefix: publishing under teslamate/ made the hub hear its own
+        # event as TeslaMate data and count it as a heartbeat (audit F3).
         if rule.startswith(("sentry_", "possible_theft", "new_sentry")):
             import json as _json
 
-            # 载荷里要带 geofence 和 body：自动化最常见的条件就是
-            # "只在家里/不在家时才动作"，而正文里是"哪扇门被开了"这类细节。
-            # 少这两项的话，订阅方只能拿到一句标题，做不了任何判断。
             live.publish(
-                f"teslamate/cars/{car_id}/sentry_event",
+                f"ohmytesla/cars/{car_id}/sentry_event",
                 _json.dumps(
                     {"rule": rule, "level": level, "car": car_name, "car_id": car_id,
-                     "title": title, "body": full,
-                     "geofence": (live.cars.get(car_id, {}) or {}).get("geofence") or "",
+                     "title": title, "body": line, "geofence": car.get("geofence") or "",
                      "ts": time.time()},
                     ensure_ascii=False,
                 ),
             )
-        log.info("sentry alert fired: %s level=%s delivered=%s", rule, level, delivered)
-        return True
+        log.info("alert %s level=%s car=%s %s", rule, level, car_id,
+                 f"pushed via {','.join(channels) or '-'} ok={delivered}" if push else "recorded in-app")
+        return bool(delivered) if push else True
+
+    async def where_when(self, car_id: str, loc: str) -> str:
+        """'Home · 10:41 PM' — the one line a push body needs."""
+        place = ""
+        with contextlib.suppress(Exception):
+            place, _ = await sentry_tracker.place(live.cars.get(car_id, {}))
+        now = datetime.now(_tz())
+        when = now.strftime("%H:%M") if loc == "zh" else now.strftime("%-I:%M %p")
+        return " · ".join(x for x in (place, when) if x)
 
     async def _fire(
-        self, rule_id: str, car_id: str, extra: str = "", attach: str | None = None
-    ) -> None:
+        self, rule_id: str, car_id: str, extra: str = "", attach: str | None = None,
+        url: str | None = None,
+    ) -> bool:
         rule = RULES.get(rule_id)
-        if rule is None or not await self._enabled(rule_id):
-            return
-
-        if self._quiet_now() and rule.level != "critical":
-            return
-        if await self._snoozed(rule.level):
-            log.info("alert %s suppressed by snooze", rule_id)
-            return
+        if rule is None:
+            return False
+        mode = await self._mode(rule_id)
+        if mode == "off":
+            return False
+        push = mode == "push"
+        if push and self._quiet_now() and rule.level != "critical":
+            push = False
+        if push and await self._snoozed(rule.level):
+            push = False
 
         now = time.time()
         cooldown = settings.alert_cooldown_seconds * rule.cooldown_factor
         last = self._last_fired.get((car_id, rule_id), 0)
         if now - last < cooldown:
-            return
+            return False
         self._last_fired[(car_id, rule_id)] = now
 
-        car = live.cars.get(car_id, {})
-        car_name = car.get("display_name") or f"Car {car_id}"
         from ..i18n import prefs as user_prefs
 
-        up = await user_prefs.get()
-        loc = up["locale"]
-        title = t(f"rule.{rule_id}", loc) if f"rule.{rule_id}" in _CATALOG_KEYS else (
-            rule.title_zh if loc == "zh" else rule.title_en)
-
-        tz = _tz()
-        LBL = _BODY_LABELS[loc]
-        body_lines = [
-            f"{LBL['vehicle']}: {car_name}",
-            f"{LBL['time']}: {datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')}",
-        ]
-        if extra:
-            body_lines.append(extra)
-        body_lines += self._location_lines(car, loc, up)
-        battery = car.get("battery_level")
-        if battery:
-            body_lines.append(f"{LBL['battery']}: {battery}%")
-        body = "\n".join(body_lines)
-
-        delivered, channels = await notifier.send(
-            title, body,
-            payload={"rule": rule_id, "level": rule.level, "car_id": car_id, "car_name": car_name},
-            attach=attach,
-        )
-        if not delivered:
+        loc = (await user_prefs.get())["locale"]
+        car_name = await car_label(car_id)
+        # Short, specific titles: "⚠️ Cybertruck — low tire pressure · front left".
+        key = f"push.{rule_id}"
+        if key in _CATALOG_KEYS:
+            title = t(key, loc, car=car_name, detail=extra or "").rstrip(" ·")
+        else:
+            title = t(f"rule.{rule_id}", loc) if f"rule.{rule_id}" in _CATALOG_KEYS else (
+                rule.title_zh if loc == "zh" else rule.title_en)
+        body = await self.where_when(car_id, loc)
+        delivered = await self._deliver(car_id, rule_id, rule.level, title, body, push=push,
+                                        url=url or "/security", image=attach)
+        if push and not delivered:
             # 投递失败不占用冷却窗口，下一次状态变化可重试
             self._last_fired[(car_id, rule_id)] = last
-
-        # 哨兵类事件回发 MQTT，供 HomeAssistant / Node-RED 联动
-        if rule_id.startswith(("sentry_", "possible_theft", "new_sentry")):
-            import json
-
-            live.publish(
-                f"teslamate/cars/{car_id}/sentry_event",
-                json.dumps(
-                    {"rule": rule_id, "level": rule.level, "car": car_name, "car_id": car_id,
-                     "title": title, "body": body,
-                     "geofence": (live.cars.get(car_id, {}) or {}).get("geofence") or "",
-                     "ts": now},
-                    ensure_ascii=False,
-                ),
-            )
-        try:
-            await store.add_alert(car_id, car_name, rule_id, rule.level, title, body, delivered, channels)
-        except Exception:
-            log.exception("failed to persist alert")
-        log.info("alert fired: %s car=%s delivered=%s", rule_id, car_id, delivered)
+        return delivered
 
 
 engine = AlertEngine()

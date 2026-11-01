@@ -5,48 +5,77 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>{% block title %}OhmyTesla{% endblock %}</title>
   <link rel="stylesheet" href="/static/css/design.css">
+  <link rel="stylesheet" href="/static/css/app.css">
   <link rel="icon" href="/static/icon.svg">
   <link rel="manifest" href="/manifest.json" crossorigin="use-credentials">
-  <meta name="theme-color" content="#0F0F10">
+  <meta name="theme-color" content="#0a0b0d">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <script type="importmap">{"imports":{"three":"/static/vendor/three/three.module.min.js","three/addons/":"/static/vendor/three/addons/"}}</script>
   {% block head %}{% endblock %}
 </head>
-<body>
+<body class="app">
 
-<div id="stale-banner" class="banner" style="display:none"></div>
+{# Desktop rail. Four things: who we are, which car, where to go, and whether
+   the data is flowing. Everything else belongs to the page. #}
+<aside class="app-rail">
+  <a href="/" class="app-brand"><img src="/static/icon.svg" alt=""><span class="word">Ohmy<span>Tesla</span></span></a>
+  <button class="carswitch" data-carswitch aria-label="{{ t('cars.choose', 'Choose vehicle') }}">
+    <span class="status-dot"></span>
+    <span class="cs-text"><div class="cs-name">…</div><div class="cs-sub"></div></span>
+    <span class="ico-slot" data-icon="chevdown" data-size="16"></span>
+  </button>
+  <nav class="rail-nav">
+    {% set items = [('home','/','home','nav.overview'), ('controls','/controls','sliders','nav.controls'),
+                    ('trips','/trips','route','nav.trips'), ('energy','/energy','bolt','nav.energy'),
+                    ('timeline','/timeline','timeline','nav.timeline'), ('dashcam','/dashcam','film','nav.dashcam'),
+                    ('security','/security','shield','nav.security')] %}
+    {% for key, href, ic, label in items %}
+    <a href="{{ href }}" class="rail-link {{ 'active' if active == key else '' }}">
+      <span class="ico-slot" data-icon="{{ ic }}" data-size="19"></span><span data-i18n="{{ label }}">{{ t(label, key|capitalize) }}</span>
+      {% if key == 'security' %}<span class="badge" id="sec-badge" hidden></span>{% endif %}
+    </a>
+    {% endfor %}
+  </nav>
+  <div class="rail-foot">
+    <button id="cmdk-open" class="rail-link" style="border:0;background:none;font:inherit;cursor:pointer;width:100%">
+      <span class="ico-slot" data-icon="search" data-size="19"></span><span data-i18n="cmdk.title">Search</span><kbd style="margin-left:auto;font-size:11px;color:var(--text-tertiary)">⌘K</kbd>
+    </button>
+    <a href="/settings" class="rail-link {{ 'active' if active == 'settings' else '' }}">
+      <span class="ico-slot" data-icon="gear" data-size="19"></span><span data-i18n="nav.settings">Settings</span>
+    </a>
+    <div class="rail-conn" id="conn"><span class="dot"></span><span class="txt"></span></div>
+  </div>
+</aside>
 
-{# Masthead carries four things and nothing else: who we are, the way in
-   (⌘K), whether the vehicle is reachable, and a door to Settings. Language
-   and units are preferences — they live inside Settings, not on the chrome
-   of every page. #}
-<header class="masthead">
-  <a href="/" class="wordmark">Ohmy<span class="mark">Tesla</span></a><span class="spacer"></span>
-  <button id="cmdk-open" class="chip-btn" data-i18n-title="cmdk.title"><span class="ico-slot" data-icon="search" data-size="14"></span>
-    <kbd>⌘K</kbd>
-  </button><span id="conn" class="conn idle"><span class="dot"></span><span class="txt"></span></span>
-  <a href="/settings" class="chip-btn" data-i18n-title="nav.settings" aria-label="Settings"><span class="ico-slot" data-icon="gear" data-size="16"></span>
-  </a>
+{# Phone chrome: car on top, five destinations at the bottom. #}
+<header class="app-topbar">
+  <button class="carswitch" data-carswitch>
+    <span class="status-dot"></span>
+    <span class="cs-text"><div class="cs-name">…</div><div class="cs-sub"></div></span>
+    <span class="ico-slot" data-icon="chevdown" data-size="16"></span>
+  </button>
+  <a href="/settings" class="chip-btn" aria-label="Settings"><span class="ico-slot" data-icon="gear" data-size="18"></span></a>
 </header>
 
-{% block hero %}{% endblock %}
+<main class="app-main">
+  <div id="stale-banner" class="banner" style="display:none"></div>
+  {% block hero %}{% endblock %}
+  {% block content %}{% endblock %}
+</main>
 
-<nav class="navbar">
-  <div class="navbar-inner">
-    <a href="/"         class="navlink {{ 'active' if active == 'home' else '' }}"     data-i18n="nav.overview">Overview</a>
-    <a href="/energy"   class="navlink {{ 'active' if active == 'energy' else '' }}"   data-i18n="nav.energy">Energy</a>
-    <a href="/trips"    class="navlink {{ 'active' if active == 'trips' else '' }}"    data-i18n="nav.trips">Trips</a>
-    <a href="/timeline" class="navlink {{ 'active' if active == 'timeline' else '' }}" data-i18n="nav.timeline">Timeline</a>
-    <a href="/dashcam"  class="navlink {{ 'active' if active == 'dashcam' else '' }}"  data-i18n="nav.dashcam">Dashcam</a>
-    <a href="/security" class="navlink {{ 'active' if active == 'security' else '' }}" data-i18n="nav.security">Security</a>
-  </div>
+<nav class="app-tabbar">
+  {% for key, href, ic, label in [('home','/','home','nav.overview'), ('controls','/controls','sliders','nav.controls'),
+                                  ('security','/security','shield','nav.security'), ('dashcam','/dashcam','film','nav.dashcam')] %}
+  <a href="{{ href }}" class="tab {{ 'active' if active == key else '' }}"><span class="ico-slot" data-icon="{{ ic }}" data-size="22"></span><span data-i18n="{{ label }}">{{ t(label, key|capitalize) }}</span></a>
+  {% endfor %}
+  <button class="tab {{ 'active' if active in ('trips','energy','timeline','settings') else '' }}" id="tab-more"><span class="ico-slot" data-icon="menu" data-size="22"></span><span data-i18n="nav.more">More</span></button>
 </nav>
-
-<main>{% block content %}{% endblock %}</main>
 
 <script src="/static/js/i18n.js"></script>
 <script src="/static/js/util.js"></script>
 <script src="/static/js/icons.js"></script>
+<script src="/static/js/core.js"></script>
 <script src="/static/js/cmdk.js"></script>
 <script>
   const i18nReady = i18n.load();
@@ -58,8 +87,6 @@
     });
   }
   paintIcons();
-
-  i18nReady.then(() => { cmdk.init(); });
 
   /* The dangerous failure for an alerting product is silence: pages render,
      health checks pass, and the pipeline is dead. Say so at the top. */
@@ -76,7 +103,6 @@
     }).catch(() => {});
   }
 
-  /* Connection chip is shared chrome, so every page keeps it truthful. */
   const KNOWN_STATES = ["parked", "asleep", "offline", "online", "driving", "charging"];
   const stateLabel = (s) => t(KNOWN_STATES.includes(s) ? "state." + s : "state.unknown");
 
@@ -86,21 +112,32 @@
     const cls = !d || !d.connected ? "down"
       : d.state === "driving" || d.state === "charging" ? "syncing"
       : d.state === "online" ? "live" : "idle";
-    el.className = "conn " + cls;
-    el.querySelector(".txt").textContent =
-      d && d.connected ? stateLabel(d.state) : t("conn.down");
+    el.className = "rail-conn conn " + cls;
+    el.querySelector(".txt").textContent = d && d.connected ? t("conn.collecting") : t("conn.down");
   }
 
   async function refreshConnection() {
     try {
-      const d = await apiGet("/api/overview");
+      const d = await apiGet("/api/overview" + (Car.current ? `?car_id=${Car.current}` : ""));
       paintConnection(d);
       if (window.onOverviewData) window.onOverviewData(d);
     } catch (e) { /* leave the last known chip */ }
   }
 
+  async function refreshSecurityBadge() {
+    try {
+      const s = await apiGet("/api/alerts/sentry/active");
+      const b = document.getElementById("sec-badge");
+      const n = Object.keys(s.active || {}).length;
+      if (b) { b.hidden = !n; b.textContent = n; }
+    } catch (e) { /* optional */ }
+  }
+
   i18nReady.catch(() => {}).then(() => {
+    cmdk.init();
+    initShell();
     checkDataHealth(); setInterval(checkDataHealth, 60000);
+    refreshSecurityBadge(); setInterval(refreshSecurityBadge, 30000);
     if (!window.ownsOverviewFetch) { refreshConnection(); setInterval(refreshConnection, 30000); }
   });
 </script>

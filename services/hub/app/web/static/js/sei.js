@@ -41,7 +41,10 @@
         if (spec) out[spec[0]] = spec[1] === "bool" ? !!v : v;
       }
     } catch (e) { return null; }
-    return ("seq" in out || "speed_mps" in out) ? out : null;
+    // proto3 不序列化默认值：停在 P 挡、车速 0 的帧里没有 gear / speed 字段，
+    // 序号为 0 时连 seq 都没有。载荷已由 UUID 前缀定位，能完整解码就是有效帧，
+    // 丢掉它会让后面每一帧的时间都错一格。
+    return out;
   }
 
   function stripEmulation(bytes) {
@@ -113,22 +116,56 @@
     return frames;
   }
 
-  /* File → 按 step 秒抽样的样本数组（t 为片段内秒）。fps 按帧数/时长估算。 */
-  async function extract(file, { step = 0.5, durationS = 60 } = {}) {
+  /* moov/mvhd 里记的影片时长（秒）；找不到返回 null。
+   * 片段不一定是 60 秒（事件最后一段、被截断的片段都更短），
+   * fps 按"帧数 / 60"估的话，短片段里每个样本的时间都会被压扁。 */
+  function mp4Duration(buffer) {
+    const dv = new DataView(buffer);
+    const u8 = new Uint8Array(buffer);
+    const type = (p) => String.fromCharCode(u8[p], u8[p + 1], u8[p + 2], u8[p + 3]);
+    function find(start, end, want) {
+      let p = start;
+      while (p + 8 <= end) {
+        let size = dv.getUint32(p), hdr = 8;
+        if (size === 1) { size = Number(dv.getBigUint64(p + 8)); hdr = 16; }
+        else if (size === 0) size = end - p;
+        if (size < hdr) return null;
+        if (type(p + 4) === want) return [p + hdr, Math.min(p + size, end)];
+        p += size;
+      }
+      return null;
+    }
+    try {
+      const moov = find(0, buffer.byteLength, "moov");
+      if (!moov) return null;
+      const mvhd = find(moov[0], moov[1], "mvhd");
+      if (!mvhd) return null;
+      const p = mvhd[0], v = u8[p];
+      const timescale = v === 1 ? dv.getUint32(p + 20) : dv.getUint32(p + 12);
+      const dur = v === 1 ? Number(dv.getBigUint64(p + 24)) : dv.getUint32(p + 16);
+      return timescale > 0 && dur > 0 ? dur / timescale : null;
+    } catch (e) { return null; }
+  }
+
+  /* File → 按 step 秒抽样的样本数组（t 为片段内秒）。
+   * fps = 帧数 / 片段真实时长（优先读 mp4 自己记的时长，读不到才用调用方给的）。 */
+  async function extract(file, { step = 0.5, durationS = null } = {}) {
     if (file.size > 400 * 1024 * 1024) return [];  // 超大文件跳过，防浏览器内存爆
     const buffer = await file.arrayBuffer();
     let frames;
     try { frames = extractFrames(buffer); } catch (e) { return []; }  // 坏文件不炸 UI
     if (!frames.length) return [];
-    const fps = Math.min(Math.max(frames.length / durationS, 5), 60);
+    const dur = mp4Duration(buffer) || (durationS > 0 ? durationS : 60);
+    const fps = Math.min(Math.max(frames.length / dur, 5), 60);
     const stride = Math.max(Math.round(step * fps), 1);
     const samples = [];
     for (let idx = 0; idx < frames.length; idx += stride) {
       const f = frames[idx];
       samples.push({
         t: +(idx / fps).toFixed(2),
-        gear: GEARS[f.gear] ?? "",
-        speed_kmh: f.speed_mps != null ? +(f.speed_mps * 3.6).toFixed(1) : null,
+        // proto3：缺失 = 默认值。gear 缺失就是 P，speed 缺失就是 0 km/h
+        gear: GEARS[f.gear ?? 0] ?? "",
+        speed_kmh: +((f.speed_mps ?? 0) * 3.6).toFixed(1),
         accel_pedal: f.accel_pedal != null ? +f.accel_pedal.toFixed(1) : null,
         steering_angle: f.steering_angle != null ? +f.steering_angle.toFixed(1) : null,
         blinker_left: !!f.blinker_left, blinker_right: !!f.blinker_right,
@@ -140,5 +177,5 @@
     return samples;
   }
 
-  window.omtSei = { extract };
+  window.omtSei = { extract, mp4Duration };
 })();

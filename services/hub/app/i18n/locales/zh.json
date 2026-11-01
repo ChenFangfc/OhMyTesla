@@ -123,7 +123,6 @@
   "cmd.error.request_failed": "请求失败: {error}",
   "cmd.error.token_expired": "Token 已失效（401）。系统会自动刷新，请稍后重试。",
   "cmd.error.unknown_command": "未知指令: {command}",
-  "cmd.error.unsigned": "该车需要签名指令：请部署 tesla vehicle-command 代理并设置 TESLA_COMMAND_PROXY。详见 docs/COMMANDS.md",
   "cmd.flash_lights": "闪灯",
   "cmd.frunk": "打开前备箱",
   "cmd.honk_horn": "鸣笛",

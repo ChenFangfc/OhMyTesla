@@ -1,0 +1,15 @@
+{
+  "name": "Cybertruck",
+  "rigged": false,
+  "length_m": 5.683,
+  "dropTinyMeshes": 60,
+  "materials": {
+    "paint": ["exterior_steel"],
+    "glass": ["glass"],
+    "headlights": ["headlight"],
+    "taillights": ["taillight"],
+    "tonneau": ["bedcover"]
+  },
+  "credits": "“Tesla Cybertruck 2025” by Nieve5677 (sketchfab.com/3d-models/tesla-cybertruck-2025-0fe4980c8cbc441382bfb7d4cf9f092e); glTF conversion by tesla-studio; materials split by DriveOS (Bryan Wang). See CREDITS.md.",
+  "license": "CC BY 4.0"
+}
