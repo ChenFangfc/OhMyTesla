@@ -2,7 +2,8 @@
 
 ## 核心原则：编排，不 fork
 
-TeslaMate 以官方 Docker 镜像原样运行（`teslamate/teslamate:latest`），可随上游随时升级。
+TeslaMate 以官方 Docker 镜像原样运行（钉在 `teslamate/teslamate:4.4.0`；hub 读它的库表，
+所以升级时改 tag、跑一遍 `./omt up`，`/api/health/teslamate` 会核对 schema）。
 OhmyTesla 的全部新功能位于独立的 **Hub 服务**（`services/hub`，Python/FastAPI），通过
 TeslaMate 生态公认的三条"缝"接入：
 
@@ -87,12 +88,27 @@ Hub 自己的状态（告警历史、规则开关、合成任务、电价方案�
 | AGPL-3.0 | 与 TeslaMate 相同，消除其 README 主张的传染争议，也允许未来吸纳同类 AGPL 项目逻辑 |
 | SQLite 而非共库建表 | TeslaMate 迁移自动执行，共库有升级碰撞风险 |
 
+## v2（2026-10-31）—— 以这一节为准，下面是历史记录
+
+- **车辆指令**：`tesla/catalog.py`（90 多条，带车型与风险等级）+ `tesla/fleet.py`（车主自己的 Fleet API
+  应用、密钥、OAuth、虚拟钥匙配对）+ `tesla/commands.py`（tesla-fleet-api 进程内签名；2020 年及以前的
+  S/X 走 TeslaMate token 的老接口）。不再需要 vehicle-command 代理。
+- **哨兵 v2**（`alerts/sentry.py`）：状态稳定后再判断、车主信号窗口、家/外地点策略、拖车检测；
+  `alerts/fastpoll.py` 在哨兵开启时每 10 秒只读检查一次（不唤醒、不刷新 TeslaMate 的 token）。
+- **推送策略**（`alerts/engine.py`）：每条规则 push / app / off，只有哨兵和重大事件默认推送；
+  推送一行标题 + 一行「地点 · 时间」。渠道在 `alerts/channels.py`，界面里配，密钥加密存。
+- **界面**：`static/css/app.css` + `static/js/core.js` 的新外壳；首页 3D 车（`vehicle3d.js`，three.js），
+  地图统一 MapLibre + OpenFreeMap（`map.js`，国内 GCJ-02 在渲染时偏移）。
+- **数据**：`insights/analytics_api.py` 等 20 个与 TeslaMate 面板对齐的接口；费用统一一个来源（`insights/costs.py`）。
+- **行车记录仪**：段长按实测、导出报告、证据包流式下载、2026.20+ 解密、teslausb 接入（`dashcam/teslausb.py`）。
+- **部署**：Docker（`docker-compose.yml`，镜像钉版本）或 macOS 原生 App（`packaging/macos/`）。
+
 ## Phase 2 已落地（2026-08-05 第二轮）
 
 - **U 盘直读模式**（`/dashcam/usb`）：浏览器端目录扫描 + blob 本地播放 + 浏览器内 SEI 解码（`static/js/sei.js`，与 Python 版同构）+ 按事件选择性上传导入（`POST /api/dashcam/import`，路径白名单 + 容量/磁盘校验）；
 - **录像监视器**（`dashcam/watcher.py`）：60s 轮询新哨兵/保存事件，告警附缩略图；基线持久化（重启窗口期同步的事件不漏报），瞬时空扫描防护，多事件合并单条告警；
 - **时钟自动校正**（`dashcam/align.py`）：SEI 速度 × positions 速度滑动互相关（±120s 粗扫 + 0.25s 细化 + 重叠数归一化），偏移持久化按车存储，全链路自动应用；
-- **行程页**（`/drives`）：vendored Leaflet 轨迹地图（瓦片源可配 `TILE_URL`）+ 行程时间段自动匹配录像跳播（seek 映射到分段视频时间轴）；
+- **行程页**（`/drives`，现 `/trips`）：轨迹地图（当时是 Leaflet，v2 换成 MapLibre；瓦片源可配 `TILE_URL`）+ 行程时间段自动匹配录像跳播（seek 映射到分段视频时间轴）；
 - **导出轨迹小窗**：ASS 矢量点阵路径 + 移动位置点，纯 libass 渲染零依赖；
 - **HEVC 转码预览**：播放失败自动请求服务端 H.264 预览（全局并发限 2、缓存、唯一临时文件）；
 - **Fleet Telemetry**：compose `--profile fleet` + 配置模板 + `telemetry/{VIN}/v/SentryMode` 解析 → Aware/Panic 告警（首条消息即 Panic 也不漏）；
