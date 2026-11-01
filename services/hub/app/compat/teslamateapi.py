@@ -16,20 +16,34 @@ OhmyTesla，不用我们自己写客户端 —— 这是整份竞品调研里性
   GenServer 里，裸写库不生效。
 两者都返回 501 并说明原因，而不是假装成功。
 
-鉴权：沿用全站的 Basic 认证；另外接受 `Authorization: Bearer <API_TOKEN>` 或
-`X-Api-Token`，因为移动端 App 只会发这两种。token 由 TESLAMATEAPI_TOKEN 配置，
-不配就只能走 Basic。
+单位：**数值按 units 里声明的单位给出**（与上游一致）。TeslaMate 库里永远是
+km / °C / bar；上游 teslamateapi 在 unit_of_length == "mi" 时对每个距离/速度/续航
+调 kilometersToMiles，unit_of_temperature == "F" 时调 celsiusToFahrenheit，
+unit_of_pressure == "psi" 时调 barToPsi。我们声明的单位来自门户偏好，所以换算也
+按门户偏好来。以前声明了 mi/F/psi 却原样发 km/°C/bar（审计 F1）：客户端显示
+"44,521 mi"、"22.4 °F"、"3.45 psi"。
+唯一与上游不同的一处：consumption_net（Wh/km → Wh/mi 应当 ×1.609344，上游用的是
+kilometersToMiles，结果小了 2.6 倍）。这里按物理换算。
+
+鉴权（现状，见 insights/NEEDS.md）：全站 Basic 认证中间件（main.py）在请求到达
+这里之前就会拒掉没有 Basic 凭据的请求，所以**只带** `Authorization: Bearer` 或
+`X-Api-Token` 的 App 目前连不上（审计 F14）。可用的组合：
+  1. Basic（用户 ohmytesla + 门户密码）—— 任何 App 都能这么配；
+  2. Basic + Bearer/X-Api-Token —— 配了 TESLAMATEAPI_TOKEN 时必须两样都带。
+要让纯 Bearer 的客户端可用，需要中间件对 /api/v1/*、/api/ping、/api/readyz
+在 token 校验通过时放行（已在 NEEDS.md 写明改法）；_check_token 本身已经支持。
 """
 
 import logging
 import secrets
 
-import asyncpg
 from fastapi import APIRouter, HTTPException, Request
 
 from .. import db
 from ..config import settings
 from ..insights import queries
+from ..insights.guard import http_error
+from ..insights.period import clamp
 from ..livestate import live
 
 log = logging.getLogger(__name__)
@@ -38,12 +52,11 @@ router = APIRouter(prefix="/api", tags=["teslamateapi-compat"])
 
 
 def _guard(fn):
-    """把"数据库还没就绪"翻译成 503，而不是 500。
+    """数据库异常 → 准确的状态码（503 连不上 / 504 超时 / 503 schema / 500 SQL）。
 
-    insights 路由早就有这一层，这里之前漏了。后果很具体：TeslaMate 首次
-    启动要跑几分钟建表迁移，这段时间里 MateDroid 这类客户端拿到的是
-    500 Internal Server Error —— 那看起来是"这个服务坏了"而不是
-    "再等一会儿"，用户会直接卸载。
+    以前所有 PostgresError 都报"数据库尚未就绪"，连 `?limit=-1` 都是 503。
+    TeslaMate 首次启动时客户端拿到的仍然是 503（表不存在），而不是 500 ——
+    那看起来是"这个服务坏了"，用户会直接卸载。
     """
     import functools
 
@@ -51,11 +64,11 @@ def _guard(fn):
     async def wrapper(*args, **kwargs):
         try:
             return await fn(*args, **kwargs)
-        except db.DbUnavailable as e:
-            raise HTTPException(503, f"TeslaMate database is not reachable yet: {e}") from e
-        except asyncpg.PostgresError as e:
-            # 表还不存在也归到这一类：TeslaMate 没跑完迁移时就是这个表现
-            raise HTTPException(503, f"TeslaMate database is not ready yet: {e}") from e
+        except Exception as e:
+            err = http_error(e)
+            if err is None:
+                raise
+            raise err from e
 
     return wrapper
 
@@ -70,6 +83,70 @@ async def _units() -> dict:
         "unit_of_temperature": "F" if p.get("temp") == "F" else "C",
         "unit_of_pressure": {"psi": "psi", "kpa": "kPa"}.get(p.get("pressure"), "bar"),
     }
+
+
+KM_PER_MI = 1.609344
+PSI_PER_BAR = 14.503773773
+
+
+class _Conv:
+    """把 TeslaMate 的公制值换成 units 里声明的单位。None 原样返回。"""
+
+    def __init__(self, u: dict):
+        self.mi = u.get("unit_of_length") == "mi"
+        self.f = u.get("unit_of_temperature") == "F"
+        self.pressure = u.get("unit_of_pressure", "bar")
+
+    def dist(self, km, nd: int = 2):
+        if km is None:
+            return None
+        v = float(km) / KM_PER_MI if self.mi else float(km)
+        return round(v, nd)
+
+    def speed(self, kmh):
+        """整数速度（上游 kilometersToMilesInteger）。"""
+        if kmh is None:
+            return None
+        return round(float(kmh) / KM_PER_MI) if self.mi else round(float(kmh))
+
+    def temp(self, c, nd: int = 1):
+        if c is None:
+            return None
+        v = float(c) * 9 / 5 + 32 if self.f else float(c)
+        return round(v, nd)
+
+    def press(self, bar, nd: int = 2):
+        if bar is None:
+            return None
+        if self.pressure == "psi":
+            return round(float(bar) * PSI_PER_BAR, nd)
+        if self.pressure == "kPa":
+            return round(float(bar) * 100, 0)
+        return round(float(bar), nd)
+
+    def per_dist(self, wh_per_km, nd: int = 1):
+        """Wh/km → Wh/mi：每英里的能耗是每公里的 1.609 倍。"""
+        if wh_per_km is None:
+            return None
+        return round(float(wh_per_km) * KM_PER_MI if self.mi else float(wh_per_km), nd)
+
+
+def _page(limit: int | None, page: int | None, show: int | None) -> tuple[int, int]:
+    """(LIMIT, OFFSET)。上游用 page/show（默认 1/100）；本实现以前用 limit，两种都认。
+    负数、零、超大值夹到合理区间，不再变成 SQL 错误。"""
+    size = clamp(show if show is not None else (limit if limit is not None else 100), 1, 100000, 100)
+    pg = clamp(page if page is not None else 1, 1, 10_000_000, 1)
+    return size, (pg - 1) * size
+
+
+def _date_param(v: str | None):
+    """上游的 startDate/endDate（RFC3339 或 YYYY-MM-DD）→ naive UTC。"""
+    if not v:
+        return None
+    from ..insights.period import parse_period
+
+    p = parse_period(from_=v)
+    return p.start
 
 
 def _check_token(request: Request) -> None:
@@ -216,13 +293,15 @@ async def status_v1(car_id: int, request: Request):
         raise HTTPException(503, "no live state for this car yet")
 
     g = c.get
+    units = await _units()
+    cv = _Conv(units)
     return {"data": {
         "car": _car_stub(row),
         "status": {
             "display_name": g("display_name") or row["name"],
             "state": g("state"),
             "state_since": g("since"),
-            "odometer": _n(g("odometer")),
+            "odometer": cv.dist(_n(g("odometer"))),
             "car_status": {
                 "healthy": _b(g("healthy")), "locked": _b(g("locked")),
                 "sentry_mode": _b(g("sentry_mode")),
@@ -254,19 +333,20 @@ async def status_v1(car_id: int, request: Request):
                 "active_route_latitude": _n(g("active_route_latitude")),
                 "active_route_longitude": _n(g("active_route_longitude")),
                 "shift_state": g("shift_state"), "power": _n(g("power")),
-                "speed": _n(g("speed")), "heading": _n(g("heading")),
+                "speed": cv.speed(_n(g("speed"))), "heading": _n(g("heading")),
                 "elevation": _n(g("elevation")),
             },
             "climate_details": {
                 "is_climate_on": _b(g("is_climate_on")),
-                "inside_temp": _n(g("inside_temp")), "outside_temp": _n(g("outside_temp")),
+                "inside_temp": cv.temp(_n(g("inside_temp"))),
+                "outside_temp": cv.temp(_n(g("outside_temp"))),
                 "is_preconditioning": _b(g("is_preconditioning")),
                 "climate_keeper_mode": g("climate_keeper_mode"),
             },
             "battery_details": {
-                "est_battery_range": _n(g("est_battery_range_km")),
-                "rated_battery_range": _n(g("rated_battery_range_km")),
-                "ideal_battery_range": _n(g("ideal_battery_range_km")),
+                "est_battery_range": cv.dist(_n(g("est_battery_range_km"))),
+                "rated_battery_range": cv.dist(_n(g("rated_battery_range_km"))),
+                "ideal_battery_range": cv.dist(_n(g("ideal_battery_range_km"))),
                 "battery_level": _n(g("battery_level")),
                 "usable_battery_level": _n(g("usable_battery_level")),
             },
@@ -285,17 +365,17 @@ async def status_v1(car_id: int, request: Request):
                 "time_to_full_charge": _n(g("time_to_full_charge")),
             },
             "tpms_details": {
-                "tpms_pressure_fl": _n(g("tpms_pressure_fl")),
-                "tpms_pressure_fr": _n(g("tpms_pressure_fr")),
-                "tpms_pressure_rl": _n(g("tpms_pressure_rl")),
-                "tpms_pressure_rr": _n(g("tpms_pressure_rr")),
+                "tpms_pressure_fl": cv.press(_n(g("tpms_pressure_fl"))),
+                "tpms_pressure_fr": cv.press(_n(g("tpms_pressure_fr"))),
+                "tpms_pressure_rl": cv.press(_n(g("tpms_pressure_rl"))),
+                "tpms_pressure_rr": cv.press(_n(g("tpms_pressure_rr"))),
                 "tpms_soft_warning_fl": _b(g("tpms_soft_warning_fl")),
                 "tpms_soft_warning_fr": _b(g("tpms_soft_warning_fr")),
                 "tpms_soft_warning_rl": _b(g("tpms_soft_warning_rl")),
                 "tpms_soft_warning_rr": _b(g("tpms_soft_warning_rr")),
             },
         },
-        "units": await _units(),
+        "units": units,
     }}
 
 
@@ -304,27 +384,31 @@ async def status_v1(car_id: int, request: Request):
 @router.get("/v1/cars/{car_id}/battery-health")
 @_guard
 async def battery_health_v1(car_id: int, request: Request):
+    """与上游同一算法（TeslaMate Battery Health 面板的 $aux 查询）：
+    容量 = rated_range × (kWh/100km) / usable_battery_level；健康度 = 现在/新车。"""
     _check_token(request)
     row = await _car_row(car_id)
-    h = await queries.battery_health(car_id)
-    eff = _f(row["efficiency"])
-    # 键名以 insights.queries.battery_health 的实际返回为准
-    cur_range = h.get("current_range_at_100")
-    max_range = h.get("max_range_at_100")
+    from ..insights import analytics
+
+    h = await analytics.battery(car_id)
+    units = await _units()
+    cv = _Conv(units)
+    cap = h.get("capacity_kwh") or {}
+    rng = h.get("range_100_km") or {}
+    now_kwh, new_kwh = cap.get("now"), cap.get("new")
     return {"data": {
         "car": _car_stub(row),
         "battery_health": {
-            "max_range": max_range,
-            "current_range": cur_range,
-            "max_capacity": round(max_range * eff, 2) if (max_range and eff) else None,
-            "current_capacity": h.get("current_capacity_kwh")
-                                or (round(cur_range * eff, 2) if (cur_range and eff) else None),
-            "rated_efficiency": eff,
-            "battery_health_percentage": (
-                round(100 - h["degradation_pct"], 2) if h.get("degradation_pct") is not None else None
-            ),
+            "max_range": cv.dist(rng.get("max")),
+            "current_range": cv.dist(rng.get("now")),
+            "max_capacity": new_kwh,
+            "current_capacity": now_kwh,
+            # 上游这里给的是 kWh/100km（aux 效率），不是 cars.efficiency
+            "rated_efficiency": h.get("efficiency_kwh_per_100km"),
+            "battery_health_percentage": round(now_kwh / new_kwh * 100, 2)
+            if (now_kwh and new_kwh) else None,
         },
-        "units": {k: v for k, v in (await _units()).items() if k != "unit_of_pressure"},
+        "units": {k: v for k, v in units.items() if k != "unit_of_pressure"},
     }}
 
 
@@ -332,8 +416,16 @@ async def battery_health_v1(car_id: int, request: Request):
 
 @router.get("/v1/cars/{car_id}/drives")
 @_guard
-async def drives_v1(car_id: int, request: Request, limit: int = 100):
+async def drives_v1(car_id: int, request: Request, limit: int | None = None,
+                    page: int | None = None, show: int | None = None,
+                    startDate: str | None = None, endDate: str | None = None):  # 上游参数名
     _check_token(request)
+    size, offset = _page(limit, page, show)
+    return await _drives(car_id, size, offset, _date_param(startDate), _date_param(endDate))
+
+
+async def _drives(car_id: int, size: int, offset: int, lo=None, hi=None,
+                  drive_id: int | None = None) -> dict:
     row = await _car_row(car_id)
     eff = _f(row["efficiency"]) or 0
     rows = await db.fetch(
@@ -351,10 +443,18 @@ async def drives_v1(car_id: int, request: Request, limit: int = 100):
         LEFT JOIN addresses ea ON ea.id = d.end_address_id
         LEFT JOIN positions ps ON ps.id = d.start_position_id
         LEFT JOIN positions pe ON pe.id = d.end_position_id
-        WHERE d.car_id = $1 ORDER BY d.start_date DESC LIMIT $2
+        -- 上游只返回已结束的行程（end_date IS NOT NULL）：进行中/孤儿行程的字段
+        -- 全是 NULL，客户端按非空解析会崩
+        WHERE d.car_id = $1 AND d.end_date IS NOT NULL
+          AND ($4::timestamp IS NULL OR d.start_date >= $4)
+          AND ($5::timestamp IS NULL OR d.end_date <= $5)
+          AND ($6::int IS NULL OR d.id = $6)
+        ORDER BY d.start_date DESC LIMIT $2 OFFSET $3
         """,
-        car_id, int(limit),
+        car_id, size, offset, lo, hi, drive_id,
     )
+    units = await _units()
+    cv = _Conv(units)
     drives = []
     for r in rows:
         dist = _f(r["distance"]) or 0
@@ -366,12 +466,12 @@ async def drives_v1(car_id: int, request: Request, limit: int = 100):
             "end_date": queries._iso(r["end_date"]),
             "start_address": r["start_address"], "end_address": r["end_address"],
             "odometer_details": {
-                "odometer_start": _f(r["start_km"]), "odometer_end": _f(r["end_km"]),
-                "odometer_distance": round(dist, 2),
+                "odometer_start": cv.dist(r["start_km"]), "odometer_end": cv.dist(r["end_km"]),
+                "odometer_distance": cv.dist(dist),
             },
             "duration_min": r["duration_min"], "duration_str": _dur(r["duration_min"]),
-            "speed_max": r["speed_max"],
-            "speed_avg": round(dist / (r["duration_min"] / 60), 1)
+            "speed_max": cv.speed(r["speed_max"]),
+            "speed_avg": cv.dist(dist / (r["duration_min"] / 60), 1)
                          if r["duration_min"] else None,
             "power_max": r["power_max"], "power_min": r["power_min"],
             "battery_details": {
@@ -383,39 +483,40 @@ async def drives_v1(car_id: int, request: Request, limit: int = 100):
                 "is_sufficiently_precise": bool(r["s_bl"] is not None and r["e_bl"] is not None),
             },
             "range_ideal": {
-                "start_range": _f(r["start_ideal_range_km"]),
-                "end_range": _f(r["end_ideal_range_km"]),
-                "range_diff": round((_f(r["start_ideal_range_km"]) or 0)
-                                    - (_f(r["end_ideal_range_km"]) or 0), 2),
+                "start_range": cv.dist(r["start_ideal_range_km"]),
+                "end_range": cv.dist(r["end_ideal_range_km"]),
+                "range_diff": cv.dist(max((_f(r["start_ideal_range_km"]) or 0)
+                                          - (_f(r["end_ideal_range_km"]) or 0), 0)),
             },
             "range_rated": {
-                "start_range": _f(r["start_rated_range_km"]),
-                "end_range": _f(r["end_rated_range_km"]),
-                "range_diff": round(rated_used, 2),
+                "start_range": cv.dist(r["start_rated_range_km"]),
+                "end_range": cv.dist(r["end_rated_range_km"]),
+                "range_diff": cv.dist(rated_used),
             },
-            "outside_temp_avg": _f(r["outside_temp_avg"]),
-            "inside_temp_avg": _f(r["inside_temp_avg"]),
+            "outside_temp_avg": cv.temp(r["outside_temp_avg"]),
+            "inside_temp_avg": cv.temp(r["inside_temp_avg"]),
             "energy_consumed_net": kwh,
-            "consumption_net": round(kwh * 1000 / dist, 1) if (kwh and dist > 0) else None,
+            "consumption_net": cv.per_dist(kwh * 1000 / dist) if (kwh and dist > 0) else None,
         })
     return {"data": {"car": _car_stub(row), "drives": drives,
-                     "units": {k: v for k, v in (await _units()).items() if k != "unit_of_pressure"}}}
+                     "units": {k: v for k, v in units.items() if k != "unit_of_pressure"}}}
 
 
 @router.get("/v1/cars/{car_id}/drives/{drive_id}")
 @_guard
 async def drive_detail_v1(car_id: int, drive_id: int, request: Request):
     _check_token(request)
-    all_d = await drives_v1(car_id, request, limit=100000)
-    hit = [d for d in all_d["data"]["drives"] if d["drive_id"] == drive_id]
-    if not hit:
+    # 直接按 id 查，不再把这辆车的全部行程拉出来再筛
+    one = await _drives(car_id, 1, 0, drive_id=drive_id)
+    if not one["data"]["drives"]:
         raise HTTPException(404, "drive not found")
-    return {"data": {**all_d["data"], "drives": hit}}
+    return one
 
 
 # ---------------------------------------------------------------- 充电
 
-async def _charges(car_id: int, limit: int, only_open: bool = False) -> list[dict]:
+async def _charges(car_id: int, limit: int, only_open: bool = False, *, offset: int = 0,
+                   lo=None, hi=None, charge_id: int | None = None) -> list[dict]:
     rows = await db.fetch(
         f"""
         SELECT cp.id, cp.start_date, cp.end_date, cp.duration_min,
@@ -429,10 +530,19 @@ async def _charges(car_id: int, limit: int, only_open: bool = False) -> list[dic
         LEFT JOIN addresses a ON a.id = cp.address_id
         LEFT JOIN positions p ON p.id = cp.position_id
         WHERE cp.car_id = $1 {"AND cp.end_date IS NULL" if only_open else ""}
-        ORDER BY cp.start_date DESC LIMIT $2
+          AND ($4::timestamp IS NULL OR cp.start_date >= $4)
+          AND ($5::timestamp IS NULL OR cp.end_date <= $5)
+          AND ($6::int IS NULL OR cp.id = $6)
+        ORDER BY cp.start_date DESC LIMIT $2 OFFSET $3
         """,  # noqa: S608 - only_open 是本函数的布尔参数，非用户输入
-        car_id, int(limit),
+        car_id, int(limit), int(offset), lo, hi, charge_id,
     )
+    # 费用走唯一真源（TeslaMate 记录的 > 电价引擎算的）——与门户各页同一个数。
+    # 上游只读 cost 列；本机那一列是空的，App 里会全是"—"。
+    from ..insights import costs as cost_source
+
+    costs = await cost_source.session_costs(car_id)
+    cv = _Conv(await _units())
     return [
         {
             "charge_id": r["id"],
@@ -441,18 +551,18 @@ async def _charges(car_id: int, limit: int, only_open: bool = False) -> list[dic
             "address": r["address"],
             "charge_energy_added": _f(r["charge_energy_added"]),
             "charge_energy_used": _f(r["charge_energy_used"]),
-            "cost": _f(r["cost"]),
+            "cost": (costs.get(r["id"]) or {}).get("cost"),
             "duration_min": r["duration_min"], "duration_str": _dur(r["duration_min"]),
             "battery_details": {
                 "start_battery_level": r["start_battery_level"],
                 "end_battery_level": r["end_battery_level"],
             },
-            "range_ideal": {"start_range": _f(r["start_ideal_range_km"]),
-                            "end_range": _f(r["end_ideal_range_km"])},
-            "range_rated": {"start_range": _f(r["start_rated_range_km"]),
-                            "end_range": _f(r["end_rated_range_km"])},
-            "outside_temp_avg": _f(r["outside_temp_avg"]),
-            "odometer": _f(r["odometer"]),
+            "range_ideal": {"start_range": cv.dist(r["start_ideal_range_km"]),
+                            "end_range": cv.dist(r["end_ideal_range_km"])},
+            "range_rated": {"start_range": cv.dist(r["start_rated_range_km"]),
+                            "end_range": cv.dist(r["end_rated_range_km"])},
+            "outside_temp_avg": cv.temp(r["outside_temp_avg"]),
+            "odometer": cv.dist(r["odometer"]),
             "latitude": _f(r["latitude"]), "longitude": _f(r["longitude"]),
         }
         for r in rows
@@ -461,10 +571,15 @@ async def _charges(car_id: int, limit: int, only_open: bool = False) -> list[dic
 
 @router.get("/v1/cars/{car_id}/charges")
 @_guard
-async def charges_v1(car_id: int, request: Request, limit: int = 100):
+async def charges_v1(car_id: int, request: Request, limit: int | None = None,
+                     page: int | None = None, show: int | None = None,
+                     startDate: str | None = None, endDate: str | None = None):  # 上游参数名
     _check_token(request)
     row = await _car_row(car_id)
-    return {"data": {"car": _car_stub(row), "charges": await _charges(car_id, limit),
+    size, offset = _page(limit, page, show)
+    rows = await _charges(car_id, size, offset=offset, lo=_date_param(startDate),
+                          hi=_date_param(endDate))
+    return {"data": {"car": _car_stub(row), "charges": rows,
                      "units": {k: v for k, v in (await _units()).items() if k != "unit_of_pressure"}}}
 
 
@@ -483,7 +598,7 @@ async def charge_current_v1(car_id: int, request: Request):
 async def charge_detail_v1(car_id: int, charge_id: int, request: Request):
     _check_token(request)
     row = await _car_row(car_id)
-    hit = [c for c in await _charges(car_id, 100000) if c["charge_id"] == charge_id]
+    hit = await _charges(car_id, 1, charge_id=charge_id)
     if not hit:
         raise HTTPException(404, "charge not found")
     return {"data": {"car": _car_stub(row), "charges": hit,
@@ -494,13 +609,15 @@ async def charge_detail_v1(car_id: int, charge_id: int, request: Request):
 
 @router.get("/v1/cars/{car_id}/updates")
 @_guard
-async def updates_v1(car_id: int, request: Request, limit: int = 100):
+async def updates_v1(car_id: int, request: Request, limit: int | None = None,
+                     page: int | None = None, show: int | None = None):
     _check_token(request)
     row = await _car_row(car_id)
+    size, offset = _page(limit, page, show)
     rows = await db.fetch(
         "SELECT id, start_date, end_date, version FROM updates"
-        " WHERE car_id = $1 ORDER BY start_date DESC LIMIT $2",
-        car_id, int(limit),
+        " WHERE car_id = $1 ORDER BY start_date DESC LIMIT $2 OFFSET $3",
+        car_id, size, offset,
     )
     return {"data": {"car": _car_stub(row), "updates": [
         {"update_id": r["id"], "start_date": queries._iso(r["start_date"]),
@@ -514,8 +631,25 @@ async def updates_v1(car_id: int, request: Request, limit: int = 100):
 @router.get("/v1/globalsettings")
 @_guard
 async def globalsettings_v1(request: Request):
+    """上游形状（settings.setting_id / account_info / teslamate_units / teslamate_webgui /
+    teslamate_urls），外加以前的三个平铺单位键（老调用方在用）。单位是门户偏好 ——
+    与其它兼容接口里实际换算用的单位一致。"""
     _check_token(request)
-    return {"data": {"settings": await _units()}}
+    units = await _units()
+    row = await db.fetchrow(
+        "SELECT id, inserted_at, updated_at, preferred_range::text AS preferred_range,"
+        " language, base_url, grafana_url FROM settings LIMIT 1")
+    return {"data": {"settings": {
+        "setting_id": row["id"] if row else None,
+        "account_info": {"inserted_at": queries._iso(row["inserted_at"]) if row else None,
+                         "updated_at": queries._iso(row["updated_at"]) if row else None},
+        "teslamate_units": {k: v for k, v in units.items() if k != "unit_of_pressure"},
+        "teslamate_webgui": {"preferred_range": row["preferred_range"] if row else "rated",
+                             "language": row["language"] if row else None},
+        "teslamate_urls": {"base_url": row["base_url"] if row else None,
+                           "grafana_url": row["grafana_url"] if row else None},
+        **units,
+    }}}
 
 
 @router.get("/ping")

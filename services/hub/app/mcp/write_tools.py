@@ -32,13 +32,15 @@ TICKET_TTL_S = 90
 
 # 需要二次确认的动作。判据是"做错了要付出真实代价"：
 # 开锁开厢是物理安全，改充电限值和哨兵会影响电池与看护。
-NEEDS_CONFIRM = frozenset({
-    "door_unlock", "trunk", "frunk", "sentry_off", "vent_windows",
-})
+# 由指令表的风险等级决定，和界面、自动化同一个来源（tesla/catalog.py）。
+# 以前是手写的列表，漏了 boombox 之类后来补进来的高危指令。
+from ..tesla import catalog as _catalog  # noqa: E402
+
+NEEDS_CONFIRM = frozenset(c.id for c in _catalog.COMMANDS.values() if c.risk >= 1)
 
 # 完全不允许模型碰的。wake_up 单独列出来不是因为危险，是因为它按次计费
 # 且会真的把车叫醒 —— 模型"顺手唤醒看一眼"的成本用户承担不起。
-FORBIDDEN = frozenset({"wake_up"})
+FORBIDDEN = frozenset({"wake_up"} | {c.id for c in _catalog.COMMANDS.values() if c.risk >= 2})
 
 _tickets: dict[str, tuple[float, str, dict]] = {}
 
@@ -91,14 +93,29 @@ async def t_send_command(command: str, car_id: int | None = None,
     if not enabled():
         return {"error": "写操作未开启。在 .env 里设 MCP_WRITE=true 并重启。"}
     if command in FORBIDDEN:
-        return {"error": f"{command} 不允许通过 MCP 调用（它按次计费且会唤醒车辆）"}
+        return {"error": f"{command} 不开放给 AI：唤醒和最高风险的指令（如远程启动）只能在网页上手动操作"}
     if command not in SAFE_COMMANDS and command not in RISKY_COMMANDS:
         return {"error": f"未知或不允许的指令：{command}"}
 
-    if car_id is None:
-        car_id = next((int(k) for k in live.cars if k.isdigit()), None)
+    # 默认车 = 最近活跃且没归档的那辆（live.cars 的第一个键在多车账号上可能是
+    # 一辆已经不在账号里的车）。确认语和票据里都带上车名，同意不能挪到另一辆车上用。
+    from ..insights import cars as registry
+
+    try:
         if car_id is None:
-            return {"error": "没有可用的车辆"}
+            car_id = await registry.default_car_id()
+        meta = await registry.get_car(int(car_id)) if car_id is not None else None
+    except Exception:  # noqa: BLE001 — DB down: fall back to what's streaming live
+        if car_id is None:
+            car_id = next((int(k) for k in live.cars if k.isdigit()), None)
+        meta = {"id": car_id, "label": f"car {car_id}", "archived": False} if car_id is not None else None
+    if car_id is None:
+        return {"error": "没有可用的车辆"}
+    if meta is None:
+        return {"error": f"没有 id 为 {car_id} 的车"}
+    if meta.get("archived"):
+        return {"error": f"{meta['label']} 已归档（不在账号里或很久没有数据），不能下发指令"}
+    label = meta.get("label") or f"car {car_id}"
 
     params = params or {}
     _prune()
@@ -106,12 +123,14 @@ async def t_send_command(command: str, car_id: int | None = None,
     if command in NEEDS_CONFIRM:
         if not confirm_token:
             token = secrets.token_urlsafe(9)
-            _tickets[token] = (time.time() + TICKET_TTL_S, command, {"car_id": car_id, **params})
+            _tickets[token] = (time.time() + TICKET_TTL_S, command,
+                               {"car_id": car_id, "car": label, **params})
             return {
                 "needs_confirmation": True,
                 "confirm_token": token,
                 "expires_in_s": TICKET_TTL_S,
-                "what_will_happen": _describe(command, params),
+                "car": label,
+                "what_will_happen": f"{label}：{_describe(command, params)}",
                 "next_step": "把 confirm_token 原样传回来才会真的执行。"
                              "先向用户复述 what_will_happen 并得到同意。",
             }
@@ -122,12 +141,14 @@ async def t_send_command(command: str, car_id: int | None = None,
         if time.time() > exp:
             return {"error": "确认票据已过期"}
         # 票据和这次调用必须完全一致，否则等于拿"开空调"的同意去开门
-        if want_cmd != command or want_args != {"car_id": car_id, **params}:
+        if want_cmd != command or want_args != {"car_id": car_id, "car": label, **params}:
             return {"error": "确认票据与本次请求不匹配"}
 
     t0 = time.time()
     try:
-        res = await cmd.send(int(car_id), command, params)
+        # The AI never wakes the car (FORBIDDEN bans wake_up; an implicit
+        # wake inside any command would undo that).
+        res = await cmd.send(int(car_id), command, params, allow_wake=False)
         ok = bool(res.get("ok"))
         err = "" if ok else str(res.get("error") or res)[:300]
     except Exception as e:  # noqa: BLE001
@@ -135,8 +156,8 @@ async def t_send_command(command: str, car_id: int | None = None,
     await store.log_command(str(car_id), command, params, "mcp",
                             ok, err, int((time.time() - t0) * 1000))
     log.info("mcp command %s on car %s -> %s", command, car_id, ok)
-    return {"ok": ok, "command": command, "car_id": car_id,
-            "did": _describe(command, params), "error": err or None}
+    return {"ok": ok, "command": command, "car_id": car_id, "car": label,
+            "did": f"{label}：{_describe(command, params)}", "error": err or None}
 
 
 async def t_tag_drive(drive_id: int, category: str = "", note: str = "") -> dict:
@@ -202,6 +223,10 @@ async def t_snooze_alerts(minutes: int, scope: str = "noncritical") -> dict:
     m = max(0, min(int(minutes), 24 * 60))
     if scope not in ("noncritical", "all"):
         return {"error": "scope 必须是 noncritical 或 all"}
+    # 连同报警一起静音，效果等于替车主关掉哨兵推送 —— 那件事在 AI 这边要两段式确认，
+    # 这件事更不该一句话就做成。只在网页上由车主自己操作。
+    if scope == "all" and m > 0:
+        return {"error": "AI 只能静音非紧急告警（scope=noncritical）。连警报一起静音请在网页「安全」页里操作。"}
     state = await alert_engine.set_snooze(m, scope)
     return {"ok": True, "minutes": m, "scope": scope, "state": state}
 
@@ -241,9 +266,10 @@ WRITE_TOOLS: dict[str, tuple] = {
     ),
     "snooze_alerts": (
         t_snooze_alerts,
-        "临时静音告警，最多 24 小时。scope=noncritical 时严重告警仍会推送。",
+        "临时静音非紧急告警，最多 24 小时；警报、入侵这类严重告警照常推送。"
+        "连严重告警一起静音只能车主在网页上操作。minutes=0 取消静音。",
         _schema({"minutes": {"type": "integer"},
-                 "scope": {"type": "string", "enum": ["noncritical", "all"]}}, ["minutes"]),
+                 "scope": {"type": "string", "enum": ["noncritical"]}}, ["minutes"]),
     ),
 }
 

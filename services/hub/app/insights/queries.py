@@ -13,17 +13,23 @@ from datetime import timezone
 from .. import db
 from ..alerts.store import store
 from ..livestate import live
+from . import costs as cost_source
+from .period import local_tz_name
+
+# "一场真正的充电"：电池端或墙端任一超过 0.1 kWh。只看 charge_energy_added 会漏掉
+# 计数器归零的场次（本机 cp 3：电池 61→66%，added 记成 0.00，墙端 5.83 kWh）——
+# 它照样花了钱，TeslaMate 的 put_cost 也按 max(added, used) 给它计费。
+_REAL_CHARGE = "GREATEST(cp.charge_energy_added, cp.charge_energy_used) > 0.1"
+
+
+def _local(col: str, n: int = 2) -> str:
+    """naive UTC 列 → 本地时间（时区名走第 n 个绑定参数）。"""
+    return f"({col} AT TIME ZONE 'UTC' AT TIME ZONE ${n})"
 
 
 async def _currency() -> str:
-    """方案没显式设币种时跟地区偏好走（之前硬编码 CNY）。"""
-    try:
-        from ..i18n.prefs import get as _get_prefs
-
-        return (await _get_prefs()).get("currency") or "USD"
-    except Exception:  # noqa: BLE001
-        return "USD"
-
+    """方案币种 > 地区偏好 > USD（之前硬编码 CNY）。"""
+    return await cost_source.currency()
 
 
 def _iso(dt) -> str | None:
@@ -35,17 +41,17 @@ def _iso(dt) -> str | None:
 
 
 async def cars() -> list[dict]:
-    rows = await db.fetch(
-        """
-        SELECT c.id, c.name, c.model, c.marketing_name, c.trim_badging, c.vin,
-               c.efficiency, c.exterior_color, c.wheel_type,
-               s.lfp_battery
-        FROM cars c
-        LEFT JOIN car_settings s ON s.id = c.settings_id
-        ORDER BY c.id
-        """
-    )
-    return [dict(r) for r in rows]
+    """车辆列表。额外字段：archived / last_seen / days_since_seen / mqtt_live / label。
+
+    已经离开 Tesla 账号的车 TeslaMate 不会删，它们在 states 里还挂着一条没关的
+    online —— 界面据 archived 把它们收起来，而不是当成"一直在线"。
+    """
+    from . import cars as registry
+
+    keep = ("id", "name", "model", "marketing_name", "trim_badging", "vin", "efficiency",
+            "exterior_color", "wheel_type", "lfp_battery", "model_line", "label", "enabled",
+            "archived", "last_seen", "days_since_seen", "mqtt_live", "display_priority")
+    return [{k: c.get(k) for k in keep} for c in sorted(await registry.list_cars(), key=lambda c: c["id"])]
 
 
 async def summary(car_id: int) -> dict:
@@ -61,27 +67,28 @@ async def summary(car_id: int) -> dict:
         """,
         car_id,
     )
-    from ..tariff.calc import costs_map, get_plan
-
+    # 里程表取**最新的位置**，不是最后一段行程的终点：TeslaMate 漏记行程时
+    # （本机 08-29 之后），drives 停在 43,439 km，而车实际已经 44,521 km。
+    pos_odo = await db.fetchval(
+        "SELECT odometer FROM positions WHERE car_id = $1 AND ideal_battery_range_km IS NOT NULL"
+        " AND odometer IS NOT NULL ORDER BY date DESC LIMIT 1",
+        car_id,
+    )
     charge = await db.fetchrow(
-        """
+        f"""
         SELECT COUNT(*) AS n_charges,
-               COALESCE(SUM(charge_energy_added), 0) AS kwh_added,
-               COALESCE(SUM(charge_energy_used), 0) AS kwh_used,
-               COALESCE(SUM(cost), 0) AS cost
-        FROM charging_processes WHERE car_id = $1 AND charge_energy_added > 0.1
-        """,
+               COALESCE(SUM(cp.charge_energy_added), 0) AS kwh_added,
+               COALESCE(SUM(cp.charge_energy_used), 0) AS kwh_used,
+               COALESCE(SUM(GREATEST(cp.charge_energy_added, cp.charge_energy_used)), 0) AS kwh_billed
+        FROM charging_processes cp
+        WHERE cp.car_id = $1 AND cp.end_date IS NOT NULL AND {_REAL_CHARGE}
+        """,  # noqa: S608 - 只插入模块常量
         car_id,
     )
-    # TeslaMate 里没手填 cost 的场次，用电价方案算出的费用补上
-    computed = await costs_map()
-    plan = await get_plan()
-    missing = await db.fetch(
-        "SELECT id FROM charging_processes"
-        " WHERE car_id = $1 AND charge_energy_added > 0.1 AND cost IS NULL",
-        car_id,
-    )
-    computed_cost = sum(computed.get(str(r["id"]), 0.0) for r in missing)
+    # 费用走唯一真源：TeslaMate 记录的 > 电价引擎算的；与 Energy/统计/日历页同一个数
+    costs = await cost_source.session_costs(car_id)
+    total_cost = cost_source.total(costs)
+    by_source = cost_source.count_by_source(costs)
     eff = await db.fetchrow("SELECT efficiency FROM cars WHERE id = $1", car_id)
     version = await db.fetchrow(
         "SELECT version, COUNT(*) OVER () AS n_updates FROM updates"
@@ -92,7 +99,7 @@ async def summary(car_id: int) -> dict:
     km = float(drive["km"] or 0)
     rated_used = float(drive["rated_km_used"] or 0)
     kwh_driven = rated_used * efficiency
-    total_cost = float(charge["cost"]) + computed_cost
+    odometer = max([float(v) for v in (pos_odo, drive["odometer"]) if v is not None], default=0.0)
 
     # 汽油对比。基准由用户在设置里填（每百公里油耗 + 油价），没填就不显示 ——
     # 拍一个"假设 8L/100km"出来是在替用户编数据。
@@ -117,14 +124,19 @@ async def summary(car_id: int) -> dict:
         "n_drives": drive["n_drives"],
         "km_driven": round(km, 1),
         "hours_driven": round(float(drive["minutes"] or 0) / 60, 1),
-        "odometer": float(drive["odometer"] or 0),
+        "odometer": round(odometer, 1),
+        "odometer_logged_drives": float(drive["odometer"] or 0) or None,
         "first_record": _iso(drive["first_drive"]),
         "avg_consumption_wh_km": round(kwh_driven / km * 1000, 1) if km > 3 and efficiency else None,
         "n_charges": charge["n_charges"],
         "kwh_added": round(float(charge["kwh_added"]), 1),
         "kwh_used": round(float(charge["kwh_used"] or 0), 1),
+        "kwh_billed": round(float(charge["kwh_billed"] or 0), 1),
         "charge_cost": round(total_cost, 2),
-        "currency": plan.get("currency") or await _currency(),
+        # 费用来源分布：recorded = TeslaMate 里记录的；computed = 电价引擎算的；
+        # unset = 已结束但还没有费用（没配电价）；ongoing = 正在充
+        "cost_sources": by_source,
+        "currency": await _currency(),
         "cost_per_km": round(total_cost / km, 3) if km > 10 else None,
         # 实际里程 ÷ 消耗掉的额定续航。100% 表示开出了标称的水平，
         # 低于 100% 说明比标称费电（高速、低温、载重都会拉低它）。
@@ -147,30 +159,31 @@ async def battery_health(car_id: int) -> dict:
     efficiency = float(car["efficiency"] or 0) if car else 0
 
     # 方法1: 充电能量推算（ΔSOC ≥ 25 的充电段）
+    tz = local_tz_name()
     energy_based = await db.fetch(
-        """
-        SELECT start_date::date AS date,
+        f"""
+        SELECT {_local('start_date')}::date AS date,
                charge_energy_added / (end_battery_level - start_battery_level) * 100 AS capacity
         FROM charging_processes
         WHERE car_id = $1
           AND end_battery_level - start_battery_level >= 25
           AND charge_energy_added > 1
         ORDER BY start_date
-        """,
-        car_id,
+        """,  # noqa: S608
+        car_id, tz,
     )
 
     # 方法2: 额定续航推算（按月取最大，剔除 SOC 过低的噪声点）
     range_based = await db.fetch(
-        """
-        SELECT date_trunc('month', date)::date AS month,
+        f"""
+        SELECT date_trunc('month', {_local('date')})::date AS month,
                MAX(rated_battery_range_km / NULLIF(usable_battery_level, 0) * 100) AS range_at_100
         FROM positions
         WHERE car_id = $1 AND usable_battery_level >= 40
-          AND rated_battery_range_km IS NOT NULL
+          AND rated_battery_range_km IS NOT NULL AND ideal_battery_range_km IS NOT NULL
         GROUP BY 1 ORDER BY 1
-        """,
-        car_id,
+        """,  # noqa: S608
+        car_id, tz,
     )
 
     e_series = [
@@ -306,30 +319,27 @@ async def period_compare(car_id: int, days: int = 30) -> dict:
     eff_row = await db.fetchrow("SELECT efficiency FROM cars WHERE id = $1", car_id)
     efficiency = float(eff_row["efficiency"] or 0) if eff_row else 0
 
-    # 费用要连电价引擎算出来的一起算。绝大多数人的 charging_processes.cost
+    # 费用走唯一真源（insights/costs.py）。绝大多数人的 charging_processes.cost
     # 是空的（回写默认关着），只 SUM(cost) 的话这一栏永远是 0，
     # 而同一页别处显示的费用又不是 0 —— 自相矛盾。
-    from ..tariff.calc import costs_map
-
-    computed = await costs_map()
+    costs = await cost_source.session_costs(car_id)
     ch_rows = await db.fetch(
-        """
-        SELECT id,
-               CASE WHEN start_date >= now() - ($2::int * INTERVAL '1 day')
+        f"""
+        SELECT cp.id,
+               CASE WHEN cp.start_date >= now() - ($2::int * INTERVAL '1 day')
                     THEN 'cur' ELSE 'prev' END AS bucket,
-               charge_energy_added AS kwh, cost
-        FROM charging_processes
-        WHERE car_id = $1 AND charge_energy_added > 0.1
-          AND start_date >= now() - (2 * $2::int * INTERVAL '1 day')
-        """,
+               cp.charge_energy_added AS kwh
+        FROM charging_processes cp
+        WHERE cp.car_id = $1 AND {_REAL_CHARGE}
+          AND cp.start_date >= now() - (2 * $2::int * INTERVAL '1 day')
+        """,  # noqa: S608
         car_id, d,
     )
     ch_agg: dict[str, dict] = {}
     for r in ch_rows:
         b = ch_agg.setdefault(r["bucket"], {"bucket": r["bucket"], "kwh": 0.0, "cost": 0.0})
         b["kwh"] += float(r["kwh"] or 0)
-        b["cost"] += (float(r["cost"]) if r["cost"] is not None
-                      else float(computed.get(str(r["id"]), 0.0)))
+        b["cost"] += float((costs.get(r["id"]) or {}).get("cost") or 0.0)
     ch = list(ch_agg.values())
 
     def pick(src, bucket, field):
@@ -412,70 +422,71 @@ async def real_world_range(car_id: int, window_km: float = 160.0) -> dict:
     }
 
 
-def _since(days: int | None):
+def _since(days: int | None, n: int = 2):
     """时间窗过滤片段。days 为 None/0 表示不限（"全部"）。
 
-    返回 (SQL 片段, 参数列表)，调用方把参数接在 $1 后面。
+    返回 (SQL 片段, 参数列表)，调用方把参数接在第 n 个绑定参数的位置。
     """
     if not days or days <= 0:
         return "", []
-    return " AND {col} >= now() - ($2::int * INTERVAL '1 day')", [int(days)]
+    return f" AND {{col}} >= now() - (${n}::int * INTERVAL '1 day')", [int(days)]
 
 
 async def charging(car_id: int, days: int | None = None) -> dict:
-    """充电统计。费用优先用 TeslaMate 里手填的 cost，为空则用电价方案算出的值。"""
-    from ..tariff.calc import costs_map, get_plan
+    """充电统计。费用走唯一真源：TeslaMate 记录的 cost 优先，为空则用电价引擎算出的值
+    （新结束的场次会被自动补算，不用等手动"重算"）。"""
+    costs = await cost_source.session_costs(car_id)
+    currency = await _currency()
 
-    computed = await costs_map()
-    plan = await get_plan()
-    currency = plan.get("currency") or await _currency()
+    def cost_of(cp_id) -> float:
+        return float((costs.get(cp_id) or {}).get("cost") or 0.0)
 
-    def cost_of(cp_id, db_cost) -> float:
-        if db_cost is not None:
-            return float(db_cost)
-        return float(computed.get(str(cp_id), 0.0))
-
-    win, win_args = _since(days)
+    tz = local_tz_name()
+    win, win_args = _since(days, n=3)
     monthly_rows = await db.fetch(
         f"""
-        SELECT cp.id, date_trunc('month', cp.start_date)::date AS month,
-               cp.charge_energy_added AS kwh, cp.cost,
+        SELECT cp.id, date_trunc('month', {_local('cp.start_date')})::date AS month,
+               cp.charge_energy_added AS kwh,
+               GREATEST(cp.charge_energy_added, cp.charge_energy_used) AS kwh_billed,
                COALESCE(fc.fast, false) AS is_dc
         FROM charging_processes cp
         LEFT JOIN LATERAL (
             SELECT bool_or(fast_charger_present) AS fast
             FROM charges WHERE charging_process_id = cp.id
         ) fc ON TRUE
-        WHERE cp.car_id = $1 AND cp.charge_energy_added > 0.1
+        WHERE cp.car_id = $1 AND {_REAL_CHARGE}
         {win.format(col="cp.start_date")}
         ORDER BY 2
         """,  # noqa: S608 - win 是本文件的固定片段，days 仍走绑定参数
-        car_id, *win_args,
+        car_id, tz, *win_args,
     )
     monthly: dict[str, dict] = {}
     for r in monthly_rows:
         m = monthly.setdefault(
             r["month"].isoformat(),
-            {"month": r["month"].isoformat(), "kwh": 0.0, "kwh_dc": 0.0, "cost": 0.0, "sessions": 0},
+            {"month": r["month"].isoformat(), "kwh": 0.0, "kwh_dc": 0.0, "kwh_billed": 0.0,
+             "cost": 0.0, "sessions": 0},
         )
         kwh = float(r["kwh"] or 0)
         m["kwh"] += kwh
+        m["kwh_billed"] += float(r["kwh_billed"] or 0)
         if r["is_dc"]:
             m["kwh_dc"] += kwh
-        m["cost"] += cost_of(r["id"], r["cost"])
+        m["cost"] += cost_of(r["id"])
         m["sessions"] += 1
 
+    win2, _ = _since(days, n=2)
     loc_rows = await db.fetch(
         f"""
         -- 地点取不到时返回 NULL 而不是中文字面量：这个值会原样渲染到界面上，
         -- 英文用户会看到一串中文。文案由前端按 locale 补。
-        SELECT cp.id, COALESCE(g.name, a.city, a.display_name) AS location,
-               cp.charge_energy_added AS kwh, cp.cost
+        SELECT cp.id, COALESCE(g.name, a.city, a.neighbourhood, a.display_name) AS location,
+               cp.charge_energy_added AS kwh
         FROM charging_processes cp
         LEFT JOIN geofences g ON g.id = cp.geofence_id
         LEFT JOIN addresses a ON a.id = cp.address_id
-        WHERE cp.car_id = $1 AND cp.charge_energy_added > 0.1
-        {win.format(col="cp.start_date")}
+        WHERE cp.car_id = $1 AND {_REAL_CHARGE}
+        {win2.format(col="cp.start_date")}
         """,  # noqa: S608
         car_id, *win_args,
     )
@@ -485,36 +496,44 @@ async def charging(car_id: int, days: int | None = None) -> dict:
             r["location"], {"location": r["location"], "kwh": 0.0, "cost": 0.0, "sessions": 0}
         )
         loc["kwh"] += float(r["kwh"] or 0)
-        loc["cost"] += cost_of(r["id"], r["cost"])
+        loc["cost"] += cost_of(r["id"])
         loc["sessions"] += 1
 
     recent = await db.fetch(
         f"""
         SELECT cp.id, cp.start_date, cp.end_date, cp.charge_energy_added, cp.charge_energy_used,
-               cp.start_battery_level, cp.end_battery_level, cp.duration_min, cp.cost,
-               COALESCE(g.name, a.city, a.display_name, '') AS location,
-               fc.max_power
+               cp.start_battery_level, cp.end_battery_level, cp.duration_min,
+               COALESCE(g.name, a.city, a.neighbourhood, a.display_name, '') AS location,
+               fc.max_power, COALESCE(fc.fast, false) AS is_dc
         FROM charging_processes cp
         LEFT JOIN geofences g ON g.id = cp.geofence_id
         LEFT JOIN addresses a ON a.id = cp.address_id
         LEFT JOIN LATERAL (
-            SELECT MAX(charger_power) AS max_power
+            SELECT MAX(charger_power) AS max_power, bool_or(fast_charger_present) AS fast
             FROM charges WHERE charging_process_id = cp.id
         ) fc ON TRUE
-        WHERE cp.car_id = $1 AND cp.charge_energy_added > 0.1
-        {win.format(col="cp.start_date")}
+        WHERE cp.car_id = $1 AND {_REAL_CHARGE}
+        {win2.format(col="cp.start_date")}
         ORDER BY cp.start_date DESC LIMIT 20
         """,  # noqa: S608
         car_id, *win_args,
     )
+    ids_in_window = [r["id"] for r in loc_rows]
+    by_src = cost_source.count_by_source(costs, ids_in_window)
     return {
         "currency": currency,
         # 这是个按车的接口，就不能报全局那张表的大小 —— 多车账号下
         # 另一辆车算过费用会让这辆车看起来"已经配好电价了"。
-        "computed_sessions": sum(1 for r in loc_rows if str(r["id"]) in computed),
+        "computed_sessions": by_src.get("computed", 0),
+        "cost_sources": by_src,
+        # 窗口内的场次总数。recent 只给最近 20 条，界面以前拿 recent.length 当
+        # "充电次数"，永远封顶 20（审计 F17）。
+        "n_sessions": len(ids_in_window),
+        "total_kwh": round(sum(float(r["kwh"] or 0) for r in loc_rows), 1),
+        "total_cost": round(sum(cost_of(i) for i in ids_in_window), 2),
         "monthly": [
             {**m, "kwh": round(m["kwh"], 1), "kwh_dc": round(m["kwh_dc"], 1),
-             "cost": round(m["cost"], 2)}
+             "kwh_billed": round(m["kwh_billed"], 1), "cost": round(m["cost"], 2)}
             for m in monthly.values()
         ],
         "top_locations": sorted(
@@ -528,13 +547,17 @@ async def charging(car_id: int, days: int | None = None) -> dict:
                 "duration_min": r["duration_min"],
                 "kwh": round(float(r["charge_energy_added"] or 0), 1),
                 "soc": f"{r['start_battery_level']}→{r['end_battery_level']}",
-                "cost": round(cost_of(r["id"], r["cost"]), 2),
-                "cost_source": "manual" if r["cost"] is not None else (
-                    "computed" if str(r["id"]) in computed else "unset"
-                ),
+                "kwh_used": round(float(r["charge_energy_used"]), 1)
+                if r["charge_energy_used"] is not None else None,
+                "cost": round(cost_of(r["id"]), 2),
+                # recorded = TeslaMate 里记录的（手填 / 围栏计价，永不覆盖）；
+                # computed = 电价引擎算的（含回写过的）；unset = 还没有费用；ongoing = 正在充
+                "cost_source": (costs.get(r["id"]) or {}).get("source", "unset"),
                 "location": r["location"],
                 "max_power": r["max_power"],
-                "type": "DC" if (r["max_power"] or 0) >= 50 else "AC",
+                # 与按月统计同一口径：车报告的 fast_charger_present，而不是功率阈值
+                # （超充尾段功率会掉到 50 kW 以下，那样同一场会被两处分成两类）
+                "type": "DC" if r["is_dc"] else "AC",
             }
             for r in recent
         ],
@@ -546,18 +569,19 @@ async def drives(car_id: int, days: int | None = None) -> dict:
     efficiency = float(eff_row["efficiency"] or 0) if eff_row else 0
 
     win, win_args = _since(days)
+    win3, _ = _since(days, n=3)
     monthly = await db.fetch(
         f"""
-        SELECT date_trunc('month', start_date)::date AS month,
+        SELECT date_trunc('month', {_local('start_date')})::date AS month,
                SUM(distance) AS km,
                SUM(duration_min) AS minutes,
                COUNT(*) AS n,
                SUM(GREATEST(start_rated_range_km - end_rated_range_km, 0)) AS rated_used
         FROM drives WHERE car_id = $1 AND distance > 0.1
-        {win.format(col="start_date")}
+        {win3.format(col="start_date")}
         GROUP BY 1 ORDER BY 1
         """,  # noqa: S608
-        car_id, *win_args,
+        car_id, local_tz_name(), *win_args,
     )
     by_temp = await db.fetch(
         f"""
@@ -735,16 +759,16 @@ async def tpms(car_id: int) -> dict:
         car_id,
     )
     history = await db.fetch(
-        """
-        SELECT date_trunc('day', date)::date AS day,
+        f"""
+        SELECT {_local('date')}::date AS day,
                AVG(tpms_pressure_fl) AS fl, AVG(tpms_pressure_fr) AS fr,
                AVG(tpms_pressure_rl) AS rl, AVG(tpms_pressure_rr) AS rr
         FROM positions
         WHERE car_id = $1 AND date > now() - interval '30 days'
-          AND tpms_pressure_fl IS NOT NULL
+          AND tpms_pressure_fl IS NOT NULL AND ideal_battery_range_km IS NOT NULL
         GROUP BY 1 ORDER BY 1
-        """,
-        car_id,
+        """,  # noqa: S608
+        car_id, local_tz_name(),
     )
     fmt = lambda v: round(float(v), 2) if v is not None else None  # noqa: E731
     return {
@@ -773,61 +797,28 @@ async def updates(car_id: int) -> list[dict]:
 
 
 async def vampire_drain(car_id: int, days: int = 90, min_idle_h: float = 6.0) -> dict:
-    """停放耗电（俗称"吸血鬼耗电"）。
+    """停放耗电（俗称"吸血鬼耗电"）—— 旧接口形状，算法与 /api/analytics/vampire 同源。
 
-    做法：取相邻两段行程，若中间**没有充电**，那么上一段结束时的电量减去
-    下一段开始时的电量，就是这段停放期间掉的电。这样算的好处是只依赖
-    drives + charging_processes 两张表，不用去猜 states 里那些
-    online/asleep/suspended 的语义。
-
-    只统计停放 1 小时以上、掉电为正、且不超过 40% 的区间：太短的噪声大，
-    掉电为负是采样抖动，超过 40% 基本是中途拔了充电枪之类的异常。
+    以前这里自己一套：只看相邻两段**行程**、中间有充电就整段扔掉。现在与
+    TeslaMate 的 Vampire Drain 面板一致：行程和充电都是边界（停车→充电→停车
+    切成两段），里程表动过的窗口剔除（那是没记上的行车），结束时电池偏冷的窗口
+    不给 kWh；额外给出窗口内"睡着"（asleep+offline）的时间占比。两个页面不再
+    给出两个互相矛盾的"每天掉多少电"。
     """
-    # drives 表本身不存电量，只有额定续航；SOC 要顺着 start/end_position_id
-    # 回 positions 拿。额定续航差 × efficiency 就是掉了多少度电 ——
-    # 这也是 TeslaMate 自己算能耗的口径。
-    #
-    # SOC 取 battery_level 而不是 usable_battery_level，两个原因：
-    # ① 流式插入的行不带 usable_battery_level（实测本机 26571 条 positions 里
-    #    24544 条为空，而 battery_level 一条都不空），而行程**起点**几乎总是
-    #    流式行 —— 用 usable 的话 29 个停放区间只有 3 个两端齐全，下面那道
-    #    "掉电 >40% 判为异常"的过滤等于从来没生效过；
-    # ② usable_battery_level 会随电池变冷而下降，那是可用量变了、不是电跑了。
-    #    量停放掉电要的是真实 SOC，battery_level 才是对的口径。
-    rows = await db.fetch(
-        """
-        SELECT d.end_date, d.end_rated_range_km AS end_km_range,
-               pe.battery_level AS end_soc,
-               d.end_km AS end_odo,
-               LEAD(d.start_date)           OVER w AS next_start,
-               LEAD(d.start_rated_range_km) OVER w AS next_km_range,
-               LEAD(ps.battery_level) OVER w AS next_soc,
-               LEAD(d.start_km) OVER w AS next_odo
-        FROM drives d
-        LEFT JOIN positions pe ON pe.id = d.end_position_id
-        LEFT JOIN positions ps ON ps.id = d.start_position_id
-        WHERE d.car_id = $1 AND d.end_date >= now() - ($2::int * INTERVAL '1 day')
-          AND d.end_rated_range_km IS NOT NULL
-        WINDOW w AS (ORDER BY d.start_date)
-        ORDER BY d.start_date
-        """,
-        car_id, int(max(days, 1)),
-    )
-    charges_in = await db.fetch(
-        "SELECT start_date, end_date FROM charging_processes"
-        " WHERE car_id = $1 AND start_date >= now() - ($2::int * INTERVAL '1 day')",
-        car_id, int(max(days, 1)),
-    )
-    # 折成 kWh/天要知道电池容量。用「满电等效额定续航 × cars.efficiency」推，
-    # 与 battery_health 的额定续航法同源 —— 不要拍一个"大概 75 度"的数，
-    # 那是在给用户看一个编出来的值。
+    from . import analytics
+    from .period import parse_period
+
+    d = max(int(days), 1)
+    v = await analytics.vampire(car_id, parse_period(d), float(min_idle_h))
+    # 折成"每天掉百分之几"要知道电池容量。用「满电等效额定续航 × cars.efficiency」推，
+    # 与 battery_health 的额定续航法同源 —— 不要拍一个"大概 75 度"的数。
     cap_row = await db.fetchrow(
         """
         SELECT c.efficiency,
                MAX(p.rated_battery_range_km / NULLIF(p.usable_battery_level, 0) * 100) AS range_100
         FROM cars c LEFT JOIN positions p
           ON p.car_id = c.id AND p.usable_battery_level >= 40
-         AND p.rated_battery_range_km IS NOT NULL
+         AND p.rated_battery_range_km IS NOT NULL AND p.ideal_battery_range_km IS NOT NULL
         WHERE c.id = $1 GROUP BY c.efficiency
         """,
         car_id,
@@ -835,67 +826,36 @@ async def vampire_drain(car_id: int, days: int = 90, min_idle_h: float = 6.0) ->
     efficiency = float(cap_row["efficiency"] or 0) if cap_row else 0
     range_100 = float(cap_row["range_100"]) if cap_row and cap_row["range_100"] else 0
     pack_kwh = round(range_100 * efficiency, 1) if (range_100 and efficiency) else 0
-
-    def charged_between(a, b) -> bool:
-        return any(c["start_date"] and a <= c["start_date"] <= b for c in charges_in)
-
-    items, total_km, total_h = [], 0.0, 0.0
-    for r in rows:
-        if r["next_start"] is None or r["next_km_range"] is None:
-            continue
-        hours = (r["next_start"] - r["end_date"]).total_seconds() / 3600
-        km_drop = float(r["end_km_range"]) - float(r["next_km_range"])
-        pct_drop = (
-            float(r["end_soc"]) - float(r["next_soc"])
-            if r["end_soc"] is not None and r["next_soc"] is not None else None
-        )
-        # 太短的区间噪声大；掉电为负是采样抖动；掉太多基本是中途拔了枪之类的异常。
-        #
-        # 门槛取 6 小时是跟上游对齐：TeslaMate 自己的 vampire-drain 面板把
-        # "min. Idle Time (h)" 默认设成 6（可选 0/1/3/6/12/18/24）。原来这里
-        # 写的是 1 小时，导致大量"刚停下的一两个小时"被计入——那段电池还热、
-        # 空调可能还在跑、哨兵刚布防，掉电速率远高于长期停放，外推成全天
-        # 会把每日耗电抬高好几倍（本机实测 1h 门槛下算出 14.4 kWh/天）。
-        if hours < min_idle_h or km_drop <= 0 or (pct_drop is not None and pct_drop > 40):
-            continue
-        # 里程表在这段"停放"里走了 —— 那是 TeslaMate 没记上的行车，不是停放耗电。
-        # 实测本机 10 个候选区间里有 3 个分别走了 19 / 494 / 272 公里，
-        # 不排掉的话每日耗电会被抬高好几倍（8.86 → 实际 1.x kWh/天）。
-        # pct>40% 那道闸只拦得住最夸张的两段，19 公里那段会混进来。
-        if (r["end_odo"] is not None and r["next_odo"] is not None
-                and r["next_odo"] - r["end_odo"] > 0.5):
-            continue
-        if charged_between(r["end_date"], r["next_start"]):
-            continue
-        items.append({
-            "from": _iso(r["end_date"]),
-            "hours": round(hours, 1),
-            "km_lost": round(km_drop, 1),
-            "pct": round(pct_drop, 1) if pct_drop is not None else None,
-            "kwh_per_day": round(km_drop * efficiency / hours * 24, 2) if efficiency else None,
-        })
-        total_km += km_drop
-        total_h += hours
-
-    kwh_day = (
-        round(total_km * efficiency / total_h * 24, 2) if (total_h and efficiency) else None
-    )
+    items = [
+        {
+            "from": w["start"],
+            "to": w["end"],
+            "hours": w["hours"],
+            "km_lost": w["range_lost_km"],
+            "pct": (-w["soc_diff"]) if w["soc_diff"] is not None else None,
+            "kwh": w["kwh"],
+            "kwh_per_day": w["kwh_per_day"],
+            "avg_watts": w["avg_watts"],
+            "standby_pct": w["standby_pct"],
+            "reduced_range": w["reduced_range"],
+        }
+        for w in v["windows"]
+    ]
+    s = v["summary"]
+    kwh_day = s["kwh_per_day"]
     return {
-        "sessions": len(items),
-        # 回显**实际用的**天数，不是用户传进来的。传 -5 时内部夹到 1，
-        # 却在响应里回 -5，等于告诉调用方"我按 -5 天算的"。
-        "days": max(int(days), 1),
+        "sessions": s["windows"],
+        # 回显**实际用的**天数，不是用户传进来的
+        "days": d,
         "min_idle_h": min_idle_h,
-        # 额定续航差 × efficiency 直接就是度数，不需要先知道电池容量
         "avg_kwh_per_day": kwh_day,
-        "avg_km_per_day": round(total_km / total_h * 24, 1) if total_h else None,
-        # 百分比由同一份度数换算而来，而不是另起一套 SOC 采样去算。
-        # 两套算法样本量不同（SOC 两端经常缺值），并排显示会给出两个互相矛盾
-        # 的数字，而用户没有办法判断该信哪个。
-        "avg_pct_per_day": (
-            round(kwh_day / pack_kwh * 100, 2) if (kwh_day and pack_kwh) else None
-        ),
+        "avg_km_per_day": s["km_per_day"],
+        "avg_watts": s["avg_watts"],
+        "asleep_pct": s["asleep_pct"],
+        # 百分比由同一份度数换算而来，而不是另起一套 SOC 采样去算
+        "avg_pct_per_day": round(kwh_day / pack_kwh * 100, 2) if (kwh_day and pack_kwh) else None,
         "pack_kwh_est": pack_kwh or None,
+        "method": "teslamate_vampire_drain",
         # 界面只用最近 30 条；导出要全量，所以两个都给
         "recent": items[-30:],
         "all": items,
@@ -907,6 +867,7 @@ async def charge_curve(cp_id: int) -> dict:
     head = await db.fetchrow(
         """
         SELECT cp.id, cp.car_id, cp.start_date, cp.end_date, cp.charge_energy_added,
+               cp.charge_energy_used,
                cp.start_battery_level, cp.end_battery_level, cp.duration_min, cp.cost,
                COALESCE(g.name, a.display_name, '') AS location
         FROM charging_processes cp
@@ -948,7 +909,11 @@ async def charge_curve(cp_id: int) -> dict:
         "kwh": round(float(head["charge_energy_added"] or 0), 2),
         "duration_min": head["duration_min"],
         "soc": f"{head['start_battery_level']}→{head['end_battery_level']}",
-        "cost": float(head["cost"]) if head["cost"] is not None else None,
+        # 有效费用（唯一真源：TeslaMate 记录的 > 电价引擎算的）
+        "cost": (await cost_source.session_costs(head["car_id"], autoprice=False)).get(
+            head["id"], {}).get("cost"),
+        "kwh_used": round(float(head["charge_energy_used"]), 2)
+        if head["charge_energy_used"] is not None else None,
         "points": [
             {
                 "t": round((r["date"] - t0).total_seconds() / 60, 2) if t0 else 0,
@@ -989,10 +954,10 @@ async def records(car_id: int) -> dict:
         "SELECT elevation, date FROM positions WHERE car_id = $1"
         " ORDER BY elevation DESC NULLS LAST LIMIT 1", car_id)
     busiest_day = await db.fetchrow(
-        """
-        SELECT start_date::date AS day, SUM(distance) AS km
+        f"""
+        SELECT {_local('start_date')}::date AS day, SUM(distance) AS km
         FROM drives WHERE car_id = $1 AND distance > 0 GROUP BY 1 ORDER BY 2 DESC LIMIT 1
-        """, car_id)
+        """, car_id, local_tz_name())  # noqa: S608
     biggest_charge = await db.fetchrow(
         "SELECT charge_energy_added, start_date FROM charging_processes"
         " WHERE car_id = $1 ORDER BY charge_energy_added DESC NULLS LAST LIMIT 1", car_id)

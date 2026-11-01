@@ -65,9 +65,12 @@ class DataWatchdog:
 
     def expected_to_report(self) -> bool:
         """至少有一辆车现在应该在上报数据。"""
+        # Only cars still in the account count: a car that exists only as old
+        # database rows (seeded "online" weeks ago) would otherwise make every
+        # night the live car sleeps look like an outage (audit F4).
         states = [
             (v.get("state") or "").lower()
-            for v in live.cars.values() if v.get("state")
+            for cid, v in live.cars.items() if v.get("state") and live.is_active(cid)
         ]
         if not states:
             return True          # 不知道状态时按"应该上报"处理，宁可多查一次
@@ -83,6 +86,8 @@ class DataWatchdog:
         now = time.time()
         out: dict[str, dict] = {}
         for car_id, last in live.last_update.items():
+            if not live.is_active(car_id):
+                continue
             age = now - last if last else None
             quiet = self._car_quiet(car_id)
             out[car_id] = {
@@ -132,7 +137,7 @@ class DataWatchdog:
 
         now = time.time()
         for car_id, last in list(live.last_update.items()):
-            if not last:
+            if not last or not live.is_active(car_id):
                 continue
             age = now - last
             # 车在睡觉/离线时没有数据是正常的（也不清除已有告警状态，
@@ -142,26 +147,35 @@ class DataWatchdog:
 
             name = (live.cars.get(car_id) or {}).get("display_name") or f"Car {car_id}"
             if age > settings.data_stale_seconds and car_id not in self._alerted_cars:
-                self._alerted_cars.add(car_id)
                 mins = int(age // 60)
                 log.error("data collection stalled for %s: no MQTT for %d minutes", name, mins)
-                if self._fire:
-                    loc = (await get_prefs())["locale"]
-                    await self._fire(
-                        car_id, "critical",
-                        t("watchdog.stalled_title", loc),
-                        t("watchdog.stalled_body", loc, n=mins),
-                        rule="data_stale",
-                    )
+                if not self._fire:
+                    self._alerted_cars.add(car_id)
+                    continue
+                loc = (await get_prefs())["locale"]
+                from .sentry import car_label
+
+                ok = await self._fire(
+                    car_id, "critical",
+                    t("push.data_stale", loc, car=await car_label(car_id)),
+                    t("push.data_stale_body", loc, n=mins),
+                    rule="data_stale",
+                )
+                # Marked only once it got out: a failed send is tried again on
+                # the next check instead of going silent for the whole outage.
+                if ok is not False:
+                    self._alerted_cars.add(car_id)
             elif age <= settings.data_stale_seconds and car_id in self._alerted_cars:
                 self._alerted_cars.discard(car_id)
                 log.info("data collection resumed for %s", name)
                 if self._fire:
                     loc = (await get_prefs())["locale"]
+                    from .sentry import car_label
+
                     await self._fire(
                         car_id, "info",
-                        t("watchdog.resumed_title", loc),
-                        t("watchdog.resumed_body", loc), rule="data_resumed",
+                        t("push.data_resumed", loc, car=await car_label(car_id)), "",
+                        rule="data_resumed",
                     )
 
 

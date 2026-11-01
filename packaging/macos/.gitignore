@@ -1,0 +1,4 @@
+# Everything build.sh produces: download cache, sources, staged runtime, the .app
+build/
+# The finished DMG
+dist/

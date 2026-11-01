@@ -116,7 +116,8 @@ function liveConnect(onUpdate) {
     const msg = JSON.parse(e.data);
     if (msg.type === "snapshot") {
       Object.assign(cars, msg.cars);
-    } else if (msg.car_id) {
+    } else if (!msg.type && msg.car_id) {
+      // Typed events (e.g. {"type": "alert"}) share the stream but aren't state.
       (cars[msg.car_id] = cars[msg.car_id] || {})[msg.key] = msg.value;
     }
     onUpdate(cars);
@@ -127,6 +128,15 @@ function liveConnect(onUpdate) {
 
 /* 车辆选择器（多车时显示） */
 async function initCarPicker(sel, onChange) {
+  // Inside the app shell the sidebar already chooses the car; follow it
+  // instead of showing a second picker.
+  if (typeof Car !== "undefined" && document.querySelector("[data-carswitch]")) {
+    const own = document.querySelector(sel);
+    if (own) own.hidden = true;
+    if (!Car.list.length) await Car.load();
+    Car.onChange((id) => onChange(Number(id)));
+    return Car.current ?? 1;
+  }
   let cars = [];
   try { cars = await apiGet("/api/cars"); } catch (e) { /* DB 未就绪 */ }
   const el = document.querySelector(sel);

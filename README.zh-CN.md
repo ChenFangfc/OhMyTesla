@@ -4,7 +4,7 @@
 
 # OhmyTesla
 
-**自托管的特斯拉助手 —— 行车记录仪多机位合成、哨兵告警推送、<br>能耗洞见、充电费用、车辆控制，一个网页全包。**
+**自托管的特斯拉助手 —— 哨兵一触发就推到手机、3D 车辆控制、<br>行车记录仪多机位合成、能耗洞见、充电费用，一个网页全包。**
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Built on TeslaMate](https://img.shields.io/badge/built_on-TeslaMate-cc0000?style=flat-square)](https://github.com/teslamate-org/teslamate)
@@ -21,6 +21,7 @@
 随时可以自己升级。其余部分都是本项目。
 
 **[安装](#安装)** · [连上你的车](#连上你的车) · [手机告警](#手机告警) ·
+[车辆控制](#车辆控制) · [3D 车模](#3d-车模) ·
 [行车记录仪](#行车记录仪) · [充电花了多少钱](#充电花了多少钱) ·
 [AI 直查](#让-ai-直接查你的车mcp) · [常用命令](#常用命令) ·
 [让 AI 替你装](#让-ai-助手替你装好) · [安全](#安全)
@@ -41,9 +42,12 @@ openssl rand -base64 32 | tr -d '/+=' | cut -c1-28
 
 打开 **http://localhost:8800** —— 用户名 `ohmytesla`，密码就是刚才生成的那串。
 
+**Mac 上不想装 Docker**：原生 App 用一个 DMG 跑起整套（TeslaMate、Postgres、Mosquitto 和 hub），
+见 [packaging/macos/README.md](packaging/macos/README.md)。
+
 > [!WARNING]
-> `OHMYTESLA_PASSWORD` 留空 = **整个界面不需要登录**，而它能解锁车门、关哨兵、
-> 看你去过的每一个地方。8800 端口是整个局域网可达的，不只是本机。
+> 这个界面能解锁车门、关哨兵、看你去过的每一个地方，所以 `OHMYTESLA_PASSWORD`
+> 留空时它**干脆拒绝服务**（HTTP 503）。8800 端口是整个局域网可达的，不只是本机。
 
 ## 连上你的车
 
@@ -57,22 +61,56 @@ openssl rand -base64 32 | tr -d '/+=' | cut -c1-28
 
 ## 手机告警
 
-**ntfy** —— 推荐，秒级到达。手机装 App，起一个别人猜不到的主题名，填进 `.env`：
+只有**哨兵触发**和**真正要紧的事**才推到手机，一行就能看懂发生了什么：
 
-```ini
-NTFY_URL=https://ntfy.sh
-NTFY_TOPIC=omt-<随机串>                 # echo "omt-$(openssl rand -hex 10)"
-PUBLIC_URL=http://192.168.1.20:8800     # 手机能访问到这台机器的地址，通知里的链接才点得动
+```text
+🚨 Cybertruck — 锁车时车门被打开
+家 · 21:41
 ```
 
-**邮件**也支持（`SMTP_HOST/PORT/USER/PASS/FROM/TO`），Gmail 必须用
-[应用专用密码](https://myaccount.google.com/apppasswords)而不是登录密码。
-邮件延迟几分钟，当存档可以，**别拿它当哨兵告警的唯一渠道**。
+| 推到手机 | 只在网页里记一笔 |
+|---|---|
+| 哨兵：有人在车旁、警报响起、锁着的车被开门或拉门把手 | 软件更新、电量低、保养到期 |
+| 停着的车位置变了（被拖走/被开走） | 数据恢复、采集服务健康检查 |
+| 哨兵告警暂停（收不到车的数据了） | 哨兵录像同步完成 |
+| 胎压低、充电中途断电 | 其他日常诊断 |
 
-配完 `./omt restart`，然后 **Security 页 → Send test alert**。收不到的话那一页会告诉你缺哪一项。
+每一类都能在 **安全 → 告警类型** 里改成「推送 / 仅网页 / 关闭」。
+你自己回来开车（钥匙卡、手机钥匙解锁）不会被当成入侵；在家时默认只推升级了的事件，
+可以在 **设置 → 哨兵告警** 里按地点改。
+
+**渠道**在 **设置 → 通知** 里配，不用改 `.env`：ntfy（推荐，秒到）、Bark（iOS「关键警报」，
+能穿透勿扰和静音）、Telegram、邮件、Webhook、Apprise。没有界面的部署照样可以用 `.env`
+里的 `NTFY_*`、`SMTP_*` 这些变量，界面里填的优先。配完点 **安全 → 发送测试告警**。
+
+`PUBLIC_URL` 填手机能访问到这台机器的地址，通知里的「打开」链接才点得动。
+
+| 多快知道 | 延迟 | 需要什么 |
+|---|---|---|
+| TeslaMate 轮询 | 约 1 分钟 | 什么都不用 |
+| 哨兵开着时快速检查 | 约 10 秒 | 什么都不用（只读 TeslaMate 的 token，不唤醒车） |
+| Fleet Telemetry | 1～2 秒 | 公网服务器或中转服务，见 [docs/FLEET-TELEMETRY.md](docs/FLEET-TELEMETRY.md) |
 
 > [!IMPORTANT]
-> 主题名就是密码。ntfy.sh 是公开服务器，知道这串字符的人都能收到你的告警。
+> ntfy 的主题名就是密码。ntfy.sh 是公开服务器，知道这串字符的人都能收到你的告警。
+> 设置页里「生成新主题」给的是随机串。
+
+## 车辆控制
+
+**概览** 页的 3D 车模上直接点车门、前备箱、充电口；**控制** 页把空调、座椅、充电、车窗、
+哨兵放在一页。Cybertruck 另有货箱卷帘、车外插座、对外供电、灯条、悬架高度。
+
+2021 年以后的车（含全部 Cybertruck）只认签名指令，需要一次性在 **设置 → 车辆指令**
+里走完 6 步（特斯拉开发者应用 + 公钥 + 登录授权 + 手机上批准虚拟钥匙），
+不用另外部署代理。步骤和常见问题见 [docs/COMMANDS.md](docs/COMMANDS.md)。
+
+## 3D 车模
+
+自带 Cybertruck 车模（[DriveOS](https://branzoom.github.io/driveos)，CC BY 4.0）。
+其他车型在 **设置 → 车辆 → 3D 车模** 上传一个 `.glb` 就会替换上去；
+要能开门开盖，模型的部件得按约定命名，见
+[static/models/README.md](services/hub/app/web/static/models/README.md)，
+[`scripts/models/rig_vehicle.py`](scripts/models/rig_vehicle.py) 能把 Blender 里的模型转成这个格式。
 
 ## 行车记录仪
 
@@ -129,7 +167,7 @@ claude mcp add --transport http ohmytesla http://localhost:8800/mcp \
 | 地址 | 登录 | 是什么 |
 |---|---|---|
 | <http://localhost:8800> | `ohmytesla` / `OHMYTESLA_PASSWORD` | OhmyTesla，日常只用这个 |
-| <http://localhost:3001> | `admin` / 见 `./omt grafana-password` | Grafana 深度面板 |
+| <http://localhost:3000> | `admin` / 见 `./omt grafana-password` | Grafana 深度面板（端口见 `GRAFANA_PORT`） |
 | <http://localhost:4000> | 无 | TeslaMate 原生界面 |
 
 按 <kbd>⌘</kbd><kbd>K</kbd> 打开命令面板。
@@ -148,7 +186,7 @@ claude mcp add --transport http ohmytesla http://localhost:8800/mcp \
    - TM_ENCRYPTION_KEY   = `openssl rand -base64 32`
    - TM_DB_PASS          = `openssl rand -base64 18 | tr -d '/+='`
    - OHMYTESLA_PASSWORD  = `openssl rand -base64 32 | tr -d '/+=' | cut -c1-28`
-     （门户密码，用户名固定 ohmytesla；留空等于整个界面不设防）
+     （门户密码，用户名固定 ohmytesla；留空的话门户直接拒绝服务）
 3. 端口若被占用，改 .env 里的 OHMYTESLA_PORT / GRAFANA_PORT / TESLAMATE_PORT
 4. 执行 `./omt up`，它会等到应用真正可访问才返回
 5. 生成 ntfy 主题名：`echo "omt-$(openssl rand -hex 10)"`
@@ -175,14 +213,14 @@ SMTP_HOST/PORT/USER/PASS/FROM/TO 再 `./omt restart`。只填 SMTP_HOST 不填�
 注意：
 - 改了 .env 用 `./omt restart`；改了代码用 `./omt update`（带重新构建）
 - ntfy 主题名等同于密码，别写进任何会公开的地方；.env 已在 .gitignore 里
-- OHMYTESLA_PASSWORD 只保护 :8800。Grafana(3001) 和 TeslaMate(4000) 是独立容器，
+- OHMYTESLA_PASSWORD 只保护 :8800。Grafana(3000) 和 TeslaMate(4000) 是独立容器，
   各有各的认证，设了一个不等于都护住了
 ````
 
 ## 安全
 
 > [!CAUTION]
-> **只适合家庭内网。** 三个端口都绑在 `0.0.0.0`，同一个 Wi-Fi 下的任何设备都能直接访问。
+> **只适合家庭内网。** 8800 和 Grafana 绑在 `0.0.0.0`，同一个 Wi-Fi 下的任何设备都能直接访问。
 > 绝对不要把这些端口映射到公网。
 
 | 暴露面 | 认证 | 能拿到什么 |
@@ -190,8 +228,8 @@ SMTP_HOST/PORT/USER/PASS/FROM/TO 再 `./omt restart`。只填 SMTP_HOST 不填�
 | `:8800` | Basic（`ohmytesla` + 你设的密码） | 解锁车门、开后备箱、关哨兵、全部位置历史与录像 |
 | `:8800/mcp` | 同一个密码 | 整个数据库，只读 |
 | `:8800/healthz` | **有意豁免** | 只返回存活状态，不含任何车辆数据 |
-| `:3001` Grafana | 默认 `admin/admin` | 全部数据面板 |
-| `:4000` TeslaMate | **无，且它自身不支持** | 原生管理界面，能改采集设置 |
+| `:3000` Grafana | `./omt up` 生成的密码 | 全部数据面板 |
+| `:4000` TeslaMate | **无，且它自身不支持** | 原生管理界面；默认**只有本机**打得开（`TESLAMATE_BIND_ADDR`） |
 | mosquitto | 未映射到宿主机 | 只有 Docker 网络内可达，局域网连不上 |
 
 `OHMYTESLA_PASSWORD` 对全站生效（除 `/healthz`），但**只管 8800**：
@@ -203,10 +241,12 @@ MQTT_USERNAME=...                   # MQTT 认证，现在能透过 compose 传�
 MQTT_PASSWORD=...
 ```
 
-TeslaMate 4.0.1 完全没有 HTTP 认证选项 —— 它的 `runtime.exs` 只认 `DATABASE_*`、
-`MQTT_*`、`SECRET_KEY_BASE` —— 所以 `:4000` 只能靠「别让别人够到」来保护。
-想让 3001 和 4000 只有本机能开，把 `docker-compose.yml` 里那两行端口前面加上
-`127.0.0.1:`，代价是手机和平板就访问不到 Grafana 了。
+TeslaMate 完全没有 HTTP 认证选项 —— 它的 `runtime.exs` 只认 `DATABASE_*`、
+`MQTT_*`、`SECRET_KEY_BASE` —— 而且它的页面能一键退出特斯拉登录。登录、地理围栏、
+车辆设置都已经在 OhmyTesla 里了，所以 `:4000` 默认只有本机能开；要从别的设备打开，
+在 `.env` 里设 `TESLAMATE_BIND_ADDR=0.0.0.0`。Grafana 也想只让本机访问，就在
+`docker-compose.yml` 里它那行端口前加 `127.0.0.1:`（`BIND_ADDR` 会把 8800 一起锁上），
+代价是手机和平板就访问不到 Grafana 了。
 
 要在外面访问，就整套放进 VPN（Tailscale / WireGuard）或带认证的反向代理后面。
 里面有你的位置历史、行车录像、推送渠道和车辆控制权。
@@ -220,7 +260,8 @@ TeslaMate 4.0.1 完全没有 HTTP 认证选项 —— 它的 `runtime.exs` 只�
 |---|---|
 | [使用流程](docs/QUICKSTART.md) | 完整上手步骤、日常用法、常见问题 |
 | [架构设计](docs/ARCHITECTURE.md) | 各部分怎么拼起来的 |
-| [车辆控制](docs/COMMANDS.md) | 支持的 19 条指令 |
+| [车辆控制](docs/COMMANDS.md) | 一次性设置签名指令，安全设计，常见问题 |
+| [teslausb](docs/TESLAUSB.md) | 车上的 U 盘自动把录像同步到这台机器 |
 | [Fleet Telemetry](docs/FLEET-TELEMETRY.md) | 流式采集配置 |
 | [功能矩阵](docs/FEATURE-MATRIX.md) | 71 项功能 × 全竞品对照 |
 

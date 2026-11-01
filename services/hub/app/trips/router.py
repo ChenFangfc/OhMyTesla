@@ -24,6 +24,8 @@ from .. import db
 from ..alerts.store import store
 from ..i18n import prefs as user_prefs
 from ..i18n import units
+from ..insights.guard import http_error
+from ..insights.period import local_tz_name, to_local
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +76,25 @@ async def set_tag(drive_id: int, body: TagBody):
     return {"ok": True, "tags": tags.get(key)}
 
 
+def _raise(e: Exception):
+    """数据库异常 → 准确的 HTTP 错误（503 连不上 / 504 超时 / 500 SQL）。"""
+    err = http_error(e)
+    if err is None:
+        raise e
+    raise err from e
+
+
+def _local_ts(dt) -> str:
+    """naive UTC → 本地时间 + 显式偏移，如 2026-08-28 22:07:52-05:00。
+
+    以前写的是不带时区标记的 UTC：芝加哥晚上 10 点的行程在报销/报税表里
+    落到了第二天（审计 F12，drive 61）。带上偏移，表格软件和人都不会再看错。
+    """
+    if dt is None:
+        return ""
+    return to_local(dt).isoformat(sep=" ", timespec="seconds")
+
+
 async def _rows(car_id: int, days: int, category: str | None) -> list[dict]:
     win = ""
     args: list = [car_id]
@@ -118,8 +139,8 @@ async def export_csv(
     """报销/报税用的里程表。单位跟用户偏好走——报销单上写 km 还是 mi 很要紧。"""
     try:
         rows = await _rows(car_id, days, category)
-    except db.DbUnavailable as e:
-        raise HTTPException(503, str(e)) from e
+    except Exception as e:  # noqa: BLE001 - 交给 _raise 分类
+        _raise(e)
 
     # 单位跟用户偏好走 —— 报销单上写 km 还是 mi 是要紧事。
     # units.dist 返回 (值, 单位名)，这里只要值。
@@ -134,20 +155,24 @@ async def export_csv(
     w.writerow([
         "drive_id", "start", "end", f"distance_{dist_unit}", "duration_min",
         f"odometer_start_{dist_unit}", f"odometer_end_{dist_unit}",
-        "energy_kwh", "from", "to", "category", "note",
+        "energy_kwh", "from", "to", "category", "note", "timezone",
     ])
+    tz = local_tz_name()
     for r in rows:
-        kwh = float(r["rated_used"] or 0) * float(r["efficiency"] or 0)
+        # 车的 efficiency 还没推出来（TeslaMate 要 2 次合格的充电）时能耗是"不知道"，
+        # 不是 0 —— 报销表里的 0.0 kWh 会被当成真数据（审计 F13）
+        kwh = (float(r["rated_used"] or 0) * float(r["efficiency"])
+               if r["efficiency"] is not None else None)
         w.writerow([
             r["id"],
-            r["start_date"].isoformat(sep=" ", timespec="seconds") if r["start_date"] else "",
-            r["end_date"].isoformat(sep=" ", timespec="seconds") if r["end_date"] else "",
+            _local_ts(r["start_date"]),
+            _local_ts(r["end_date"]),
             round(to_dist(float(r["distance"] or 0)), 2),
             r["duration_min"] or 0,
-            round(to_dist(float(r["start_km"] or 0)), 1),
-            round(to_dist(float(r["end_km"] or 0)), 1),
-            round(kwh, 2),
-            r["from_loc"], r["to_loc"], r["category"], r["note"],
+            round(to_dist(float(r["start_km"])), 1) if r["start_km"] is not None else "",
+            round(to_dist(float(r["end_km"])), 1) if r["end_km"] is not None else "",
+            round(kwh, 2) if kwh is not None else "",
+            r["from_loc"], r["to_loc"], r["category"], r["note"], tz,
         ])
     return Response(
         buf.getvalue(),
@@ -162,15 +187,20 @@ async def export_gpx(drive_id: int):
     try:
         head = await db.fetchrow(
             "SELECT start_date, end_date FROM drives WHERE id = $1", drive_id)
-        if head is None:
-            raise HTTPException(404, "drive not found")
+    except Exception as e:  # noqa: BLE001 - 交给 _raise 分类
+        _raise(e)
+    if head is None:
+        raise HTTPException(404, "drive not found")
+    try:
+        # drive_id 只有 BRIN(drive_id, date) 索引：带上行程的时间窗，两个键都用上
         pts = await db.fetch(
             "SELECT date, latitude, longitude, elevation, speed"
-            " FROM positions WHERE drive_id = $1 AND latitude IS NOT NULL"
-            " ORDER BY date", drive_id,
+            " FROM positions WHERE drive_id = $1 AND date >= $2"
+            " AND date <= COALESCE($3, $2 + interval '2 days') AND latitude IS NOT NULL"
+            " ORDER BY date", drive_id, head["start_date"], head["end_date"],
         )
-    except db.DbUnavailable as e:
-        raise HTTPException(503, str(e)) from e
+    except Exception as e:  # noqa: BLE001 - 交给 _raise 分类
+        _raise(e)
 
     name = f"OhmyTesla drive {drive_id}"
     parts = [
@@ -201,8 +231,8 @@ async def summary(car_id: int, days: int = 0):
     """按分类汇总里程与能耗 —— 报销时要的就是这张表。"""
     try:
         rows = await _rows(car_id, days, None)
-    except db.DbUnavailable as e:
-        raise HTTPException(503, str(e)) from e
+    except Exception as e:  # noqa: BLE001 - 交给 _raise 分类
+        _raise(e)
 
     buckets: dict[str, dict] = {}
     for r in rows:

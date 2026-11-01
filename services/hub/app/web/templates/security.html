@@ -1,626 +1,95 @@
 {% extends "shell.html" %}
-{% block title %}{{ t('security.page_title') }}{% endblock %}
+{% block title %}{{ t('nav.security', 'Security') }} · OhmyTesla{% endblock %}
 
+{# Security is a status first and a history second: is it watching, how fast
+   would I hear about something, and where would I hear it. Then what
+   happened, grouped by day, each event next to its footage. #}
 {% block content %}
-<div class="page" style="padding-bottom:96px">
-
-  <div class="page-head">
-    <h1 data-i18n="nav.security">Security</h1>
-    <div class="sub" id="sec-sub">&nbsp;</div>
-  </div>
-
-  {# If alerts can't be delivered, that's the only thing worth saying here.
-     A security product that quietly can't notify you is worse than none. #}
-  <div id="delivery" class="card" style="display:none;margin-bottom:24px"></div>
-
-  {# 临时静音。默认只挡非严重级 —— 洗车、修车、自己在车里折腾的时候需要它，
-     但「别烦我」不该等于「别管我的车被撬」。 #}
-  <div class="row" style="gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:24px">
-    <span class="eyebrow" data-i18n="security.snooze">Snooze alerts</span>
-    <div class="segmented" id="snooze-pick">
-      <button data-min="60">1h</button>
-      <button data-min="480">8h</button>
-      <button data-min="1440">24h</button>
+<div class="page">
+  <section class="sec-hero" id="sec-hero">
+    <div class="sec-shield" id="sec-shield"><span class="ico-slot" data-icon="shield" data-size="34"></span></div>
+    <div class="sec-main">
+      <div class="eyebrow" id="sec-car">&nbsp;</div>
+      <h1 class="display-md" id="sec-state">&nbsp;</h1>
+      <div class="sec-facts" id="sec-facts"></div>
     </div>
-    <label class="row" style="gap:6px;align-items:center">
-      <input type="checkbox" id="snooze-all">
-      <span class="body-sm" data-i18n="security.snooze_all">including intrusion alerts</span>
-    </label>
-    <button class="btn ghost" id="snooze-off" style="display:none" data-i18n="security.snooze_cancel">Cancel</button>
-    <span class="small" id="snooze-msg"></span>
-  </div>
-
-  <div class="section" style="margin-top:0">
-    <div class="section-head">
-      <h2 data-i18n="security.activity">Sentry Mode activity</h2><span class="spacer"></span>
-      <button id="btn-test" class="btn" data-i18n="alerts.test_send">Send test alert</button>
+    <div class="sec-actions">
+      <button class="btn big" id="sec-toggle"></button>
+      <button class="btn ghost" id="sec-test" data-i18n="security.test">Send test alert</button>
     </div>
-    {# A table is for comparing numbers down a column. "Something happened at
-       your car, here is the footage" is an event, so it reads as a timeline
-       with the clip attached — not as a row you have to cross-reference
-       against the Dashcam page by timestamp. #}
-    <div id="sentry-feed" class="timeline stagger">
-      <div class="empty small" data-i18n="common.loading">Loading…</div>
+  </section>
+
+  <div class="sec-live" id="sec-live" hidden></div>
+
+  <div class="row" style="margin:30px 0 14px;gap:12px;flex-wrap:wrap">
+    <h2 class="display-sm" data-i18n="security.history">What happened</h2>
+    <span class="spacer"></span>
+    <div class="seg2" id="sec-filter">
+      <button class="on" data-f="all" data-i18n="security.f_all">All</button>
+      <button data-f="alarm" data-i18n="security.f_alarm">Alarms</button>
+      <button data-f="activity" data-i18n="security.f_activity">Activity</button>
     </div>
   </div>
+  <div id="sec-list"></div>
+  <div class="row mt2" style="justify-content:center"><button class="btn ghost" id="sec-more" hidden data-i18n="security.older">Show older</button></div>
 
-  <div class="section">
-    <div class="section-head"><h2 data-i18n="security.setup_title">Setup</h2></div>
-
-    <details class="disclose">
-      <summary><span data-i18n="security.d_places">Alerts by location</span><span class="value" id="v-places">–</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
-      </summary>
-      <div class="body">
-        <p class="body-sm" style="margin:0 0 16px;max-width:62ch"><span data-i18n="alerts.policies_help"></span><span data-i18n-html="alerts.policies_intrusion_note"></span>
-        </p>
-        <div id="policies"></div>
+  <details class="disclose" id="sec-rules" style="margin-top:40px">
+    <summary><span data-i18n="security.rules">Alert types</span><span class="value" id="v-rules"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span></summary>
+    <div class="body" id="rules-body"></div>
+  </details>
+  <details class="disclose" id="sec-snooze">
+    <summary><span data-i18n="security.snooze">Quiet for a while</span><span class="value" id="v-snooze"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span></summary>
+    <div class="body">
+      <p class="body-sm" style="margin:0 0 12px;max-width:62ch" data-i18n="security.snooze_intro"></p>
+      <div class="row" style="flex-wrap:wrap;gap:8px">
+        <button class="cbtn" data-snooze="60">1 h</button><button class="cbtn" data-snooze="480">8 h</button>
+        <button class="cbtn" data-snooze="1440">24 h</button><button class="cbtn" data-snooze="0" data-i18n="security.unsnooze">Resume</button>
+        <label class="check" style="margin-left:8px"><input type="checkbox" id="snooze-all"> <span data-i18n="security.snooze_all">including alarms</span></label>
       </div>
-    </details>
-
-    <details class="disclose">
-      <summary><span data-i18n="security.d_rules">Alert rules</span><span class="value" id="v-rules">–</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
-      </summary>
-      <div class="body"><div id="rules"></div></div>
-    </details>
-
-    {# 自动化和告警规则放在一起：两者都是"事件发生时按规则做一件事"，
-       区别只在做的是"通知我"还是"操作车"。分到两个页面会让用户在
-       "为什么我的规则没生效"时不知道该去哪儿找。 #}
-    <details class="disclose" id="d-automations">
-      <summary><span data-i18n="auto.title">Automations</span><span class="value" id="v-auto">–</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
-      </summary>
-      <div class="body">
-        <p class="body-sm" style="margin:0 0 16px;max-width:64ch" data-i18n="auto.help"></p>
-        <div id="auto-list"></div>
-        <div class="row mt" style="gap:10px">
-          <button class="btn" id="auto-new" data-i18n="auto.new">New automation</button>
-          <span class="spacer"></span>
-          <button class="btn ghost" id="auto-history-btn" data-i18n="auto.history">Recent triggers</button>
-        </div>
-        <div id="auto-editor" style="display:none" class="card mt"></div>
-        <div id="auto-history" style="display:none" class="mt"></div>
-      </div>
-    </details>
-
-    <details class="disclose">
-      <summary><span data-i18n="security.d_how">How detection works</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
-      </summary>
-      <div class="body body-sm" style="max-width:70ch;line-height:1.65">
-        <p data-i18n-html="alerts.how_polled" style="margin:0 0 14px"></p>
-        <p data-i18n-html="alerts.how_intrusion" style="margin:0 0 14px"></p>
-        <p id="how-sessions" style="margin:0"></p>
-      </div>
-    </details>
-  </div>
-
-  <div class="section">
-    <div class="section-head">
-      <h2 data-i18n="alerts.history">History</h2>
-      <span class="spacer"></span>
-      <button id="clear-history" class="btn ghost" data-i18n="security.clear_history">Clear history</button>
     </div>
-    <div class="table-scroll">
-      <table class="data" id="history">
-        <thead><tr>
-          <th data-i18n="common.time">Time</th>
-          <th data-i18n="common.level">Level</th>
-          <th data-i18n="alerts.col_alert">Alert</th>
-          <th data-i18n="alerts.col_channels">Channels</th>
-          <th class="num" data-i18n="alerts.col_sent">Sent</th>
-        </tr></thead>
-        <tbody><tr><td colspan="5" class="empty small" data-i18n="common.loading">Loading…</td></tr></tbody>
-      </table>
-    </div>
-
-    {# 指令流水。这个门户能解锁你的车 —— 谁在什么时候下了什么、成没成，
-       必须留痕。排查「我点了没反应」时这是唯一有用的东西。 #}
-    <details class="disclose mt2" id="d-commands">
-      <summary><span data-i18n="security.commands">Vehicle commands sent</span><span class="value" id="v-commands">–</span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
-      </summary>
-      <div class="body">
-        <div class="table-scroll">
-          <table class="data" id="t-commands">
-            <thead><tr>
-              <th data-i18n="common.time">Time</th>
-              <th data-i18n="security.command">Command</th>
-              <th class="num" data-i18n="security.took">Took</th>
-              <th data-i18n="security.result">Result</th>
-            </tr></thead><tbody></tbody>
-          </table>
-        </div>
-      </div>
-    </details>
-  </div>
-
+  </details>
+  <details class="disclose" id="sec-other">
+    <summary><span data-i18n="security.other">Other alerts</span><span class="value" id="v-other"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span></summary>
+    <div class="body" id="other-body"></div>
+  </details>
 </div>
+
+<style>
+  .sec-hero { display: flex; align-items: center; gap: 24px; padding: 26px 28px; border-radius: var(--radius-lg);
+    background: radial-gradient(120% 140% at 0% 0%, var(--bg-elevated), var(--bg-secondary)); border: 1px solid var(--line); }
+  .sec-shield { width: 76px; height: 76px; border-radius: 24px; display: grid; place-items: center; flex: none;
+    background: var(--bg-hover); color: var(--text-tertiary); transition: background 300ms var(--ease-out), color 300ms var(--ease-out); }
+  .sec-hero.armed .sec-shield { background: var(--red-soft); color: var(--red); }
+  .sec-hero.alarm .sec-shield { background: var(--red); color: #fff; animation: pulse 1s var(--ease) infinite; }
+  .sec-main { flex: 1; min-width: 0; }
+  .sec-facts { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13.5px; color: var(--text-secondary); }
+  .sec-facts span { display: inline-flex; align-items: center; gap: 6px; }
+  .sec-facts .warn { color: var(--amber); }
+  .sec-actions { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+  @media (max-width: 760px) { .sec-hero { flex-wrap: wrap; } .sec-actions { flex-direction: row; width: 100%; } .sec-actions .btn { flex: 1; } }
+  .sec-live { margin-top: 14px; padding: 14px 18px; border-radius: var(--radius); background: var(--red-soft); border: 1px solid rgba(255,69,58,.4); color: var(--text-primary); }
+  .day { margin: 22px 0 8px; font-size: 12px; letter-spacing: 1.2px; text-transform: uppercase; color: var(--text-tertiary); }
+  .inc { display: flex; gap: 14px; padding: 14px; border-radius: var(--radius); background: var(--bg-secondary); border: 1px solid var(--line); margin-bottom: 8px; }
+  .inc.alarm { border-color: rgba(255,69,58,.45); background: linear-gradient(90deg, var(--red-soft), transparent 55%), var(--bg-secondary); }
+  .inc .thumb { width: 148px; height: 84px; border-radius: 10px; object-fit: cover; flex: none; background: var(--bg-hover); }
+  .inc .thumb.empty { display: grid; place-items: center; color: var(--text-tertiary); }
+  .inc .body2 { flex: 1; min-width: 0; }
+  .inc .t1 { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .inc .lvl { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 8px; background: var(--bg-hover); color: var(--text-secondary); }
+  .inc.alarm .lvl { background: var(--red); color: #fff; }
+  .inc.activity .lvl { background: var(--amber-soft); color: var(--amber); }
+  .inc .when { font-size: 13px; color: var(--text-tertiary); }
+  .inc .what { margin-top: 6px; font-size: 14.5px; }
+  .inc .meta { margin-top: 4px; font-size: 12.5px; color: var(--text-tertiary); }
+  .inc .play { align-self: center; }
+  @media (max-width: 640px) { .inc { flex-wrap: wrap; } .inc .thumb { width: 100%; height: 160px; } }
+  .rule { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .rule:first-child { border-top: 0; }
+  .rule .nm { flex: 1; font-size: 14px; }
+  .rule .lv { font-size: 11.5px; color: var(--text-tertiary); }
+</style>
 {% endblock %}
 
 {% block scripts %}
-<script>
-const $ = (s) => document.querySelector(s);
-const CH_KEY = { email: "channel.email", ntfy: "channel.ntfy", telegram: "channel.telegram",
-                 webhook: "channel.webhook", apprise: "channel.apprise", webpush: "channel.webpush" };
-/* 近的说"2 小时前"，远的给日期 —— 昨天发生的事说 08/09 07:20 不如说"昨天" */
-/* 历史正文里可能留着旧版本写进去的目录 key（修复前 extras 是原样拼进去的）。
-   能翻的翻掉，翻不动的原样显示 —— 那是当时真的发出去的内容。 */
-function bodyLines(body) {
-  return String(body || "").split("\n").slice(1)
-    .map((l) => /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$/.test(l.trim()) ? plain(t(l.trim())) : l)
-    .join("\n");
-}
-
-function when(sec) {
-  const age = Date.now() / 1000 - sec;
-  if (age < 60 * 60 * 20) return fmt.ago(age);
-  return new Date(sec * 1000).toLocaleString(localeTag(),
-    { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-}
-const SRC_KEY = { fleet: "source.fleet", polled: "source.polled", clip: "source.clip", state: "source.state" };
-let timing = null;
-
-/* Text carrying <b>/<code> can't go through textContent — apply() only sets
-   text, so these are painted on every locale change. */
-function paintRich() {
-  document.title = t("security.page_title");
-  document.querySelectorAll("[data-i18n-html]").forEach((el) => {
-    el.innerHTML = t(el.getAttribute("data-i18n-html"));
-  });
-  const el = $("#how-sessions");
-  if (el) el.innerHTML = t("alerts.how_sessions", {
-    dedup: timing ? timing.dedup_seconds : 15,
-    escalate: timing ? timing.escalate_seconds : 90,
-  });
-}
-window.addEventListener("omt:locale", paintRich);
-
-/* ------------------------------------------------------------ delivery -- */
-function loadChannels() { return apiGet("/api/alerts/channels").then(({ channels, email_problem }) => {
-  const box = $("#delivery");
-  if (email_problem) {
-    // 配了一半比没配更危险：界面会显示"正在通过邮件推送"，其实一封也发不出去
-    box.style.display = "block";
-    box.style.borderColor = "rgba(255,159,10,.35)";
-    box.innerHTML = `<div class="row" style="align-items:flex-start;gap:12px">
-        <span style="color:var(--warning-orange);flex:none">${icon("bell", 18)}</span>
-        <div><div class="title" style="color:var(--warning-orange)">${esc(t("security.email_half_title"))}</div>
-        <div class="body-sm mt" style="max-width:60ch">${esc(t("security.email_" + email_problem))}</div></div></div>`;
-  }
-  // 一个渠道都没有 **且** 邮件也没配到一半时才盖上面那块。以前是无条件覆盖，
-  // 于是「填了邮件服务器但没填密码」这个最该看见的提示，恰恰在它唯一会出现的
-  // 场景（没有其它可用渠道）被后面这段整块冲掉了。
-  if (!channels.length && !email_problem) {
-    box.style.display = "block";
-    box.style.borderColor = "rgba(255,159,10,.35)";
-    box.innerHTML = `<div class="row" style="align-items:flex-start;gap:12px"><span style="color:var(--warning-orange);flex:none">${icon("bell", 18)}</span>
-        <div>
-          <div class="title" style="color:var(--warning-orange)">${esc(t("security.no_channels_title"))}</div>
-          <div class="body-sm mt" style="max-width:58ch">${esc(t("security.no_channels_body"))}</div>
-          <a class="btn mt" href="/settings#notifications">${esc(t("security.configure"))}</a>
-        </div></div>`;
-  } else if (!email_problem) {
-    $("#sec-sub").textContent = t("security.delivering_via", {
-      channels: channels.map((c) => (CH_KEY[c] ? t(CH_KEY[c]) : c)).join(" · "),
-    });
-  }
-}); }
-
-$("#btn-test").addEventListener("click", async (e) => {
-  const b = e.target; const old = b.textContent;
-  b.disabled = true; b.textContent = t("alerts.test_sending");
-  try {
-    const r = await apiPost("/api/alerts/test");
-    b.textContent = r.ok ? t("alerts.test_ok") : t("alerts.test_failed");
-  } catch (err) { b.textContent = t("alerts.test_error", { message: err.message }); }
-  setTimeout(() => { b.disabled = false; b.textContent = old; }, 2600);
-});
-
-/* -------------------------------------------------------------- feed ---- */
-function loadSentry() {
-  apiGet("/api/alerts/sentry/sessions?limit=100").then((rows) => {
-    const el = $("#sentry-feed");
-    if (!rows.length) {
-      el.classList.remove("stagger");
-      el.innerHTML = `<div class="empty small">${esc(t("alerts.no_sentry"))}</div>`;
-      return;
-    }
-    el.classList.add("stagger");
-    el.innerHTML = rows.map((s) => {
-      // lvl 是 CSS 类名，必须保持原始代码；显示文案走 lvlTxt
-      const lvl = s.peak_state === "panic" ? "critical" : (s.escalated ? "warning" : "info");
-      const lvlTxt = s.peak_state === "panic" ? t("alerts.lvl_intrusion")
-                   : (s.escalated ? t("alerts.lvl_sustained") : t("alerts.lvl_trigger"));
-      // extras 存的是目录 key（入侵原因），老数据里也可能是成品文案。
-      // 只翻译长得像 key 的，其余原样透出。
-      const extras = (s.extras || []).map((x) =>
-        /^[a-z][a-z0-9_.]*\.[a-z0-9_.]+$/.test(x) ? plain(t(x)) : plain(x));
-      const facts = [
-        s.duration >= 1 ? t("security.lasted", { n: Math.round(s.duration) }) : null,
-        s.samples > 1 ? t("sentry.notify.samples", { n: s.samples }) : null,
-        s.geofence || null,
-        SRC_KEY[s.source] ? t(SRC_KEY[s.source]) : s.source,
-        s.soc ? t("common.battery") + " " + s.soc + "%" : null,
-      ].filter(Boolean);
-
-      const clip = s.clip
-        ? `<a class="tl-clip" href="/dashcam/play?id=${encodeURIComponent(s.clip.event_id)}&t=${s.clip.seek}">
-             <img loading="lazy" alt="" src="/api/dashcam/thumb?id=${encodeURIComponent(s.clip.event_id)}"
-                  onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'noimg',innerHTML:icon('film',20)}))">
-             <span class="tl-play">${icon("play", 14)}</span>
-           </a>`
-        : "";
-
-      return `<article class="tl-item">
-        <span class="tl-dot ${lvl}"></span>
-        <div class="tl-body">
-          <div class="row" style="gap:9px;flex-wrap:wrap">
-            <span class="pill ${lvl}">${esc(lvlTxt)}</span>
-            <span class="meta">${esc(when(s.started))}</span>
-          </div>
-          <div class="body-sm" style="margin-top:6px">${esc(facts.join(" · "))}</div>
-          ${extras.length ? `<div class="meta" style="margin-top:4px">${esc(extras.join(" · "))}</div>` : ""}
-        </div>
-        ${clip}
-      </article>`;
-    }).join("");
-    paintIcons(el);
-  }).catch(() => {});
-}
-
-
-/* ------------------------------------------------------------ policies -- */
-function loadPolicies() { return apiGet("/api/alerts/sentry/policies").then((d) => {
-  timing = d;
-  paintRich();
-  $("#v-places").textContent = t("security.n_places", { n: d.geofences.length + 1 });
-  const rows = [["", t("alerts.policy_default_location")], ...d.geofences.map((g) => [g, g])];
-  $("#policies").innerHTML = rows.map(([key, label]) => {
-    const cur = d.policies[key] || d.default;
-    // choices 的值是文案目录里的 key，后端不再下发成品文案
-    const opts = Object.entries(d.choices).map(([k, v]) =>
-      `<option value="${k}" ${k === cur ? "selected" : ""}>${esc(t(v))}</option>`).join("");
-    return `<div class="setting-row">
-        <div class="info"><div class="name">${esc(label)}</div></div>
-        <select data-gf="${esc(key)}">${opts}</select>
-      </div>`;
-  }).join("");
-  $("#policies").querySelectorAll("select").forEach((sel) =>
-    sel.addEventListener("change", () =>
-      apiPost("/api/alerts/sentry/policies", { geofence: sel.dataset.gf, policy: sel.value })));
-}); }
-
-/* --------------------------------------------------------------- rules -- */
-function loadRules() { return apiGet("/api/alerts/rules").then((rules) => {
-  $("#v-rules").textContent = t("security.n_enabled", {
-    n: rules.filter((r) => r.enabled).length, total: rules.length,
-  });
-  $("#rules").innerHTML = rules.map((r) => `
-    <div class="setting-row"><span class="pill ${r.level}">${esc(t("level." + r.level))}</span>
-      <div class="info"><div class="name">${esc(plain(i18n.state.locale === "en" ? r.title_en : r.title_zh))}</div></div>
-      <label class="switch"><input type="checkbox" data-id="${r.id}" ${r.enabled ? "checked" : ""}
-             aria-label="${esc(plain(i18n.state.locale === "en" ? r.title_en : r.title_zh))}"><span class="slider"></span></label>
-    </div>`).join("");
-  $("#rules").querySelectorAll("input").forEach((i) =>
-    i.addEventListener("change", () => apiPost(`/api/alerts/rules/${i.dataset.id}`, { enabled: i.checked })));
-}); }
-
-/* ------------------------------------------------------------- history -- */
-/* channels 是一列 JSON 文本。一行坏数据以前会让整个 .map() 抛异常，
-   而 loadHistory 没有 catch —— 表格就永远停在「加载中…」。 */
-function chanNames(raw) {
-  let list = [];
-  try { list = JSON.parse(raw || "[]"); } catch (e) { return ""; }
-  if (!Array.isArray(list)) return "";
-  return list.map((c) => (CH_KEY[c] ? t(CH_KEY[c]) : c)).join(", ");
-}
-
-function loadHistory() { return apiGet("/api/alerts/history?limit=200").then((rows) => {
-  const tb = $("#history tbody");
-  if (!rows.length) {
-    tb.innerHTML = `<tr><td colspan="5" class="empty small">${t("common.no_alerts")}</td></tr>`;
-    return;
-  }
-  tb.innerHTML = rows.map((a) => `<tr>
-    <td class="dim nowrap">${new Date(a.ts * 1000).toLocaleString(localeTag())}</td>
-    <td><span class="pill ${a.level}">${esc(t("level." + a.level))}</span></td>
-    <td>${esc(plain(a.title))}<div class="meta" style="white-space:pre-line">${
-      esc(bodyLines(a.body))}</div></td>
-    <td class="dim">${esc(chanNames(a.channels))}</td>
-    <td class="num">${a.delivered ? icon("check", 15) : icon("x", 15)}</td>
-  </tr>`).join("");
-}); }
-
-/* 取数一律在词表就绪之后：这些渲染函数全都调 t()，早一步就会把
-   "level.info" 这种原始 key 直接显示给用户。 */
-$("#clear-history").addEventListener("click", async (e) => {
-  if (!confirm(t("security.clear_confirm"))) return;
-  e.target.disabled = true;
-  try { await apiPost("/api/alerts/history/clear"); await loadHistory(); }
-  finally { e.target.disabled = false; }
-});
-
-/* -------------------------------------------------------- command log -- */
-async function loadCommands() {
-  let rows;
-  try { rows = (await apiGet("/api/tesla/commands/log?limit=100")).commands; }
-  catch (e) { return; }
-  $("#v-commands").textContent = rows.length
-    ? t("security.n_commands", { n: rows.length }) : t("common.no_data");
-  const tb = $("#t-commands tbody");
-  if (!rows.length) {
-    tb.innerHTML = `<tr><td colspan="4" class="empty small">${esc(t("security.no_commands"))}</td></tr>`;
-    return;
-  }
-  tb.innerHTML = rows.map((c) => `<tr>
-    <td class="dim nowrap">${new Date(c.ts * 1000).toLocaleString(localeTag())}</td>
-    <td>${esc(t("cmd." + c.command, {}) || c.command)}</td>
-    <td class="num">${c.ms != null ? c.ms + " ms" : ""}</td>
-    <td>${c.ok ? icon("check", 15)
-      : `<span class="body-sm" style="color:var(--warning-orange)">${esc(c.error || "")}</span>`}</td>
-  </tr>`).join("");
-}
-
-/* ------------------------------------------------------------- snooze -- */
-function paintSnooze(s) {
-  const msg = $("#snooze-msg");
-  const off = $("#snooze-off");
-  document.querySelectorAll("#snooze-pick button").forEach((b) => b.classList.remove("active"));
-  if (!s.active) {
-    msg.textContent = "";
-    msg.className = "small";
-    off.style.display = "none";
-    return;
-  }
-  const mins = Math.max(1, Math.round(s.seconds_left / 60));
-  // 高亮当前生效的那个时长：不标的话按下去毫无反馈，像没生效
-  document.querySelectorAll("#snooze-pick button").forEach((b) => {
-    if (Math.abs(+b.dataset.min - mins) <= Math.max(2, mins * 0.1)) b.classList.add("active");
-  });
-  msg.textContent = s.scope === "all"
-    ? t("security.snoozed_all", { n: mins })
-    : t("security.snoozed", { n: mins });
-  // 全静音（连入侵也不推）是个危险状态，必须一眼看得出来
-  msg.className = s.scope === "all" ? "small" : "small muted";
-  if (s.scope === "all") msg.style.color = "var(--warning-orange)";
-  else msg.style.color = "";
-  off.style.display = "";
-}
-
-async function loadSnooze() {
-  try { paintSnooze(await apiGet("/api/alerts/snooze")); } catch (e) { /* 忽略 */ }
-}
-
-document.querySelectorAll("#snooze-pick button").forEach((b) =>
-  b.addEventListener("click", async () => {
-    try {
-      paintSnooze(await apiPost("/api/alerts/snooze", {
-        minutes: +b.dataset.min,
-        scope: $("#snooze-all").checked ? "all" : "noncritical",
-      }));
-    } catch (e) { $("#snooze-msg").textContent = e.message; }
-  }));
-
-$("#snooze-off").addEventListener("click", async () => {
-  try { paintSnooze(await apiPost("/api/alerts/snooze", { minutes: 0 })); }
-  catch (e) { $("#snooze-msg").textContent = e.message; }
-});
-
-i18nReady.catch(() => {}).then(() => {
-  paintRich(); paintIcons();
-
-  /* 每个加载函数都要有失败分支。原来这几个是"发出去就不管了"：
-     接口 503 时容器里那句硬编码的 "Loading…" 会永远留在屏幕上，
-     看起来像网络慢，实际上永远不会好。 */
-  const guard = (fn, sel) => Promise.resolve().then(fn).catch((e) => {
-    const el = document.querySelector(sel);
-    if (el) {
-      el.innerHTML = `<div class="empty small">${esc(t("common.load_failed", { msg: e.message || "" }))}</div>`;
-    }
-    console.warn("load failed:", sel, e);
-  });
-
-/* ---------------- 自动化 ----------------
-   规则的形状由后端 /api/automations 的 triggers/commands 一并下发，
-   这里不再抄一份常量 —— 抄的那份迟早和后端对不上，而对不上的表现是
-   "保存时报 400 但界面上看不出哪里错"。 */
-
-let autoMeta = { triggers: {}, commands: [], risky_commands: [] };
-let autoRules = [];
-
-const TRIG_FIELDS = {
-  state:      [["to", "auto.f_state", "select", ["online", "asleep", "offline", "driving", "charging"]]],
-  geofence:   [["place", "auto.f_place", "text"], ["direction", "auto.f_dir", "select", ["enter", "leave"]]],
-  battery:    [["threshold", "auto.f_threshold", "number"], ["direction", "auto.f_dir2", "select", ["below", "above"]]],
-  plugged_in: [["to", "auto.f_to", "select", ["true", "false"]]],
-  sentry:     [["to", "auto.f_to", "select", ["true", "false"]]],
-  climate:    [["to", "auto.f_to", "select", ["true", "false"]]],
-  locked:     [["to", "auto.f_to", "select", ["true", "false"]]],
-  schedule:   [["at", "auto.f_at", "time"]],
-};
-
-async function loadAutomations() {
-  const d = await apiGet("/api/automations");
-  autoMeta = { triggers: d.triggers, commands: d.commands, risky_commands: d.risky_commands };
-  autoRules = d.rules || [];
-  const on = autoRules.filter((r) => r.enabled).length;
-  $("#v-auto").textContent = autoRules.length
-    ? t("auto.n_rules", { n: autoRules.length, on }) : t("auto.none_yet");
-
-  $("#auto-list").innerHTML = autoRules.length ? autoRules.map((r) => `
-    <div class="setting-row">
-      <div class="info">
-        <div class="name">${esc(r.name || r.id)}</div>
-        <div class="meta">${esc(describeRule(r))}</div>
-      </div>
-      <button class="btn ghost sm" data-edit="${esc(r.id)}" data-i18n="common.edit">Edit</button>
-      <label class="switch" title="${esc(t("auto.toggle"))}">
-        <input type="checkbox" data-toggle="${esc(r.id)}" ${r.enabled ? "checked" : ""}
-               aria-label="${esc(r.name || r.id)}"><span class="slider"></span></label>
-    </div>`).join("") : `<div class="empty small">${esc(t("auto.none_yet"))}</div>`;
-
-  $("#auto-list").querySelectorAll("[data-toggle]").forEach((el) =>
-    el.addEventListener("change", async () => {
-      const r = autoRules.find((x) => x.id === el.dataset.toggle);
-      if (!r) return;
-      try {
-        await apiPost("/api/automations", { ...r, enabled: el.checked });
-        loadAutomations();
-      } catch (e) { alert(e.message); el.checked = !el.checked; }
-    }));
-  $("#auto-list").querySelectorAll("[data-edit]").forEach((el) =>
-    el.addEventListener("click", () => openEditor(autoRules.find((x) => x.id === el.dataset.edit))));
-  paintIcons($("#auto-list"));
-}
-
-/* 一句话把规则读出来。列表里只显示名字的话，"为什么它没触发"永远查不清。 */
-function describeRule(r) {
-  const tr = r.trigger || {};
-  const bits = [t("auto.trig." + tr.type, {
-    to: tr.to || "", place: tr.place || "", at: tr.at || "",
-    threshold: tr.threshold ?? "", dir: t("auto.dir." + (tr.direction || "enter")),
-  })];
-  const c = r.conditions || {};
-  if (c.only_at) bits.push(t("auto.c_only_at", { place: c.only_at }));
-  if (c.not_at) bits.push(t("auto.c_not_at", { place: c.not_at }));
-  if (c.time_window) bits.push(c.time_window);
-  if (c.min_battery) bits.push(t("auto.c_min_batt", { n: c.min_battery }));
-  const acts = (r.actions || []).map((a) =>
-    a.type === "notify" ? t("auto.a_notify") : t("auto.a_cmd", { cmd: a.command })).join(" + ");
-  return `${bits.join(" · ")} → ${acts}`;
-}
-
-function openEditor(rule) {
-  const r = rule || { id: "", name: "", enabled: false, trigger: { type: "state", to: "online" },
-                      conditions: {}, actions: [{ type: "notify" }], cooldown_s: 300 };
-  const box = $("#auto-editor");
-  box.style.display = "block";
-
-  const trigOpts = Object.entries(autoMeta.triggers)
-    .map(([k, v]) => `<option value="${esc(k)}" ${r.trigger.type === k ? "selected" : ""}>${esc(v)}</option>`).join("");
-  const cmdOpts = autoMeta.commands
-    .map((c) => `<option value="${esc(c)}">${esc(c)}</option>`).join("");
-
-  box.innerHTML = `
-    <div class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
-      <label class="field"><span data-i18n="auto.f_name">Name</span>
-        <input id="ae-name" type="text" value="${esc(r.name || "")}" style="width:210px"></label>
-      <label class="field"><span data-i18n="auto.f_trigger">Trigger</span>
-        <select id="ae-trig">${trigOpts}</select></label>
-      <span id="ae-trigfields" class="row" style="gap:10px;flex-wrap:wrap;align-items:flex-end"></span>
-    </div>
-    <div class="row mt" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
-      <label class="field"><span data-i18n="auto.f_action">Action</span>
-        <select id="ae-act">
-          <option value="notify" ${(r.actions[0] || {}).type === "notify" ? "selected" : ""}>${esc(t("auto.a_notify"))}</option>
-          <option value="command" ${(r.actions[0] || {}).type === "command" ? "selected" : ""}>${esc(t("auto.a_command"))}</option>
-        </select></label>
-      <label class="field" id="ae-cmdwrap" style="display:none"><span data-i18n="auto.f_command">Command</span>
-        <select id="ae-cmd">${cmdOpts}</select></label>
-      <label class="field"><span data-i18n="auto.f_cooldown">Cooldown (s)</span>
-        <input id="ae-cool" type="number" min="0" step="30" value="${+r.cooldown_s || 300}" style="width:110px"></label>
-    </div>
-    <div class="row mt" style="gap:10px;flex-wrap:wrap;align-items:flex-end">
-      <label class="field"><span data-i18n="auto.f_only_at">Only at</span>
-        <input id="ae-onlyat" type="text" value="${esc((r.conditions || {}).only_at || "")}" style="width:150px"></label>
-      <label class="field"><span data-i18n="auto.f_window">Time window</span>
-        <input id="ae-window" type="text" placeholder="22:00-06:00" value="${esc((r.conditions || {}).time_window || "")}" style="width:130px"></label>
-      <label class="field"><span data-i18n="auto.f_minbatt">Min battery %</span>
-        <input id="ae-minbatt" type="number" min="0" max="100" value="${(r.conditions || {}).min_battery ?? ""}" style="width:110px"></label>
-    </div>
-    <p class="body-sm mt" style="margin-bottom:0" data-i18n="auto.save_note"></p>
-    <div class="row mt" style="gap:10px">
-      <button class="btn" id="ae-save" data-i18n="common.save">Save</button>
-      <button class="btn ghost" id="ae-cancel" data-i18n="common.cancel">Cancel</button>
-      <span class="spacer"></span>
-      ${r.id ? `<button class="btn ghost" id="ae-del" style="color:var(--critical-red)" data-i18n="common.delete">Delete</button>` : ""}
-      <span class="small" id="ae-msg"></span>
-    </div>`;
-
-  const paintTrigFields = () => {
-    const kind = $("#ae-trig").value;
-    $("#ae-trigfields").innerHTML = (TRIG_FIELDS[kind] || []).map(([key, label, type, opts]) => {
-      const cur = r.trigger.type === kind ? (r.trigger[key] ?? "") : "";
-      if (type === "select") {
-        return `<label class="field"><span data-i18n="${label}"></span><select data-tf="${key}">` +
-          opts.map((o) => `<option value="${esc(o)}" ${String(cur) === o ? "selected" : ""}>${esc(o)}</option>`).join("") +
-          `</select></label>`;
-      }
-      return `<label class="field"><span data-i18n="${label}"></span>` +
-             `<input data-tf="${key}" type="${type}" value="${esc(String(cur))}" style="width:130px"></label>`;
-    }).join("");
-    i18n.apply($("#ae-trigfields"));
-  };
-  const paintCmd = () => {
-    $("#ae-cmdwrap").style.display = $("#ae-act").value === "command" ? "" : "none";
-    if ((r.actions[0] || {}).command) $("#ae-cmd").value = r.actions[0].command;
-  };
-  $("#ae-trig").addEventListener("change", paintTrigFields);
-  $("#ae-act").addEventListener("change", paintCmd);
-  paintTrigFields(); paintCmd();
-  i18n.apply(box);
-
-  $("#ae-cancel").addEventListener("click", () => { box.style.display = "none"; });
-  if ($("#ae-del")) {
-    $("#ae-del").addEventListener("click", async () => {
-      await apiPost(`/api/automations/${encodeURIComponent(r.id)}`, undefined, "DELETE");
-      box.style.display = "none"; loadAutomations();
-    });
-  }
-  $("#ae-save").addEventListener("click", async () => {
-    const trigger = { type: $("#ae-trig").value };
-    box.querySelectorAll("[data-tf]").forEach((el) => {
-      const v = el.value.trim();
-      if (v !== "") trigger[el.dataset.tf] = el.type === "number" ? +v : v;
-    });
-    const act = $("#ae-act").value === "command"
-      ? { type: "command", command: $("#ae-cmd").value } : { type: "notify" };
-    const conditions = {};
-    if ($("#ae-onlyat").value.trim()) conditions.only_at = $("#ae-onlyat").value.trim();
-    if ($("#ae-window").value.trim()) conditions.time_window = $("#ae-window").value.trim();
-    if ($("#ae-minbatt").value) conditions.min_battery = +$("#ae-minbatt").value;
-
-    const payload = {
-      // 没有 id 就用名字派生一个稳定的 slug；重名会被后端的重复 id 校验挡住
-      id: r.id || ($("#ae-name").value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40)
-                   || `rule-${Date.now()}`),
-      name: $("#ae-name").value.trim(),
-      enabled: !!r.enabled,        // 新规则保持停用，由列表里的开关来开
-      trigger, conditions, actions: [act],
-      cooldown_s: +$("#ae-cool").value || 0,
-    };
-    try {
-      await apiPost("/api/automations", payload);
-      box.style.display = "none";
-      loadAutomations();
-    } catch (e) { $("#ae-msg").textContent = e.message; }
-  });
-}
-
-async function loadAutoHistory() {
-  const box = $("#auto-history");
-  box.style.display = box.style.display === "none" ? "block" : "none";
-  if (box.style.display === "none") return;
-  const d = await apiGet("/api/automations/history");
-  box.innerHTML = (d.history || []).length
-    ? `<table class="data"><thead><tr>
-         <th>${esc(t("common.time"))}</th><th>${esc(t("auto.h_rule"))}</th><th>${esc(t("auto.h_why"))}</th>
-       </tr></thead><tbody>` +
-      d.history.map((h) => `<tr><td>${esc(fmt.dt(new Date(h.ts * 1000).toISOString()))}</td>
-        <td>${esc(h.rule)}</td><td class="meta">${esc(h.why)}</td></tr>`).join("") + "</tbody></table>"
-    : `<div class="empty small">${esc(t("auto.no_history"))}</div>`;
-}
-
-  guard(loadChannels, "#delivery");
-
-  guard(loadPolicies, "#policies");
-  guard(loadRules,    "#rules");
-  guard(loadHistory,  "#history tbody");
-  guard(loadCommands, "#commands");
-  guard(loadAutomations, "#auto-list");
-  $("#auto-new").addEventListener("click", () => openEditor(null));
-  $("#auto-history-btn").addEventListener("click", () => loadAutoHistory().catch((e) => alert(e.message)));
-  guard(loadSentry,   "#sentry-feed"); setInterval(() => guard(loadSentry, "#sentry-feed"), 30000);
-  // 静音状态只是个开关，失败时没有容器可写，静默重试即可
-  loadSnooze().catch(() => {}); setInterval(() => loadSnooze().catch(() => {}), 60000);
-});
-</script>
+<script src="/static/js/pages/security.js"></script>
 {% endblock %}

@@ -9,15 +9,18 @@ self.addEventListener("push", (event) => {
   try { data = { ...data, ...event.data.json() }; } catch (e) { /* 纯文本载荷 */ }
   const critical = data.level === "critical";
   // renotify 必须配非空 tag，否则 showNotification 直接抛错、一条通知都不显示。
-  // 严重告警用唯一 tag（不合并）；普通告警共用一个 tag（自动合并）。
-  const tag = critical ? `omt-crit-${++seq}-${event.timeStamp || 0}` : "ohmytesla";
+  // A sentry incident carries its own tag: its escalation replaces the earlier
+  // notification AND sounds again (renotify), instead of either stacking a
+  // duplicate or — as with the old shared "ohmytesla" tag — silently replacing
+  // whatever was there. Untagged critical alerts each get a unique tag.
+  const tag = data.tag || (critical ? `omt-crit-${++seq}-${event.timeStamp || 0}` : `omt-${++seq}`);
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
       icon: "/static/icon.svg",
       badge: "/static/icon.svg",
       tag,
-      renotify: critical,
+      renotify: true,
       requireInteraction: critical,
       vibrate: critical ? [200, 100, 200, 100, 200] : [100],
       data: { url: data.url || "/" },

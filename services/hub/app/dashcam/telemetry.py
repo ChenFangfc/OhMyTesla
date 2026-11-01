@@ -8,13 +8,16 @@
 相比逐帧 drawtext 性能好得多，且支持中文（Noto Sans CJK）。
 """
 
+import bisect
 import logging
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 from .. import db
-from ..config import settings
 from ..i18n import units
+
+# 时区换算挪到了 localtime.py（按每个时刻各自的夏令时规则算）。这里保留同名
+# 入口：insights / alerts 的路由也在用 telemetry.local_tz()
+from .localtime import local_naive_to_utc, local_tz  # noqa: F401 - 对外再导出
 
 log = logging.getLogger(__name__)
 
@@ -44,19 +47,6 @@ async def set_clock_offset(car_id: int, offset: float) -> None:
     await store.set_setting("clock_offsets", offsets)
 
 
-def local_tz() -> ZoneInfo | timezone:
-    if settings.teslacam_tz:
-        try:
-            return ZoneInfo(settings.teslacam_tz)
-        except Exception:  # noqa: BLE001
-            log.warning("invalid TESLACAM_TZ %r, falling back to system tz", settings.teslacam_tz)
-    return datetime.now().astimezone().tzinfo or timezone.utc
-
-
-def local_naive_to_utc(dt: datetime) -> datetime:
-    return dt.replace(tzinfo=local_tz()).astimezone(timezone.utc)
-
-
 async def fetch_positions(car_id: int, start_utc: datetime, end_utc: datetime, pad_s: int = 15) -> list[dict]:
     # positions.date 是 timestamp WITHOUT time zone（值为 UTC）——
     # 必须绑定 naive datetime，取回后也要显式打上 UTC 再转 epoch
@@ -83,46 +73,56 @@ async def fetch_positions(car_id: int, start_utc: datetime, end_utc: datetime, p
     return out
 
 
+SLOW_FIELDS = {"battery_level", "usable_battery_level", "odometer", "rated_battery_range_km"}
+
+
 def resample(samples: list[dict], t0: float, t1: float, step: float = 0.5, max_gap: float = 30.0) -> list[dict]:
     """把不规则的 positions 采样线性插值到固定步长时间轴上。
 
-    某时刻若前后采样间隔超过 max_gap（如停车休眠），数值字段置 None，
-    但保留最后已知的 battery_level / odometer 等慢变量。
+    逐字段找"这个字段自己"前后最近的有值采样（positions 里很多列是间歇
+    写入的，相邻行的值经常是 NULL）：
+    - 前后都有、且相隔不超过 max_gap → 线性插值；
+    - 否则只在离某一侧不超过 max_gap/2 时沿用那一侧的值；
+    - 都不满足 → None（停车休眠的两小时里不能显示 95 km/h）。
+    慢变量（电量、里程、续航）例外：沿用最后已知值，休眠前后它们本来就没怎么变。
+
+    以前的实现只看相邻两行，一侧为 NULL 时直接拿另一侧的值，跨多长的空档都照拿。
     """
     result: list[dict] = []
     if not samples:
         return result
-    slow_fields = {"battery_level", "usable_battery_level", "odometer", "rated_battery_range_km"}
-    idx = 0
-    t = t0
-    while t <= t1 + 1e-9:
-        while idx + 1 < len(samples) and samples[idx + 1]["date"] <= t:
-            idx += 1
-        cur = {"t": round(t - t0, 3)}
-        a = samples[idx]
-        b = samples[idx + 1] if idx + 1 < len(samples) else None
-        if b is not None and a["date"] <= t <= b["date"]:
-            gap = b["date"] - a["date"]
-            frac = 0.0 if gap <= 0 else (t - a["date"]) / gap
-            in_gap = gap > max_gap
-            for f in NUMERIC_FIELDS:
-                va, vb = a.get(f), b.get(f)
-                if va is None or vb is None:
-                    cur[f] = vb if va is None else va
-                elif in_gap:
-                    cur[f] = va if f in slow_fields else None
-                else:
-                    cur[f] = va + (vb - va) * frac
-        else:
-            near = a if b is None or abs(a["date"] - t) <= abs(b["date"] - t) else b
-            if abs(near["date"] - t) <= max_gap:
-                for f in NUMERIC_FIELDS:
-                    cur[f] = near.get(f)
+    hold = max_gap / 2
+    series: dict[str, tuple[list[float], list[float]]] = {}
+    for f in NUMERIC_FIELDS:
+        ts, vs = [], []
+        for s in samples:
+            v = s.get(f)
+            if v is not None:
+                ts.append(s["date"])
+                vs.append(v)
+        series[f] = (ts, vs)
+
+    n = int((t1 - t0) / step + 1e-9) + 1 if t1 >= t0 else 0
+    for k in range(n):
+        t = t0 + k * step
+        cur: dict = {"t": round(t - t0, 3)}
+        for f, (ts, vs) in series.items():
+            if not ts:
+                cur[f] = None
+                continue
+            j = bisect.bisect_right(ts, t)          # ts[j-1] <= t < ts[j]
+            prev = j - 1 if j > 0 else None
+            nxt = j if j < len(ts) else None
+            if prev is not None and nxt is not None and ts[prev] != t and ts[nxt] - ts[prev] <= max_gap:
+                frac = (t - ts[prev]) / (ts[nxt] - ts[prev])
+                cur[f] = vs[prev] + (vs[nxt] - vs[prev]) * frac
+            elif prev is not None and (ts[prev] == t or f in SLOW_FIELDS or t - ts[prev] <= hold):
+                cur[f] = vs[prev]
+            elif nxt is not None and ts[nxt] - t <= hold:
+                cur[f] = vs[nxt]
             else:
-                for f in NUMERIC_FIELDS:
-                    cur[f] = near.get(f) if f in slow_fields else None
+                cur[f] = None
         result.append(cur)
-        t += step
     return result
 
 
@@ -202,7 +202,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     sei_by_bucket: dict[int, dict] = {}
     if sei:
         for s in sei:
-            sei_by_bucket[int(s["t"] / step)] = s
+            # 存和取必须用同一种取整（以前存用 int()、取用 round()，
+            # 帧率略高于整数时有九成的步会提前半秒显示）
+            sei_by_bucket.setdefault(round(s["t"] / step), s)
 
     # 底部半透明背景条（整段时长一条即可）
     lines.append(
@@ -216,8 +218,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     bar_y + int(bar_h * 0.16)
     bar_y + int(bar_h * 0.60)
 
-    for s in overlay:
-        t_start, t_end = s["t"], s["t"] + step
+    for k, s in enumerate(overlay):
+        t_start = s["t"]
+        # 结束时刻不越过下一步的开始：分段交界处两步挨得很近时，
+        # 两条字幕同时显示会叠成一团
+        t_end = t_start + step
+        if k + 1 < len(overlay):
+            t_end = min(t_end, overlay[k + 1]["t"])
+        if t_end <= t_start:
+            continue
         st, en = _ass_time(t_start), _ass_time(t_end)
         speed = s.get("speed")
         power = s.get("power")

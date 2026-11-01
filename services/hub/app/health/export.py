@@ -35,8 +35,9 @@ router = APIRouter(prefix="/api/export", tags=["export"])
 # 会被备份的设置键。**刻意列白名单而不是整表导出** —— 免得哪天加了个
 # 存敏感信息的键，被无声地一起导出去。
 BACKUP_KEYS = [
-    "tariff_plan", "charge_costs", "cost_written_ids", "tariff_dirty",
-    "alert_rules", "sentry_policies", "alert_snooze",
+    "tariff_plan", "tariff_costs", "charge_costs", "cost_written_ids", "tariff_dirty",
+    "alert_rules", "alert_modes", "sentry_policies", "alert_snooze", "home_location",
+    "sentry_fast_poll_seconds",
     "drive_tags", "maintenance", "maintenance_notified",
     "battery_baseline", "ice_baseline", "speed_limit_kmh",
     "prefs", "watcher_known", "clock_offsets",
@@ -65,7 +66,7 @@ async def _charges(car_id: int) -> list[dict]:
         """
         SELECT cp.id, cp.start_date, cp.end_date, cp.charge_energy_added,
                cp.charge_energy_used, cp.start_battery_level, cp.end_battery_level,
-               cp.duration_min, cp.cost,
+               cp.duration_min,
                COALESCE(g.name, a.display_name, '') AS location,
                COALESCE(fc.fast, false) AS is_dc, fc.max_power
         FROM charging_processes cp
@@ -75,15 +76,18 @@ async def _charges(car_id: int) -> list[dict]:
             SELECT bool_or(fast_charger_present) AS fast, MAX(charger_power) AS max_power
             FROM charges WHERE charging_process_id = cp.id
         ) fc ON TRUE
-        WHERE cp.car_id = $1 AND cp.charge_energy_added > 0.05
+        WHERE cp.car_id = $1 AND GREATEST(cp.charge_energy_added, cp.charge_energy_used) > 0.05
         ORDER BY cp.start_date DESC
         """,
         car_id,
     )
-    computed = await store.get_setting("charge_costs", {}) or {}
+    # 费用走唯一真源：与 Energy / 统计 / 时间线页同一个数
+    from ..insights import costs as cost_source
+
+    costs = await cost_source.session_costs(car_id)
     out = []
     for r in rows:
-        cost = r["cost"]
+        ci = costs.get(r["id"]) or {}
         out.append({
             "id": r["id"],
             "start": _iso(r["start_date"]),
@@ -96,11 +100,12 @@ async def _charges(car_id: int) -> list[dict]:
             "duration_min": r["duration_min"],
             "peak_kw": r["max_power"],
             "type": "DC" if r["is_dc"] else "AC",
-            "cost": float(cost) if cost is not None else computed.get(str(r["id"])),
-            # 费用是车主手填/TeslaMate 算的，还是本工具的电价引擎推的 ——
-            # 导出去做账时这个区别很要紧
-            "cost_source": "recorded" if cost is not None else (
-                "computed" if str(r["id"]) in computed else "unset"),
+            "kwh_billed": round(max(float(r["charge_energy_added"] or 0),
+                                    float(r["charge_energy_used"] or 0)), 2),
+            "cost": ci.get("cost"),
+            # 费用是车主手填/TeslaMate 算的（recorded），还是本工具的电价引擎推的
+            # （computed）—— 导出去做账时这个区别很要紧
+            "cost_source": ci.get("source", "unset"),
         })
     return out
 
@@ -111,7 +116,7 @@ async def charges_csv(car_id: int):
         rows = await _charges(car_id)
     except db.DbUnavailable as e:
         raise HTTPException(503, str(e)) from e
-    return _csv(rows, ["id", "start", "end", "location", "kwh_added", "kwh_used",
+    return _csv(rows, ["id", "start", "end", "location", "kwh_added", "kwh_used", "kwh_billed",
                        "soc_start", "soc_end", "duration_min", "peak_kw", "type",
                        "cost", "cost_source"], "ohmytesla-charges.csv")
 
@@ -191,10 +196,22 @@ async def config_restore(payload: dict):
     if not isinstance(settings_in, dict):
         raise HTTPException(400, "not a config backup (missing 'settings')")
     restored = []
+    rejected: dict[str, str] = {}
     for k, v in settings_in.items():
         if k not in BACKUP_KEYS:
             continue        # 备份文件是用户可编辑的，别让它往库里塞任意键
-        await store.set_setting(k, v)
+        why = _invalid(k, v)
+        if why:
+            # 以前恢复时完全不校验：一份手改坏的电价方案（`locations: null`、
+            # 非数字费率）照单全收，之后预览/重算/洞察页一路 500（审计 F17）
+            rejected[k] = why
+            continue
+        if k == "tariff_plan":
+            from ..tariff.calc import normalize_plan
+
+            await store.set_setting(k, normalize_plan(v))
+        else:
+            await store.set_setting(k, v)
         restored.append(k)
 
     # 告警引擎把规则开关缓存在进程里，只有 set_rule 会失效它。恢复备份是
@@ -204,6 +221,21 @@ async def config_restore(payload: dict):
         from ..alerts.engine import engine
 
         engine._enabled_cache = None
-    log.info("restored %d config keys", len(restored))
-    return {"ok": True, "restored": sorted(restored),
-            "ignored": sorted(set(settings_in) - set(restored))}
+    log.info("restored %d config keys (rejected %d)", len(restored), len(rejected))
+    return {"ok": not rejected, "restored": sorted(restored), "rejected": rejected,
+            "ignored": sorted(set(settings_in) - set(restored) - set(rejected))}
+
+
+def _invalid(key: str, value) -> str | None:
+    """恢复前的形状校验。返回拒绝原因；None 表示可以恢复。"""
+    if key == "tariff_plan":
+        from ..tariff.calc import validate_plan
+
+        errs = validate_plan(value) if isinstance(value, dict) else ["plan must be an object"]
+        return "; ".join(errs[:5]) or None
+    if key in ("charge_costs", "cost_written_ids", "battery_baseline", "drive_tags"):
+        return None if isinstance(value, dict | list) else f"{key} must be an object"
+    if key == "tariff_costs":
+        return None if isinstance(value, dict) and isinstance(value.get("costs", {}), dict) \
+            else "tariff_costs must be an object with a 'costs' map"
+    return None

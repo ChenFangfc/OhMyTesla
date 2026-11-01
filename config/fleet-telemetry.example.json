@@ -1,11 +1,19 @@
 {
-  "_comment": "复制为 fleet-telemetry.json 并按 docs/FLEET-TELEMETRY.md 修改。字段以官方 github.com/teslamotors/fleet-telemetry 文档为准。",
+  "_comment": "复制为 fleet-telemetry.json 并按 docs/FLEET-TELEMETRY.md 修改。V = 车辆字段（哨兵状态、中控屏状态）；alerts = 车辆告警（警报响起、无钥匙拉门把手，需要车端配置 alert_types: [\"service\"]）；connectivity = 上下线（hub 用来识别断线重放）；errors = 车端配置错误，排障用。",
   "host": "0.0.0.0",
   "port": 4443,
+  "status_port": 8080,
   "log_level": "info",
   "json_log_enable": true,
   "records": {
-    "V": ["mqtt"]
+    "V": ["mqtt"],
+    "alerts": ["mqtt"],
+    "connectivity": ["mqtt"],
+    "errors": ["mqtt"]
+  },
+  "reliable_ack_sources": {
+    "V": "mqtt",
+    "alerts": "mqtt"
   },
   "mqtt": {
     "broker": "mosquitto:1883",

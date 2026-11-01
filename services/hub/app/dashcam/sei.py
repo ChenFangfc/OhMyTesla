@@ -15,10 +15,8 @@ dashcam.proto，proto3）。本文件为独立实现：手写 protobuf wire form
 - SEI 无电量/功率/海拔/温度 —— 这些由 TeslaMate 数据库补齐。
 """
 
-import json
 import logging
 import struct
-import subprocess
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -92,7 +90,11 @@ def _decode_protobuf(data: bytes) -> dict | None:
                 out[name] = bool(v) if typ == "bool" else v
     except (ValueError, struct.error):
         return None
-    return out if "frame_seq_no" in out or "speed_mps" in out else None
+    # proto3 不序列化默认值：停在 P 挡（0）、车速 0.0 的帧里根本没有这两个字段。
+    # 以前要求至少有 frame_seq_no 或 speed_mps 才算有效 —— 序号恰好为 0 的
+    # 静止帧就被丢掉，后面每一帧的时间（idx / fps）都往前错一格。
+    # 载荷已经由 UUID 前缀（≥4 个 0x42 + 0x69）定位过，能完整解码即视为有效。
+    return out
 
 
 def _strip_emulation(data: bytes) -> bytes:
@@ -189,18 +191,13 @@ def probe_fps_exact(path: Path) -> float | None:
     区分"探测不出来"和"就是 30"很重要：SEI 采样的时间轴是 `idx / fps` 算出来的，
     fps 猜错的话，由它派生的减速度（Δv/Δt）和里程（∫v·dt）全都是错的，
     但看上去和正确的数字一模一样。
+
+    走 probe 模块的共享缓存：同一个文件不再为帧率、时长、编码各起一次 ffprobe。
     """
+    from . import probe
+
     try:
-        out = subprocess.run(  # noqa: S603 - 参数是列表形式、不过 shell，可执行文件名是硬编码常量
-            ["ffprobe", "-v", "error", "-select_streams", "v:0",  # noqa: S607 - 走 PATH 找 ffmpeg 是刻意的：容器和裸机上的路径不同
-             "-show_entries", "stream=avg_frame_rate,codec_name",
-             "-of", "json", str(path)],
-            capture_output=True, timeout=10, check=True,
-        )
-        stream = json.loads(out.stdout)["streams"][0]
-        num, _, den = stream.get("avg_frame_rate", "").partition("/")
-        fps = float(num) / float(den or 1)
-        return fps if 1 < fps < 120 else None
+        return probe.probe_sync(path).get("fps")
     except Exception:  # noqa: BLE001 - 文件损坏 / 没有 ffprobe / 超时，都算探测不到
         return None
 
@@ -239,10 +236,10 @@ def extract(path: Path, step: float = 0.5, strict: bool = False) -> list[dict]:
     try:
         for nal in _iter_mdat_nals(path):
             payload = _sei_payload(nal)
-            if not payload:
+            if payload is None:
                 continue
             meta = _decode_protobuf(payload)
-            if meta:
+            if meta is not None:          # {} 也是合法帧：全部字段都是默认值
                 frames.append(meta)
     except OSError as e:
         log.warning("SEI read failed for %s: %s", path, e)
@@ -265,8 +262,11 @@ def extract(path: Path, step: float = 0.5, strict: bool = False) -> list[dict]:
         f = frames[idx]
         samples.append({
             "t": round(idx / fps, 2),
-            "gear": GEARS.get(f.get("gear"), ""),
-            "speed_kmh": round(f["speed_mps"] * 3.6, 1) if f.get("speed_mps") is not None else None,
+            # proto3：字段缺失 = 默认值。gear 缺失就是 0 = P，speed 缺失就是 0 km/h ——
+            # 这是真实的"停着"，不是"不知道"。当成未知的话，40 → 0 的急停算不出急刹，
+            # 均速也被算成只有行驶时的平均。
+            "gear": GEARS.get(f.get("gear", 0), ""),
+            "speed_kmh": round(f.get("speed_mps", 0.0) * 3.6, 1),
             "accel_pedal": round(f.get("accel_pedal", 0), 1),
             "steering_angle": round(f.get("steering_angle", 0), 1),
             "blinker_left": f.get("blinker_left", False),

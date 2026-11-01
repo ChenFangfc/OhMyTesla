@@ -20,3 +20,6 @@ tools/
 data/vehicle/
 vehical_img/
 services/hub/app/web/static/vehicle/
+
+# per-host compose overrides (e.g. loopback DB ports for dev tunnels)
+docker-compose.override.yml

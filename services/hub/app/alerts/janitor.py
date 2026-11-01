@@ -130,15 +130,23 @@ class Janitor:
 
             base = _teslacam_base()
             if base is not None:
+                # A fresh scan, off the event loop: pruning against a stale
+                # cached list would drop the index of clips that just arrived.
                 alive = {
                     rel
-                    for ev in scanner.scan()
+                    for ev in await scanner.ascan(force=True)
                     for seg in ev.segments
                     for rel in seg.cameras.values()
                 }
-                sei_rows = await store.prune_sei_orphans(alive)
-                if sei_rows:
-                    result.setdefault("rows", {}).update(sei_rows)
+                # A folder that exists but holds no clips at all is far more
+                # likely an unmounted share or a drive mid-swap than "every clip
+                # deleted" — pruning then wiped the whole index (audit F14).
+                if not alive:
+                    log.info("TeslaCam folder has no clips; leaving the SEI index alone")
+                else:
+                    sei_rows = await store.prune_sei_orphans(alive)
+                    if sei_rows:
+                        result.setdefault("rows", {}).update(sei_rows)
         except Exception:
             log.exception("SEI index prune failed")
 

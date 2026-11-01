@@ -30,10 +30,16 @@ DYNAMIC_PREFIXES = (
 
 
 def load(name: str) -> dict:
+    """Base catalogue plus its per-feature namespace files (locales/<lang>/*.json)."""
     p = LOCALES / name
     if not p.exists():
         sys.exit(f"缺少词表 {p}")
-    return json.loads(p.read_text())
+    data = json.loads(p.read_text())
+    ns = LOCALES / name.removesuffix(".json")
+    if ns.is_dir():
+        for f in sorted(ns.glob("*.json")):
+            data.update(json.loads(f.read_text()))
+    return data
 
 
 def placeholders(s: str) -> set[str]:

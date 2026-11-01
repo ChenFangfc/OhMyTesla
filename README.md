@@ -4,7 +4,7 @@
 
 # OhmyTesla
 
-**A self-hosted Tesla companion — dashcam studio, sentry alerts, energy insights,<br>charging costs and vehicle control, all on one page.**
+**A self-hosted Tesla companion — Sentry alerts on your phone the moment they fire,<br>3D vehicle control, dashcam studio, energy insights and charging costs, all on one page.**
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0-blue?style=flat-square)](LICENSE)
 [![Built on TeslaMate](https://img.shields.io/badge/built_on-TeslaMate-cc0000?style=flat-square)](https://github.com/teslamate-org/teslamate)
@@ -21,7 +21,7 @@ Data collection runs on [TeslaMate](https://github.com/teslamate-org/teslamate) 
 so you can upgrade it any time. Everything else is this project.
 
 **[Install](#install)** · [Connect your car](#connect-your-car) · [Phone alerts](#phone-alerts) ·
-[Dashcam](#dashcam) · [Charging costs](#charging-costs) · [AI access](#ai-access-mcp) ·
+[Vehicle control](#vehicle-control) · [3D car](#3d-car) · [Dashcam](#dashcam) · [Charging costs](#charging-costs) · [AI access](#ai-access-mcp) ·
 [Commands](#commands) · [Automated setup](#automated-setup) · [Security](#security)
 
 ---
@@ -40,10 +40,13 @@ openssl rand -base64 32 | tr -d '/+=' | cut -c1-28
 
 Open **http://localhost:8800** — username `ohmytesla`, password as generated above.
 
+**On a Mac without Docker**, the native app runs the same stack (TeslaMate, Postgres, Mosquitto
+and the hub) from one DMG: see [packaging/macos/README.md](packaging/macos/README.md).
+
 > [!WARNING]
-> An empty `OHMYTESLA_PASSWORD` means **no login at all**, and this UI can unlock your doors,
-> disable Sentry, and replay everywhere you have been. Port 8800 is reachable from your whole
-> LAN, not just this machine.
+> This UI can unlock your doors, disable Sentry, and replay everywhere you have been, so with an
+> empty `OHMYTESLA_PASSWORD` it refuses to serve at all (HTTP 503). Port 8800 is reachable from
+> your whole LAN, not just this machine.
 
 ## Connect your car
 
@@ -57,24 +60,58 @@ Paste both tokens into the setup page and hit **Connect**. They refresh automati
 
 ## Phone alerts
 
-**ntfy** — recommended, arrives in seconds. Install the app, pick an unguessable topic, then in `.env`:
+Only **Sentry** and **things that really matter** reach your phone, one line each:
 
-```ini
-NTFY_URL=https://ntfy.sh
-NTFY_TOPIC=omt-<random>                 # echo "omt-$(openssl rand -hex 10)"
-PUBLIC_URL=http://192.168.1.20:8800     # an address your phone can reach, so links open
+```text
+🚨 Cybertruck — door opened while locked
+Home · 9:41 PM
 ```
 
-**Email** also works (`SMTP_HOST/PORT/USER/PASS/FROM/TO`); Gmail needs an
-[app password](https://myaccount.google.com/apppasswords), not your login password.
-It takes minutes to arrive — use it as an archive, never as your only sentry alert.
+| Pushed to your phone | Kept in the app only |
+|---|---|
+| Sentry: someone at the car, the alarm, a door or handle on a locked car | Software updates, low battery, maintenance due |
+| The parked car moving (towed or driven off) | Data resumed, logger health checks |
+| Sentry alerts paused (no data from the car) | Sentry clips synced |
+| Low tire pressure, charging losing power | Other routine diagnostics |
 
-Run `./omt restart`, then **Security → Send test alert**. If nothing arrives, that page names
-the missing piece.
+Each type can be switched to **Push / In app / Off** under **Security → Alert types**. You coming
+back with your key card or phone key is not an intrusion; at home only escalated events push by
+default, which you can change per place in **Settings → Sentry alerts**.
+
+**Channels** are set up in **Settings → Notifications**, no `.env` editing: ntfy (recommended,
+arrives in seconds), Bark (iOS Critical Alerts, breaks through Do Not Disturb), Telegram, email,
+webhook, Apprise. Headless installs can still use `NTFY_*`, `SMTP_*` and friends in `.env`; values
+entered in the app win. Then **Security → Send test alert**.
+
+Set `PUBLIC_URL` to an address your phone can reach, so the **Open** link in a push works.
+
+| How fast you hear | Delay | Needs |
+|---|---|---|
+| TeslaMate polling | about 1 minute | nothing |
+| Fast check while Sentry is on | about 10 seconds | nothing (reads with TeslaMate's token, never wakes the car) |
+| Fleet Telemetry | 1–2 seconds | a public server or a relay, see [docs/FLEET-TELEMETRY.md](docs/FLEET-TELEMETRY.md) |
 
 > [!IMPORTANT]
-> The topic name *is* the password. ntfy.sh is a public server: anyone who knows the string
-> receives your alerts.
+> An ntfy topic name *is* the password. ntfy.sh is a public server: anyone who knows the string
+> receives your alerts. **Generate new topic** in Settings gives you a random one.
+
+## Vehicle control
+
+Tap a door, the frunk or the charge port on the 3D car on **Overview**; **Controls** puts climate,
+seats, charging, windows and Sentry on one page. Cybertruck adds the tonneau, outlets, Powershare,
+light bar and ride height.
+
+Cars built since 2021 (every Cybertruck) only accept signed commands. Set that up once in
+**Settings → Vehicle commands**: six guided steps (a Tesla developer app, a public key, sign-in,
+and approving the virtual key in the Tesla app). No signing proxy to run. Details and
+troubleshooting: [docs/COMMANDS.md](docs/COMMANDS.md).
+
+## 3D car
+
+A Cybertruck model ships with the app ([DriveOS](https://branzoom.github.io/driveos), CC BY 4.0).
+For other cars, upload a `.glb` in **Settings → Vehicles → 3D model**. For doors and lids to open,
+parts need canonical names, see [static/models/README.md](services/hub/app/web/static/models/README.md);
+[`scripts/models/rig_vehicle.py`](scripts/models/rig_vehicle.py) converts a Blender model to that format.
 
 ## Dashcam
 
@@ -134,7 +171,7 @@ servers.
 | URL | Login | What it is |
 |---|---|---|
 | <http://localhost:8800> | `ohmytesla` / `OHMYTESLA_PASSWORD` | OhmyTesla — the only one you need |
-| <http://localhost:3001> | `admin` / see `./omt grafana-password` | Grafana panels |
+| <http://localhost:3000> | `admin` / see `./omt grafana-password` | Grafana panels (port: `GRAFANA_PORT`) |
 | <http://localhost:4000> | none | TeslaMate native UI |
 
 Press <kbd>⌘</kbd><kbd>K</kbd> for the command palette.
@@ -153,7 +190,7 @@ Prerequisite: Docker Desktop must be running. If it isn't, tell me to start it f
    - TM_ENCRYPTION_KEY  = `openssl rand -base64 32`
    - TM_DB_PASS         = `openssl rand -base64 18 | tr -d '/+='`
    - OHMYTESLA_PASSWORD = `openssl rand -base64 32 | tr -d '/+=' | cut -c1-28`
-     (portal password; the username is always `ohmytesla`. Empty means no login at all.)
+     (portal password; the username is always `ohmytesla`. Empty means the portal refuses to serve.)
 3. If a port is taken, change OHMYTESLA_PORT / GRAFANA_PORT / TESLAMATE_PORT in .env
 4. Run `./omt up`. It returns only once the app is actually reachable.
 5. Generate an ntfy topic: `echo "omt-$(openssl rand -hex 10)"`
@@ -181,14 +218,14 @@ password makes the app report "half configured" rather than pretend to work.
 Notes:
 - Changed .env → `./omt restart`. Changed code → `./omt update` (rebuilds).
 - The ntfy topic is a password. Never put it anywhere public; .env is already gitignored.
-- OHMYTESLA_PASSWORD only guards :8800. Grafana (3001) and TeslaMate (4000) are separate
+- OHMYTESLA_PASSWORD only guards :8800. Grafana (3000) and TeslaMate (4000) are separate
   containers with their own auth — securing one does not secure the others.
 ````
 
 ## Security
 
 > [!CAUTION]
-> **LAN only.** All three ports bind `0.0.0.0`, so every device on your Wi-Fi can reach them.
+> **LAN only.** 8800 and Grafana bind `0.0.0.0`, so every device on your Wi-Fi can reach them.
 > Never port-forward any of this.
 
 | Surface | Auth | Exposes |
@@ -196,8 +233,8 @@ Notes:
 | `:8800` | Basic (`ohmytesla` + your password) | unlock doors, open trunk, disable Sentry, full location history and footage |
 | `:8800/mcp` | same password | the whole database, read-only |
 | `:8800/healthz` | **exempt by design** | liveness only, no vehicle data |
-| `:3001` Grafana | `admin/admin` by default | all dashboards |
-| `:4000` TeslaMate | **none — and it supports none** | native admin UI, can change collection settings |
+| `:3000` Grafana | password generated by `./omt up` | all dashboards |
+| `:4000` TeslaMate | **none — and it supports none** | native admin UI; **this machine only** by default (`TESLAMATE_BIND_ADDR`) |
 | mosquitto | not published to the host | Docker network only; unreachable from the LAN |
 
 `OHMYTESLA_PASSWORD` covers the entire app except `/healthz`, but **only port 8800**:
@@ -209,10 +246,12 @@ MQTT_USERNAME=...                   # MQTT auth, settable through compose now
 MQTT_PASSWORD=...
 ```
 
-TeslaMate 4.0.1 offers no HTTP auth at all — its `runtime.exs` only reads `DATABASE_*`, `MQTT_*`
-and `SECRET_KEY_BASE` — so `:4000` can only be protected by not exposing it. To keep 3001 and
-4000 on this machine only, prefix both port lines in `docker-compose.yml` with `127.0.0.1:`;
-the cost is losing phone and tablet access to Grafana.
+TeslaMate offers no HTTP auth at all — its `runtime.exs` only reads `DATABASE_*`, `MQTT_*`
+and `SECRET_KEY_BASE` — and its page can sign you out of Tesla. Sign-in, geofences and car
+settings all live in OhmyTesla now, so `:4000` answers on this machine only; set
+`TESLAMATE_BIND_ADDR=0.0.0.0` in `.env` to reach it from elsewhere. To keep Grafana on this
+machine too, prefix its port line in `docker-compose.yml` with `127.0.0.1:` (`BIND_ADDR` would lock
+8800 as well); the cost is losing phone and tablet access to Grafana.
 
 For remote access, put the stack behind a VPN (Tailscale / WireGuard) or an authenticating
 reverse proxy. It holds your location history, dashcam footage, notification channels, and
@@ -227,7 +266,8 @@ control of your car.
 |---|---|
 | [Quickstart](docs/QUICKSTART.md) | full walkthrough, daily use, troubleshooting *(Chinese)* |
 | [Architecture](docs/ARCHITECTURE.md) | how the pieces fit together *(Chinese)* |
-| [Vehicle commands](docs/COMMANDS.md) | the 19 supported commands *(Chinese)* |
+| [Vehicle commands](docs/COMMANDS.md) | one-time signed-command setup, safety, troubleshooting *(Chinese)* |
+| [teslausb](docs/TESLAUSB.md) | the car's USB drive syncs footage to this machine by itself |
 | [Fleet Telemetry](docs/FLEET-TELEMETRY.md) | streaming setup *(Chinese)* |
 | [Feature matrix](docs/FEATURE-MATRIX.md) | 71 features against every competitor |
 

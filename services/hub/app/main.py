@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import contextlib
 import json
 import logging
 import secrets
@@ -41,11 +42,17 @@ from .mcp.router import router as mcp_router
 from .overview.router import router as overview_router
 from .setup.router import router as setup_router
 from .tariff.router import router as tariff_router
+from .tesla.router import public_router as tesla_public_router
 from .tesla.router import router as tesla_router
 from .trips.router import router as trips_router
+from .vehicle.router import files_router as vehicle_files_router
 from .vehicle.router import router as vehicle_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+# httpx logs every request URL at INFO, and several carry a secret in the URL
+# (Telegram's bot token, ABRP's user token, a bridge token, webhook keys).
+for _noisy in ("httpx", "httpcore"):
+    logging.getLogger(_noisy).setLevel(logging.WARNING)
 log = logging.getLogger("ohmytesla")
 
 BASE = Path(__file__).parent
@@ -58,6 +65,9 @@ _bg_tasks: set[asyncio.Task] = set()
 async def lifespan(app: FastAPI):
     await store.open()
     sentry_tracker.bind(engine.fire_custom)
+    # Incidents left open by the previous run can't still be open.
+    with contextlib.suppress(Exception):
+        await sentry_tracker.close_stale_sessions()
     sentry_tracker.start()
     watchdog.bind(engine.fire_custom)
     watchdog.start()
@@ -75,6 +85,9 @@ async def lifespan(app: FastAPI):
     _bg_tasks.add(t := asyncio.create_task(_detect_region_once()))
     t.add_done_callback(_bg_tasks.discard)
     fleet_bridge.start()
+    from .alerts.fastpoll import poller as sentry_fast_poll
+
+    sentry_fast_poll.start()
     jobs.start()
     watcher.start()
     janitor.start()
@@ -83,14 +96,25 @@ async def lifespan(app: FastAPI):
     maintenance_watcher.start()
     hass_discovery.start()
     automation.start()
+    # Prices finished charging sessions in the background (and writes the cost
+    # back to TeslaMate when COST_WRITE_BACK is on). Never notifies anyone.
+    from .insights.costs import autopricer
+    autopricer.start()
     log.info("OhmyTesla hub started")
     yield
+    await autopricer.stop()
     await automation.stop()
+    from .tesla import commands as _commands
+
+    await _commands.shutdown()
     await hass_discovery.stop()
     await maintenance_watcher.stop()
     await abrp_relay.stop()
     await janitor.stop()
     await fleet_bridge.stop()
+    from .alerts.fastpoll import poller as _fast_poll
+
+    await _fast_poll.stop()
     await watchdog.stop()
     await sentry_tracker.stop()
     await watcher.stop()
@@ -121,7 +145,12 @@ app = FastAPI(title="OhmyTesla Hub", lifespan=lifespan)
 
 # 认证豁免的路径。只有存活探针 —— 它必须在没配密码时也能答，
 # 否则容器会陷入健康检查失败→重启的循环，而用户看到的是"装不上"。
-_PUBLIC_PATHS = frozenset({"/healthz"})
+# The Fleet API public key is public by definition: Tesla fetches it to verify
+# the app's domain when the hub itself serves as that domain.
+# manifest.json: names and icons only. WebKit fetches it without answering
+# the Basic-auth challenge, so behind auth every page load logged two failures.
+_PUBLIC_PATHS = frozenset({"/healthz", "/.well-known/appspecific/com.tesla.3p.public-key.pem",
+                           "/manifest.json"})
 
 # 改状态的方法。跨站来源校验只卡这些；GET 不该有副作用，
 # 真有副作用的 GET 是另一个要修的问题，不是靠这里兜。
@@ -160,6 +189,12 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
                 media_type="text/plain; charset=utf-8",
             )
 
+        # Machine clients with their own narrow token never need the portal
+        # password (which can unlock the car). Browsers never attach these
+        # headers by themselves, so this opens no cross-site path.
+        if await _machine_token_ok(request):
+            return await call_next(request)
+
         if request.method in _UNSAFE_METHODS and not _same_site(request):
             log.warning("blocked cross-site %s %s (origin=%r)",
                         request.method, request.url.path, request.headers.get("origin"))
@@ -194,6 +229,26 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
         )
 
 
+async def _machine_token_ok(request) -> bool:
+    """A TeslaMateApi app (/api/v1/*) or the teslausb Pi (/notify) with its token."""
+    got = request.headers.get("x-api-token", "")
+    auth = request.headers.get("authorization", "")
+    if auth.lower().startswith("bearer "):
+        got = auth[7:].strip()
+    if not got:
+        return False
+    path = request.scope.get("path", "")     # the routed path, never rebuilt from Host
+    if path.startswith("/api/v1/") or path in ("/api/ping", "/api/readyz"):
+        tok = settings.teslamateapi_token
+    elif path == "/api/dashcam/teslausb/notify" and request.method == "POST":
+        from .dashcam.teslausb import notify_token
+
+        tok = await notify_token(create=False)
+    else:
+        return False
+    return bool(tok) and secrets.compare_digest(got.encode(), tok.encode())
+
+
 def _same_site(request) -> bool:
     """这个改状态的请求是不是来自本站。
 
@@ -204,7 +259,9 @@ def _same_site(request) -> bool:
     """
     fetch_site = request.headers.get("sec-fetch-site")
     if fetch_site:
-        return fetch_site in ("same-origin", "same-site", "none")
+        # Not "same-site": another port on the same host (Grafana, TeslaMate)
+        # is same-site, and a page there must not be able to drive this one.
+        return fetch_site in ("same-origin", "none")
 
     origin = request.headers.get("origin")
     if not origin:
@@ -230,10 +287,12 @@ app.include_router(mcp_router)
 app.include_router(health_router)
 app.include_router(export_router)
 app.include_router(tesla_router)
+app.include_router(tesla_public_router)
 app.include_router(prefs_router)
 app.include_router(setup_router)
 app.include_router(overview_router)
 app.include_router(vehicle_router)
+app.include_router(vehicle_files_router)
 # TeslaMateApi 兼容层：让 MateDroid / T-Buddy 这类现成 App 直接连过来
 app.include_router(tma_router)
 app.include_router(automation_router)
@@ -259,6 +318,14 @@ async def healthz():
         # 健康检查照样返回 200：schema 漂移不影响服务可用性，
         # 但要让轮询它的人看得见。
         body["schema_drift"] = s["drifted"]
+    # TeslaMate 升级后 schema 比我们核对过的新、或缺了要读的列：同样只是标记，
+    # 不改状态码（改了 Docker 会把 hub 重启成循环）。
+    from . import db
+
+    ts = db.teslamate_schema()
+    if ts.get("status") in ("newer", "incompatible"):
+        body["teslamate_schema"] = {k: ts.get(k) for k in
+                                    ("status", "version", "verified_version", "missing_columns")}
     return body
 
 
@@ -338,9 +405,13 @@ async def live_stream():
 @app.get("/api/config")
 async def public_config(request: Request):
     host = request.url.hostname or "localhost"
+    # TeslaMate 只绑在服务器回环上时，从别的设备点这个链接只会连不上 —— 不给链接。
+    tm_local_only = settings.teslamate_bind_addr in ("127.0.0.1", "localhost", "::1")
+    tm_reachable = not tm_local_only or host in ("localhost", "127.0.0.1", "::1")
     return {
-        "teslamate_url": f"http://{host}:{settings.teslamate_public_port}",
-        "grafana_url": f"http://{host}:{settings.grafana_public_port}",
+        "teslamate_url": f"http://{host}:{settings.teslamate_public_port}" if tm_reachable else None,
+        # The Mac app ships without Grafana and passes GRAFANA_URL empty.
+        "grafana_url": f"http://{host}:{settings.grafana_public_port}" if settings.grafana_url else None,
         "lang": settings.alert_lang,
         **(await _map_config()),
     }
@@ -360,9 +431,9 @@ async def _map_config() -> dict:
         url = "https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}"
         datum = "gcj02"
     else:
-        # 亮色底图在暗色界面里像个灯箱。CARTO 的 dark_all 是专做的深色栅格底图，
-        # 免费、无需 key，署名与 OSM 相同。
-        url = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png"
+        # 空 = 前端用 OpenFreeMap 的矢量底图（免 key，深浅两套跟随主题）。
+        # 以前这里是 CARTO dark_all，现在它要 API key，不给就满屏水印。
+        url = ""
         datum = "wgs84"
     return {"tile_url": url, "tile_datum": datum, "market": p.get("market", "")}
 
@@ -449,6 +520,11 @@ async def trips_page(request: Request):
     return await page(request, "trips.html", active="trips")
 
 
+@app.get("/controls", response_class=HTMLResponse)
+async def controls_page(request: Request):
+    return await page(request, "controls.html", active="controls")
+
+
 @app.get("/timeline", response_class=HTMLResponse)
 async def timeline_page(request: Request):
     return await page(request, "timeline.html", active="timeline")
@@ -476,5 +552,4 @@ async def _legacy_alerts():
 
 @app.get("/control")
 async def _legacy_control():
-    # 常用控制已在首页 hero，其余在 ⌘K —— 不再需要独立页面
-    return RedirectResponse("/", status_code=301)
+    return RedirectResponse("/controls", status_code=301)

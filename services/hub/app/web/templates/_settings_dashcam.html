@@ -1,0 +1,111 @@
+{# Settings → Dashcam: where the library lives, which time zone its file
+   names are read in, and teslausb (the Pi that copies clips home).
+   Rendered by static/js/pages/settings_dashcam.js. #}
+
+<details class="disclose" id="dashcam">
+  <summary><span data-i18n="sdc.heading">Dashcam</span><span class="value" id="v-dashcam"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span>
+  </summary>
+  <div class="body">
+    <div class="eyebrow" data-i18n="sdc.library">Library</div>
+    <div id="sdc-library" class="mt"></div>
+
+    <div class="eyebrow mt3">teslausb</div>
+    <p class="body-sm sdc-intro" data-i18n="sdc.intro"></p>
+    <div id="sdc-status"></div>
+
+    <div class="sdc-block">
+      <div class="sdc-h" data-i18n="sdc.hook.title">Tell the hub when an archive run finishes</div>
+      <p class="body-sm sdc-p" data-i18n-html="sdc.hook.intro"></p>
+      <pre class="sdc-code" id="sdc-lines"></pre>
+      <div class="sdc-local" id="sdc-local" hidden></div>
+      <div class="row sdc-actions">
+        <button class="btn" type="button" id="sdc-copy" data-i18n="sdc.hook.copy">Copy both lines</button>
+        <button class="btn ghost" type="button" id="sdc-rotate" data-i18n="sdc.hook.rotate">New token</button>
+      </div>
+      <p class="meta sdc-p" data-i18n="sdc.hook.note"></p>
+    </div>
+
+    <div class="sdc-block">
+      <div class="sdc-h" data-i18n="sdc.pi.title">The Pi on your network</div>
+      <p class="body-sm sdc-p" data-i18n="sdc.pi.intro"></p>
+      <form class="sdc-form" id="sdc-form" autocomplete="off">
+        <label for="sdc-url" data-i18n="sdc.pi.address">Address</label>
+        <input type="text" id="sdc-url" spellcheck="false" placeholder="192.168.1.60">
+        <label for="sdc-user" data-i18n="sdc.pi.user">User name</label>
+        <input type="text" id="sdc-user" spellcheck="false" placeholder="teslausb">
+        <label for="sdc-pass" data-i18n="sdc.pi.password">Password</label>
+        <div class="sdc-pass"><input type="password" id="sdc-pass" autocomplete="new-password"><button class="btn ghost sm" type="button" id="sdc-pass-clear" hidden data-i18n="sdc.pi.clear">Remove</button></div>
+        <span></span>
+        <div class="row" style="gap:8px;flex-wrap:wrap">
+          <button class="btn primary" type="submit" data-i18n="common.save">Save</button>
+          <button class="btn" type="button" id="sdc-sync" data-i18n="sdc.pi.sync">Sync now</button>
+          <span class="body-sm" id="sdc-msg"></span>
+        </div>
+      </form>
+      <div id="sdc-pi" class="sdc-pi"></div>
+    </div>
+
+    <details class="disclose sdc-activity" id="sdc-activity">
+      <summary><span data-i18n="sdc.activity">Recent activity</span><span class="value" id="v-sdc-activity"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span></summary>
+      <div class="body" id="sdc-runs"></div>
+    </details>
+  </div>
+</details>
+
+<style>
+  /* amber as text needs more weight on a light background */
+  #dashcam { --amber-ink: var(--amber); }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) #dashcam { --amber-ink: #9a5b00; } }
+  :root[data-theme="light"] #dashcam { --amber-ink: #9a5b00; }
+  .sdc-intro { margin: 8px 0 14px; max-width: 66ch; }
+  .sdc-row { display: flex; gap: 16px; align-items: baseline; padding: 11px 0; border-top: 1px solid var(--line); }
+  .sdc-row:first-child { border-top: 0; padding-top: 4px; }
+  .sdc-row .k { width: 120px; flex: none; font-size: 13px; color: var(--text-secondary); }
+  .sdc-row .v { flex: 1; min-width: 0; font-size: 14px; }
+  .sdc-row .v small { display: block; margin-top: 3px; font-size: 12.5px; color: var(--text-tertiary); line-height: 1.5; max-width: 64ch; }
+  .sdc-row code, .sdc-p code, .sdc-local code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: var(--bg-hover); padding: 1px 6px; border-radius: 6px; word-break: break-all; }
+  .sdc-warn { color: var(--amber-ink); }
+  .sdc-state { display: flex; gap: 14px; align-items: flex-start; padding: 14px 16px; border-radius: 14px; background: var(--bg-secondary); border: 1px solid var(--line); }
+  .sdc-state .ic { flex: none; width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; background: var(--bg-hover); color: var(--text-secondary); }
+  .sdc-state.ok .ic { background: var(--green-soft); color: var(--green); }
+  .sdc-state.bad { border-color: rgba(255, 179, 64, .32); }
+  .sdc-state.bad .ic { background: var(--amber-soft); color: var(--amber); }
+  .sdc-state .grow { flex: 1; min-width: 0; }
+  .sdc-state .tt { font-size: 14.5px; font-weight: 550; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .sdc-state .sb { margin-top: 3px; font-size: 13px; color: var(--text-secondary); line-height: 1.55; }
+  .sdc-state .hint { margin-top: 8px; font-size: 13px; color: var(--text-secondary); line-height: 1.55; max-width: 66ch; }
+  .sdc-pill { font-size: 11.5px; font-weight: 600; padding: 2px 8px; border-radius: 8px; background: var(--accent-soft); color: var(--text-primary); }
+  .sdc-waiting { margin-top: 10px; font-size: 13px; color: var(--text-secondary); }
+  .sdc-waiting li { margin: 3px 0; }
+  .sdc-waiting ul { margin: 6px 0 0; padding-left: 18px; }
+  .sdc-block { margin-top: 26px; }
+  .sdc-h { font-size: 15px; font-weight: 550; }
+  .sdc-p { margin: 6px 0 12px; max-width: 66ch; line-height: 1.55; }
+  .sdc-code { margin: 0; padding: 14px 16px; border-radius: 12px; background: var(--bg-primary); border: 1px solid var(--line);
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px; line-height: 1.7; color: var(--text-secondary);
+    white-space: pre-wrap; word-break: break-all; user-select: all; }
+  .sdc-local { margin-top: 8px; font-size: 13px; color: var(--amber-ink); }
+  .sdc-actions { margin-top: 10px; gap: 8px; flex-wrap: wrap; }
+  .sdc-form { display: grid; grid-template-columns: 120px minmax(0, 360px); gap: 10px 14px; align-items: center; }
+  .sdc-form label { font-size: 13px; color: var(--text-secondary); }
+  .sdc-form input { width: 100%; }
+  .sdc-pass { display: flex; gap: 8px; align-items: center; }
+  .sdc-pi { margin-top: 14px; font-size: 13px; color: var(--text-secondary); display: flex; flex-wrap: wrap; gap: 6px 18px; }
+  .sdc-pi span { display: inline-flex; align-items: center; gap: 6px; }
+  .sdc-pi .bad { color: var(--amber-ink); }
+  .sdc-activity { margin-top: 22px; border-top: 1px solid var(--line); }
+  .sdc-run { display: flex; gap: 12px; align-items: baseline; padding: 9px 0; border-top: 1px solid var(--line); font-size: 13px; }
+  .sdc-run:first-child { border-top: 0; }
+  .sdc-run .w { width: 120px; flex: none; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+  .sdc-run .m { flex: 1; min-width: 0; color: var(--text-secondary); word-break: break-word; }
+  .sdc-run .m b { font-weight: 550; color: var(--text-primary); }
+  @media (max-width: 640px) {
+    .sdc-row { flex-direction: column; gap: 4px; }
+    .sdc-row .k { width: auto; }
+    .sdc-form { grid-template-columns: 1fr; gap: 6px; }
+    .sdc-form > span:empty { display: none; }
+    .sdc-form label { margin-top: 6px; }
+    .sdc-run { flex-direction: column; gap: 2px; }
+    .sdc-run .w { width: auto; }
+  }
+</style>

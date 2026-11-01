@@ -1,454 +1,794 @@
 {% extends "shell.html" %}
 {% block title %}{{ t('usb.page_title') }}{% endblock %}
+
+{# Footage straight off the car's USB drive. Clips play and their telemetry
+   decodes in the browser; only what you import reaches the hub. Lengths are
+   read from each clip's own moov box, so the timeline matches the server
+   player's: segments end to end, gaps between RecentClips closed up. #}
 {% block content %}
-<div class="page" style="padding-bottom:96px">
-<div class="subhead">
-  <a href="/dashcam" class="back" data-i18n-title="usb.back">
-    <span class="ico-slot" data-icon="arrow" data-size="15"></span><span data-i18n="nav.dashcam">Dashcam</span>
-  </a>
-  <h1 data-i18n="usb.title">Browse USB drive</h1>
-</div>
-
-<div id="drop" class="card" style="text-align:center;padding:44px 20px;border-style:dashed;cursor:pointer">
-  <div style="font-size:38px"></div>
-  <div class="mt" data-i18n-html="usb.drop.hint"><b>Plug the USB drive into this computer</b>, then pick the <code>TeslaCam</code> folder — or the whole drive. You can also drag the folder in.</div>
-  <div class="small muted mt" data-i18n="usb.drop.privacy">Nothing is uploaded. Clips play and SEI telemetry decodes in your browser. Only the clips you import go to the server, for exports and TeslaMate overlays.</div>
-  <input type="file" id="picker" webkitdirectory multiple style="display:none">
-</div>
-
-<div id="browser" style="display:none">
-  <div class="row mt">
-    <div class="tabs" style="margin:0">
-      <button data-type="" class="active" data-i18n="dashcam.all">All</button>
-      <button data-type="sentry"><span data-i18n="dashcam.sentry">Sentry Mode</span></button>
-      <button data-type="saved"><span data-i18n="dashcam.saved">Saved</span></button>
-      <button data-type="recent"><span data-i18n="dashcam.recent">Recent</span></button>
-    </div><span class="spacer"></span><span id="scan-info" class="muted small"></span>
+<div class="page usb-page">
+  <div class="subhead usb-sub">
+    <a href="/dashcam" class="back" data-i18n-title="usb.back">
+      <span class="ico-slot" data-icon="arrow" data-size="15"></span><span data-i18n="nav.dashcam">Dashcam</span>
+    </a>
   </div>
-  <div id="local-events" class="event-grid mt"></div>
-</div>
 
-<div id="local-player" style="display:none">
-  <div class="row mt"><a href="#" onclick="closePlayer();return false" data-i18n="usb.back_to_list">← All clips</a><h2 id="lp-title" style="margin:0;font-size:16px"></h2></div>
-  <div class="player-wrap mt">
-    <div>
-      <div class="video-stage">
-        <video id="lp-main" class="main" muted playsinline></video>
-        <div class="pip-row" id="lp-pips"></div>
-        <div class="hud" id="lp-hud">
-          <div class="speed"><span id="lh-speed">--</span> <small id="lh-speed-unit">km/h</small></div>
-          <div class="item"><div class="l" data-i18n="player.hud.gear">Gear / Autopilot</div><div id="lh-gear">–</div></div>
-          <div class="item"><div class="l" data-i18n="player.hud.steering">Steering</div><div id="lh-steer">–</div></div>
-          <div class="item"><div class="l" data-i18n="player.hud.pedal">Accelerator</div><div id="lh-pedal">–</div></div>
-          <div class="item"><div class="l" data-i18n="player.hud.power">Power</div><div id="lh-power">–</div></div>
-          <div class="item"><div class="l" data-i18n="common.battery">Battery</div><div id="lh-soc">–</div></div>
-          <div class="clock" id="lh-clock"></div>
+  <header id="usb-head">
+    <div class="eyebrow" data-i18n="usb.eyebrow">Straight from the drive</div>
+    <h1 class="display-sm usb-h1" data-i18n="usb.title">Browse USB drive</h1>
+  </header>
+  <section id="pick">
+    <div class="usb-drop" id="drop" role="button" tabindex="0">
+      <div class="ic"><span class="ico-slot" data-icon="upload" data-size="26"></span></div>
+      <div class="t" data-i18n-html="usb.drop.hint"></div>
+      <div class="s" data-i18n="usb.drop.privacy"></div>
+      <span class="btn primary" data-i18n="usb.drop.choose">Choose folder</span>
+      <input type="file" id="picker" webkitdirectory multiple hidden>
+    </div>
+  </section>
+
+  <section id="browser" hidden>
+    <div class="usb-bar">
+      <div class="seg2" id="type-pick">
+        <button type="button" data-type="" class="on" data-i18n="dashcam.all">All</button>
+        <button type="button" data-type="sentry" data-i18n="dashcam.sentry">Sentry Mode</button>
+        <button type="button" data-type="saved" data-i18n="dashcam.saved">Saved</button>
+        <button type="button" data-type="recent" data-i18n="dashcam.recent">Recent</button>
+      </div>
+      <span class="spacer"></span>
+      <span id="scan-info" class="body-sm"></span>
+      <button type="button" class="btn ghost" id="repick" data-i18n="usb.repick">Choose another folder</button>
+    </div>
+    <div id="local-events" class="usb-grid"></div>
+  </section>
+
+  <section id="local-player" hidden>
+    <button type="button" class="btn ghost usb-backlist" id="lp-close"><span class="ico-slot" data-icon="arrow" data-size="15"></span><span data-i18n="usb.all_clips">All clips on the drive</span></button>
+    <header class="pl-head">
+      <div class="eyebrow" id="lp-kind">&nbsp;</div>
+      <h1 class="display-sm" id="lp-title"></h1>
+      <div class="pl-facts" id="lp-facts"></div>
+    </header>
+    <div class="player-wrap">
+      <div class="pl-main">
+        <div class="video-stage">
+          <video id="lp-main" class="main" muted playsinline></video>
+          <span class="pl-camtag" id="lp-camtag" hidden></span>
+          <div class="pl-veil" id="lp-veil" hidden></div>
+          <div class="hud" id="lp-hud" hidden>
+            <div class="item speed"><div class="l" data-i18n="player.hud.speed">Speed</div><div class="v"><span id="lh-speed">–</span><small id="lh-speed-unit">km/h</small></div></div>
+            <div class="item"><div class="l" data-i18n="player.hud.gear">Gear / Autopilot</div><div class="v" id="lh-gear">–</div></div>
+            <div class="item"><div class="l" data-i18n="player.hud.power">Power</div><div class="v" id="lh-power">–</div></div>
+            <div class="item"><div class="l" data-i18n="common.battery">Battery</div><div class="v" id="lh-soc">–</div></div>
+            <div class="item opt"><div class="l" data-i18n="player.hud.steering">Steering</div><div class="v" id="lh-steer">–</div></div>
+            <div class="item opt"><div class="l" data-i18n="player.hud.pedal">Accelerator</div><div class="v" id="lh-pedal">–</div></div>
+            <div class="clock" id="lh-clock"></div>
+          </div>
         </div>
+        <div class="pl-transport">
+          <button class="pl-play" id="lp-play" type="button"></button>
+          <span class="pl-time" id="lp-time">0:00 / 0:00</span>
+          <div class="pl-scrub">
+            <div class="pl-track" id="lp-track"></div>
+            <input type="range" id="lp-seek" min="0" max="1" step="any" value="0" data-i18n-title="player.seek">
+          </div>
+          <select id="lp-rate" class="pl-rate" aria-label="Speed">
+            <option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option>
+          </select>
+        </div>
+        <div class="pip-row" id="lp-pips"></div>
+        <div class="pl-segs" id="lp-segs"></div>
+        <div id="lp-hevc" class="body-sm mt" hidden data-i18n="usb.hevc"></div>
       </div>
-      <div class="controls">
-        <button id="lp-play" class="primary">▶ <span data-i18n="player.play">Play</span></button>
-        <input type="range" id="lp-seek" min="0" max="100" step="0.1" value="0"><span id="lp-time" class="small muted" style="min-width:90px;text-align:right"></span>
-        <select id="lp-rate"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
-      </div>
-      <div class="seg-list" id="lp-segs"></div>
-      <div id="lp-hevc" class="small muted mt" style="display:none" data-i18n="usb.hevc"> Won't play? HEVC needs hardware decoding in the browser — try Safari or Edge. Or import the clip and export it as H.264.</div>
+
+      <aside class="pl-side">
+        <section class="pl-card">
+          <div class="eyebrow" data-i18n="usb.import.title">Import to the hub</div>
+          <p class="body-sm pl-p" id="lp-import-desc"></p>
+          <button class="btn accent big pl-go" id="lp-import" type="button" data-i18n="usb.import.btn">Import this clip</button>
+          <div class="usb-progress" id="lp-progress" hidden><i></i></div>
+          <div class="body-sm mt" id="lp-import-status"></div>
+        </section>
+        <details class="disclose" id="d-lp-sei" open>
+          <summary><span data-i18n="player.sei.heading">Driving data in this segment</span><span class="value" id="v-lp-sei"></span><span class="chev ico-slot" data-icon="chevron" data-size="16"></span></summary>
+          <div class="body body-sm" id="lp-stats"></div>
+        </details>
+      </aside>
     </div>
-    <div>
-      <div class="card">
-        <h2 style="margin:0 0 8px" data-i18n="usb.import.title">Import to server</h2>
-        <div class="small muted" data-i18n="usb.import.desc">Once imported you can export an MP4, overlay TeslaMate battery, power, and elevation data, and keep the clip archived.</div>
-        <div class="mt"><button id="lp-import" class="primary" style="width:100%" data-i18n="usb.import.btn"> Import this clip</button></div>
-        <div class="mt small" id="lp-import-status"></div>
-      </div>
-      <div class="card mt small" id="lp-meta"></div>
-      <div class="card mt small" id="lp-stats"></div>
-    </div>
-  </div>
+  </section>
 </div>
-</div>
+
+<style>
+  /* amber as text needs more weight on a light background */
+  .usb-page { --amber-ink: var(--amber); }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .usb-page { --amber-ink: #9a5b00; } }
+  :root[data-theme="light"] .usb-page { --amber-ink: #9a5b00; }
+  .usb-page { padding-bottom: 96px; }
+  .usb-sub { padding-bottom: 10px; }
+  .usb-h1 { margin: 6px 0 22px; }
+  .usb-drop { display: grid; justify-items: center; gap: 12px; padding: 56px 28px; text-align: center; cursor: pointer;
+    border-radius: var(--radius-lg); border: 1.5px dashed var(--line-strong);
+    background: radial-gradient(90% 120% at 50% 0%, var(--bg-elevated), var(--bg-secondary));
+    transition: border-color 160ms var(--ease-out), background 160ms var(--ease-out); }
+  .usb-drop:hover, .usb-drop.over { border-color: var(--accent); }
+  .usb-drop.over { background: radial-gradient(90% 120% at 50% 0%, var(--accent-soft), var(--bg-secondary)); }
+  .usb-drop .ic { width: 64px; height: 64px; border-radius: 20px; display: grid; place-items: center; background: var(--bg-hover); color: var(--text-secondary); }
+  .usb-drop .t { font-size: 16px; max-width: 52ch; line-height: 1.55; }
+  .usb-drop .t code { font-family: ui-monospace, Menlo, monospace; font-size: 13.5px; background: var(--bg-hover); padding: 1px 6px; border-radius: 6px; }
+  .usb-drop .s { font-size: 13px; color: var(--text-tertiary); max-width: 60ch; line-height: 1.55; }
+  .usb-drop .btn { margin-top: 6px; }
+  .usb-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
+  .usb-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+  .usb-card { display: block; height: auto; padding: 0; text-align: left; border-radius: var(--radius); overflow: hidden;
+    background: var(--bg-secondary); border: 1px solid var(--line); color: inherit; font: inherit; cursor: pointer; }
+  .usb-card:hover { background: var(--bg-elevated); border-color: var(--line-strong); }
+  .usb-card .th { position: relative; aspect-ratio: 16 / 9; background: var(--bg-elevated); display: grid; place-items: center; color: var(--text-tertiary); }
+  .usb-card .th img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .usb-card .lock { position: absolute; top: 8px; right: 8px; display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; padding: 3px 8px;
+    border-radius: 8px; background: rgba(0, 0, 0, .65); color: var(--amber); }
+  .usb-card .m { padding: 12px 14px 14px; }
+  .usb-card .r1 { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-secondary); }
+  .usb-card .r1 .sp { flex: 1; }
+  .usb-card .r1 .when { font-size: 12px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+  .usb-card .r2 { margin-top: 6px; font-size: 12.5px; color: var(--text-tertiary); }
+  .usb-backlist { margin: 0 0 14px -10px; }
+  .usb-backlist svg { transform: rotate(180deg); }
+  .usb-progress { height: 4px; border-radius: 2px; background: var(--bg-hover); overflow: hidden; margin-top: 14px; }
+  .usb-progress i { display: block; height: 100%; width: 0; background: var(--accent); transition: width 200ms var(--ease-out); }
+
+  /* the player — same anatomy as /dashcam/play */
+  .pl-head { margin-bottom: 22px; }
+  .pl-head h1 { margin-top: 6px; }
+  .pl-facts { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13.5px; color: var(--text-secondary); }
+  .pl-facts span { display: inline-flex; align-items: center; gap: 6px; }
+  .pl-facts .warn { color: var(--amber-ink); }
+  .usb-page .video-stage video.main { aspect-ratio: 4 / 3; object-fit: contain; }
+  .pl-camtag { position: absolute; top: 12px; left: 12px; font-size: 12px; padding: 3px 9px; border-radius: 8px;
+    background: rgba(0, 0, 0, .55); color: #fff; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  .pl-veil { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 8px; padding: 24px;
+    text-align: center; color: #fff; background: radial-gradient(80% 80% at 50% 45%, rgba(30, 32, 36, .92), rgba(0, 0, 0, .96)); }
+  .pl-veil .t { font-size: 17px; font-weight: 550; }
+  .pl-veil .s { font-size: 13.5px; color: #b7b9be; max-width: 46ch; }
+  .pl-veil svg { color: var(--amber); }
+  .usb-page .hud .v { font-size: 17px; font-weight: 500; letter-spacing: -.3px; white-space: nowrap; }
+  .usb-page .hud .speed .v { font-size: 30px; letter-spacing: -1px; line-height: 1; }
+  .usb-page .hud .speed small { font-size: 12px; color: var(--text-tertiary); margin-left: 4px; letter-spacing: 0; }
+  .usb-page .hud .clock { font-size: 13px; color: #d5d7db; }
+  .pl-transport { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+  .pl-play { width: 42px; height: 42px; padding: 0; border-radius: 50%; flex: none; display: grid; place-items: center;
+    background: var(--text-primary); color: var(--bg-primary); border: 0; }
+  .pl-play:hover { background: var(--text-primary); opacity: .9; }
+  .pl-time { font-size: 13px; color: var(--text-secondary); font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 84px; }
+  .pl-scrub { position: relative; flex: 1; min-width: 0; height: 30px; }
+  .pl-track { position: absolute; left: 0; right: 0; top: 13px; height: 4px; border-radius: 2px; }
+  .pl-track i { position: absolute; top: 0; bottom: 0; display: block; }
+  .pl-track .tk-seg { background: var(--line-strong); }
+  .pl-track .tk-seg.unknown { background: repeating-linear-gradient(90deg, var(--amber) 0 3px, transparent 3px 6px); opacity: .7; }
+  .pl-track .tk-fill { left: 0; background: var(--text-primary); border-radius: 2px 0 0 2px; pointer-events: none; }
+  .pl-track .tk-cut { width: 2px; margin-left: -1px; background: var(--bg-primary); }
+  .pl-scrub input[type="range"] { position: absolute; inset: 0; width: 100%; height: 30px; margin: 0; background: transparent;
+    -webkit-appearance: none; appearance: none; cursor: pointer; }
+  .pl-scrub input[type="range"]::-webkit-slider-runnable-track { height: 30px; background: transparent; }
+  .pl-scrub input[type="range"]::-moz-range-track { height: 30px; background: transparent; }
+  .pl-scrub input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: 8px;
+    border-radius: 50%; background: var(--text-primary); box-shadow: 0 0 0 4px rgba(0, 0, 0, .25); }
+  .pl-scrub input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border: 0; border-radius: 50%; background: var(--text-primary); }
+  .pl-rate { width: 72px; flex: none; }
+  .usb-page .pip-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 8px; margin-top: 14px; }
+  .pip { position: relative; height: auto; padding: 0; border-radius: 10px; overflow: hidden; border: 1px solid var(--line);
+    background: #000; cursor: pointer; display: block; }
+  .pip:hover { border-color: var(--line-strong); background: #000; }
+  .usb-page .pip video { width: 100%; display: block; aspect-ratio: 4 / 3; object-fit: cover; border: 0; border-radius: 0; pointer-events: none; }
+  .pip > span { position: absolute; left: 6px; bottom: 6px; font-size: 11px; padding: 2px 6px; border-radius: 6px; background: rgba(0, 0, 0, .6); color: #fff; }
+  .pl-segs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; max-height: 128px; overflow-y: auto; }
+  .pl-segs button { height: 30px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--line); background: var(--bg-secondary);
+    color: var(--text-secondary); font-size: 12.5px; font-weight: 450; font-variant-numeric: tabular-nums; display: inline-flex; align-items: center; gap: 7px; }
+  .pl-segs button small { color: var(--text-tertiary); font-size: 11.5px; }
+  .pl-segs button.on { background: var(--bg-hover); color: var(--text-primary); border-color: var(--line-strong); }
+  .pl-segs button.unknown small { color: var(--amber-ink); }
+  .pl-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+  .pl-card { padding: 18px; border-radius: var(--radius); background: var(--bg-secondary); border: 1px solid var(--line); min-width: 0; }
+  .pl-p { margin: 8px 0 12px; line-height: 1.55; }
+  .pl-go { width: 100%; }
+  .pl-side details.disclose > summary { padding: 13px 2px; }
+  .pl-side details.disclose > summary .value { white-space: nowrap; }
+
+  @media (max-width: 640px) {
+    .usb-sub { padding-top: 4px; }
+    .usb-drop { padding: 36px 18px; }
+    .usb-bar #scan-info { flex-basis: 100%; order: 3; }
+    .pl-transport { flex-wrap: wrap; gap: 8px 12px; }
+    .pl-scrub { order: -1; flex: 1 0 100%; }
+    .pl-time { flex: 1; }
+    .usb-page .hud { position: static; border-radius: 0; border: 0; border-top: 1px solid rgba(255, 255, 255, .08);
+      gap: 10px 16px; padding: 10px 12px; background: #0c0c0d; }
+    .usb-page .hud .opt { display: none; }
+    .usb-page .hud .speed .v { font-size: 24px; }
+    .usb-page .hud .clock { flex-basis: 100%; text-align: left; margin-left: 0; font-size: 12px; }
+    .usb-page .pip-row { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  }
+</style>
 {% endblock %}
 
 {% block scripts %}
 <script src="/static/js/sei.js"></script>
 <script>
-/* 语言目录是异步 fetch 回来的，本脚本执行时还没到——所有取文案的地方都得晚绑定。
-   omt:locale 在 i18n.apply() 里派发（首次加载与切换语言各一次）。 */
-function paintI18n() {
-  document.title = t("usb.page_title");
-  // data-i18n 走 textContent，带 <b>/<code> 的文案得用 innerHTML 注入
-  document.querySelectorAll("[data-i18n-html]").forEach((el) => {
-    el.innerHTML = t(el.getAttribute("data-i18n-html"));
-  });
-}
-window.addEventListener("omt:locale", paintI18n);
-// 目录也可能在本脚本执行前就已就绪（omt:locale 已经派发过），这里补刷一次
-if (Object.keys(i18n.DICT.en).length) paintI18n();
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const CAMS = ["front", "back", "left_repeater", "right_repeater", "left_pillar", "right_pillar"];
+  const FILE_RE = new RegExp("^(\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2})-(" + CAMS.join("|") + ")\\.mp4$");
+  const TYPE_DIRS = { SentryClips: "sentry", SavedClips: "saved", RecentClips: "recent" };
+  const TYPE_KEYS = { sentry: "dashcam.sentry", saved: "dashcam.saved", recent: "dashcam.driving" };
+  const TYPE_ICON = { sentry: "shield", saved: "film", recent: "drive" };
+  const REASON_KEYS = {
+    sentry_aware_object_detection: "dashcam.reason.object_detected",
+    sentry_panic_alarm: "dashcam.reason.panic_alarm",
+    user_interaction_dashcam_icon_tapped: "dashcam.reason.saved_icon",
+    user_interaction_dashcam_panel_save: "dashcam.reason.saved_panel",
+    user_interaction_honk: "dashcam.reason.honk",
+  };
+  const camName = (c) => { const k = "dashcam.cam." + c; const s = t(k); return s === k ? c : s; };
+  const pauseIcon = (s) => `<svg viewBox="0 0 24 24" width="${s}" height="${s}" fill="currentColor" aria-hidden="true"><rect x="6.5" y="5" width="3.6" height="14" rx="1"/><rect x="13.9" y="5" width="3.6" height="14" rx="1"/></svg>`;
+  let localEvents = [], curType = "", fileCount = 0;
 
-const CAMS = ["front", "back", "left_repeater", "right_repeater", "left_pillar", "right_pillar"];
-function camLabel(cam) { return t("dashcam.cam." + cam); }
-const FILE_RE = new RegExp("^(\\d{4}-\\d{2}-\\d{2}_\\d{2}-\\d{2}-\\d{2})-(" + CAMS.join("|") + ")\\.mp4$");
-const TYPE_DIRS = { SentryClips: "sentry", SavedClips: "saved", RecentClips: "recent" };
-let localEvents = [], curType = "";
+  /* File names carry the car's local time; see the player for why it is handled as UTC. */
+  const isoOf = (stamp) => stamp.replace("_", "T").replace(/-(\d{2})-(\d{2})$/, ":$1:$2");
+  function naiveMs(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/.exec(iso || "");
+    if (!m) return NaN;
+    const ms = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]);
+    // an impossible date (Feb 30) would silently roll over; the hub skips those, so do we
+    return new Date(ms).toISOString().slice(0, 19) === `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}` ? ms : NaN;
+  }
+  const len = (s) => fmt.ts(Math.round(s));      // a length, rounded; the playhead floors
+  const naiveIso = (ms) => new Date(ms).toISOString().slice(0, 19);
+  const clock = (ms, opts) => new Date(ms).toLocaleString(localeTag(), { timeZone: "UTC", ...opts });
+  const hms = (ms) => clock(ms, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
-/* ---------------- 目录扫描 ---------------- */
-function parseTs(s) { return new Date(s.replace("_", "T").replace(/-(\d{2})-(\d{2})$/, ":$1:$2")); }
+  /* ------------------------------------------------------- reading clips */
 
-function scanFileList(entries) {
-  // entries: [{relPath, file}]
-  const events = new Map();
-  const recent = [];
-  for (const { relPath, file } of entries) {
-    const parts = relPath.split("/").filter(Boolean);
-    const ti = parts.findIndex(p => p in TYPE_DIRS);
-    if (ti < 0) continue;
-    const type = TYPE_DIRS[parts[ti]];
-    if (type === "recent") {
-      const m = FILE_RE.exec(parts[parts.length - 1]);
-      if (m) recent.push({ start: m[1], cam: m[2], file });
-      continue;
+  /* Length from the clip's own moov/mvhd. Tesla writes moov at the end, so walk
+     the top-level boxes with small slices and read only moov — never the
+     whole 80 MB file. null when there is no readable moov (truncated, encrypted). */
+  async function clipDuration(file) {
+    let pos = 0;
+    try {
+      for (let guard = 0; guard < 64 && pos + 8 <= file.size; guard++) {
+        const head = await file.slice(pos, pos + 16).arrayBuffer();
+        const dv = new DataView(head);
+        let len = dv.getUint32(0), hdr = 8;
+        const type = String.fromCharCode(...new Uint8Array(head, 4, 4));
+        if (len === 1 && head.byteLength >= 16) { len = Number(dv.getBigUint64(8)); hdr = 16; }
+        else if (len === 0) len = file.size - pos;
+        if (len < hdr) return null;
+        if (type === "moov") {
+          if (len > 64 * 1024 * 1024) return null;
+          return omtSei.mp4Duration(await file.slice(pos, pos + len).arrayBuffer());
+        }
+        pos += len;
+      }
+    } catch (e) { /* unreadable: unknown length */ }
+    return null;
+  }
+
+  /* Firmware 2026.20+ container: metadata offset 0x1000 at 0x14 and a key id there */
+  async function isEncrypted(file) {
+    if (file.size < 0x2000) return false;
+    try {
+      const b = new DataView(await file.slice(0, 0x1004).arrayBuffer());
+      return b.getUint32(0x14) === 0x1000 && b.getUint32(0x1000) !== 0;
+    } catch (e) { return false; }
+  }
+
+  /* Fill duration/offset on every segment, the way GET /api/dashcam/event does:
+     front camera first, another camera if that fails, 60 s if none can be read. */
+  async function measure(ev) {
+    if (ev.measured) return ev.measured;
+    ev.measured = (async () => {
+      const firstCams = ev.segments[0].cameras;
+      ev.locked = await isEncrypted(firstCams.front || firstCams[Object.keys(firstCams)[0]]);
+      let off = 0;
+      for (const s of ev.segments) {
+        let d = null;
+        if (!ev.locked) {
+          for (const cam of ["front", ...Object.keys(s.cameras).filter((c) => c !== "front")]) {
+            if (!s.cameras[cam]) continue;
+            d = await clipDuration(s.cameras[cam]);
+            if (d) break;
+          }
+        }
+        s.duration_known = !!d;
+        s.duration = d || 60;
+        s.offset = off;
+        off += s.duration;
+      }
+      ev.duration = off;
+      return ev;
+    })();
+    return ev.measured;
+  }
+
+  /* ---------------------------------------------------------- scanning */
+  function scanFileList(entries) {
+    const events = new Map();
+    const recent = [];
+    for (const { relPath, file } of entries) {
+      const parts = relPath.split("/").filter(Boolean);
+      const ti = parts.findIndex((p) => p in TYPE_DIRS);
+      if (ti < 0) continue;
+      const type = TYPE_DIRS[parts[ti]];
+      const name = parts[parts.length - 1];
+      if (type === "recent") {
+        const m = FILE_RE.exec(name);
+        if (m && !isNaN(naiveMs(isoOf(m[1])))) recent.push({ start: m[1], cam: m[2], file });
+        continue;
+      }
+      const folder = parts[ti + 1];
+      if (!folder || !/^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/.test(folder) || isNaN(naiveMs(isoOf(folder)))) continue;
+      const id = parts[ti] + "/" + folder;
+      const ev = events.get(id) || { id, type, folder, timestamp: isoOf(folder), city: "", reason: "",
+                                     thumbFile: null, metaFile: null, segMap: new Map() };
+      if (name === "thumb.png") ev.thumbFile = file;
+      else if (name === "event.json") ev.metaFile = file;
+      else {
+        const m = FILE_RE.exec(name);
+        if (m && !isNaN(naiveMs(isoOf(m[1])))) {
+          const seg = ev.segMap.get(m[1]) || { stamp: m[1], start: isoOf(m[1]), cameras: {} };
+          seg.cameras[m[2]] = file;
+          ev.segMap.set(m[1], seg);
+        }
+      }
+      events.set(id, ev);
     }
-    const folder = parts[ti + 1];
-    if (!folder || !/^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/.test(folder)) continue;
-    const id = parts[ti] + "/" + folder;
-    const ev = events.get(id) || { id, type, folder, timestamp: folder, city: "", reason: "",
-                                   thumbFile: null, metaFile: null, segMap: new Map() };
-    const name = parts[parts.length - 1];
-    if (name === "thumb.png") ev.thumbFile = file;
-    else if (name === "event.json") ev.metaFile = file;
-    else {
-      const m = FILE_RE.exec(name);
-      if (m) {
-        const seg = ev.segMap.get(m[1]) || { start: m[1], cameras: {} };
-        seg.cameras[m[2]] = file;
-        ev.segMap.set(m[1], seg);
+    // RecentClips: a new event wherever two segments start more than 90 s apart
+    const bySeg = new Map();
+    for (const r of recent) {
+      const seg = bySeg.get(r.start) || { stamp: r.start, start: isoOf(r.start), cameras: {} };
+      seg.cameras[r.cam] = r.file;
+      bySeg.set(r.start, seg);
+    }
+    const sorted = [...bySeg.values()].sort((a, b) => a.stamp.localeCompare(b.stamp));
+    let group = [];
+    const flush = () => {
+      if (!group.length) return;
+      const id = "RecentClips/" + group[0].stamp;
+      events.set(id, { id, type: "recent", folder: group[0].stamp, timestamp: group[0].start, city: "", reason: "",
+                       thumbFile: null, metaFile: null, segMap: new Map(group.map((s) => [s.stamp, s])) });
+      group = [];
+    };
+    for (const seg of sorted) {
+      if (group.length && naiveMs(seg.start) - naiveMs(group[group.length - 1].start) > 90000) flush();
+      group.push(seg);
+    }
+    flush();
+
+    const out = [...events.values()].map((ev) => ({
+      ...ev, segments: [...ev.segMap.values()].sort((a, b) => a.stamp.localeCompare(b.stamp)),
+    })).filter((ev) => ev.segments.length);
+    out.sort((a, b) => b.folder.localeCompare(a.folder));
+    return out;
+  }
+
+  async function loadMeta(ev) {
+    if (!ev.metaFile) return;
+    try {
+      const data = JSON.parse(await ev.metaFile.text());
+      if (data && typeof data === "object") {
+        ev.city = String(data.city || "");
+        ev.reason = String(data.reason || "");
+        if (data.timestamp) ev.timestamp = String(data.timestamp);
+      }
+    } catch (e) { /* a broken event.json is ignored */ }
+  }
+
+  /* ------------------------------------------------------ picking files */
+  const drop = $("drop");
+  drop.addEventListener("click", () => $("picker").click());
+  drop.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("picker").click(); } });
+  $("repick").addEventListener("click", () => $("picker").click());
+  $("picker").addEventListener("change", (e) => {
+    ingest([...e.target.files].map((f) => ({ relPath: f.webkitRelativePath || f.name, file: f })));
+    e.target.value = "";
+  });
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    drop.classList.remove("over");
+    const entries = [];
+    async function walk(entry, path) {
+      if (entry.isFile) {
+        const file = await new Promise((res, rej) => entry.file(res, rej));
+        entries.push({ relPath: path + entry.name, file });
+      } else if (entry.isDirectory) {
+        const reader = entry.createReader();
+        let batch;
+        do {
+          batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+          for (const ch of batch) await walk(ch, path + entry.name + "/");
+        } while (batch.length);
       }
     }
-    events.set(id, ev);
-  }
-  // RecentClips 按 90s 间隔分组
-  const bySeg = new Map();
-  for (const r of recent) {
-    const seg = bySeg.get(r.start) || { start: r.start, cameras: {} };
-    seg.cameras[r.cam] = r.file;
-    bySeg.set(r.start, seg);
-  }
-  const sorted = [...bySeg.values()].sort((a, b) => a.start.localeCompare(b.start));
-  let group = [];
-  const flush = () => {
-    if (!group.length) return;
-    const id = "RecentClips/" + group[0].start;
-    events.set(id, { id, type: "recent", folder: group[0].start, timestamp: group[0].start,
-                     city: "", reason: "", thumbFile: null, metaFile: null,
-                     segMap: new Map(group.map(s => [s.start, s])) });
-    group = [];
-  };
-  for (const seg of sorted) {
-    if (group.length && parseTs(seg.start) - parseTs(group[group.length - 1].start) > 90000) flush();
-    group.push(seg);
-  }
-  flush();
-
-  const out = [...events.values()].map(ev => ({
-    ...ev, segments: [...ev.segMap.values()].sort((a, b) => a.start.localeCompare(b.start)),
-  })).filter(ev => ev.segments.length);
-  out.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-  return out;
-}
-
-async function loadMeta(ev) {
-  if (!ev.metaFile || ev._metaLoaded) return;
-  ev._metaLoaded = true;
-  try {
-    const data = JSON.parse(await ev.metaFile.text());
-    if (data && typeof data === "object") {
-      ev.city = String(data.city || ""); ev.reason = String(data.reason || "");
-      if (data.timestamp) ev.timestamp = String(data.timestamp);
-    }
-  } catch (e) { /* 坏 event.json 忽略 */ }
-}
-
-/* ---------------- 入口: 选择/拖拽 ---------------- */
-document.getElementById("drop").addEventListener("click", () => document.getElementById("picker").click());
-document.getElementById("picker").addEventListener("change", (e) => {
-  ingest([...e.target.files].map(f => ({ relPath: f.webkitRelativePath || f.name, file: f })));
-});
-const drop = document.getElementById("drop");
-drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.style.borderColor = "var(--accent)"; });
-drop.addEventListener("dragleave", () => drop.style.borderColor = "");
-drop.addEventListener("drop", async (e) => {
-  e.preventDefault(); drop.style.borderColor = "";
-  const entries = [];
-  async function walk(entry, path) {
-    if (entry.isFile) {
-      const file = await new Promise((res, rej) => entry.file(res, rej));
-      entries.push({ relPath: path + entry.name, file });
-    } else if (entry.isDirectory) {
-      const reader = entry.createReader();
-      let batch;
-      do {
-        batch = await new Promise((res, rej) => reader.readEntries(res, rej));
-        for (const ch of batch) await walk(ch, path + entry.name + "/");
-      } while (batch.length);
-    }
-  }
-  // dataTransfer.items 在首个 await 后会失效——必须先同步取出全部 entry
-  const roots = [...e.dataTransfer.items]
-    .map(item => item.webkitGetAsEntry && item.webkitGetAsEntry())
-    .filter(Boolean);
-  for (const entry of roots) await walk(entry, "");
-  ingest(entries);
-});
-
-async function ingest(entries) {
-  localEvents = scanFileList(entries);
-  await Promise.all(localEvents.map(loadMeta));
-  document.getElementById("browser").style.display = "block";
-  document.getElementById("scan-info").textContent =
-    t("usb.scan.summary", { events: localEvents.length, files: entries.length });
-  renderGrid();
-}
-
-document.querySelectorAll("#browser .tabs button").forEach(b => b.addEventListener("click", () => {
-  document.querySelectorAll("#browser .tabs button").forEach(x => x.classList.remove("active"));
-  b.classList.add("active"); curType = b.dataset.type; renderGrid();
-}));
-
-function renderGrid() {
-  freePool("grid");
-  const typeTag = { sentry: " " + t("dashcam.sentry"), saved: " " + t("dashcam.saved"), recent: " " + t("dashcam.driving") };
-  const div = document.getElementById("local-events");
-  const items = localEvents.filter(e => !curType || e.type === curType);
-  div.innerHTML = items.map((e, i) => `
-    <div class="event-card" data-i="${localEvents.indexOf(e)}">
-      ${e.thumbFile ? `<img src="${mkUrl("grid", e.thumbFile)}">` : '<div class="noimg"></div>'}
-      <div class="meta">
-        <div class="t">${typeTag[e.type]} · ${esc(e.folder)}</div>
-        <div class="sub">${esc(e.city)} ${esc(e.reason)} · ${e.segments.length} ${t("common.minutes")}</div>
-      </div>
-    </div>`).join("") || `<div class="empty" style="grid-column:1/-1">${t("usb.empty")}</div>`;
-  div.querySelectorAll(".event-card").forEach(card =>
-    card.addEventListener("click", () => openPlayer(localEvents[+card.dataset.i])));
-}
-
-/* ---------------- 本地播放器 ---------------- */
-let cur = null, segIdx = 0, mainCam = "front", playing = false, seiCache = {}, tmSamples = [];
-let playerGen = 0;  // 事件切换代号，丢弃过期的异步结果
-const $m = document.getElementById("lp-main"), $p = document.getElementById("lp-pips");
-
-/* blob URL 生命周期管理：75MB 级视频不回收会吃满内存 */
-const urlPools = { grid: [], seg: [] };
-function mkUrl(pool, file) {
-  const u = URL.createObjectURL(file);
-  urlPools[pool].push(u);
-  return u;
-}
-function freePool(pool) {
-  const old = urlPools[pool];
-  urlPools[pool] = [];
-  // 延迟回收，避免撤销仍被 <video>/<img> 引用的 URL
-  setTimeout(() => old.forEach(u => URL.revokeObjectURL(u)), 2000);
-}
-function urlOf(file) { return mkUrl("seg", file); }
-function rate() { return +document.getElementById("lp-rate").value; }
-
-function openPlayer(ev) {
-  cur = ev; segIdx = 0; seiCache = {}; tmSamples = [];
-  playerGen++;
-  document.getElementById("browser").style.display = "none";
-  document.getElementById("local-player").style.display = "block";
-  document.getElementById("lp-title").textContent =
-    t("usb.player.title", { folder: ev.folder, minutes: ev.segments.length });
-  document.getElementById("lp-meta").innerHTML =
-    `<b>${t("player.meta.title")}</b><div class="muted mt">${esc(ev.city)} ${esc(ev.reason)}<br>${t("common.cameras")}: ${
-      [...new Set(ev.segments.flatMap(s => Object.keys(s.cameras)))].map(c => camLabel(c)).join(" / ")}</div>`;
-  document.getElementById("lp-segs").innerHTML = ev.segments.map((s, i) =>
-    `<button onclick="loadSeg(${i})">${s.start.slice(11).replace(/-/g, ":")}</button>`).join("");
-  document.getElementById("lp-import-status").textContent = "";
-  loadServerTelemetry();
-  loadSeg(0);
-}
-function closePlayer() {
-  pauseAll();
-  document.getElementById("local-player").style.display = "none";
-  document.getElementById("browser").style.display = "block";
-}
-
-function loadSeg(i, keep = 0) {
-  segIdx = i;
-  freePool("seg");
-  const cams = cur.segments[i].cameras;
-  if (!cams[mainCam]) mainCam = Object.keys(cams)[0];
-  $m.src = urlOf(cams[mainCam]);
-  $m.currentTime = keep; $m.playbackRate = rate();
-  $p.innerHTML = "";
-  for (const cam of Object.keys(cams)) {
-    if (cam === mainCam) continue;
-    const v = document.createElement("video");
-    v.muted = true; v.playsInline = true; v.src = urlOf(cams[cam]);
-    v.currentTime = keep; v.playbackRate = rate(); v.title = camLabel(cam);
-    v.addEventListener("click", () => { mainCam = cam; loadSeg(segIdx, $m.currentTime); });
-    $p.appendChild(v);
-  }
-  document.querySelectorAll("#lp-segs button").forEach((b, j) => b.classList.toggle("active", j === i));
-  if (playing) playAll();
-  loadSei(i);
-}
-function playAll() {
-  playing = true;
-  $m.play().catch(() => document.getElementById("lp-hevc").style.display = "block");
-  $p.querySelectorAll("video").forEach(v => v.play().catch(() => {}));
-  document.getElementById("lp-play").textContent = `⏸ ${t("player.pause")}`;
-}
-function pauseAll() {
-  playing = false; $m.pause();
-  $p.querySelectorAll("video").forEach(v => v.pause());
-  document.getElementById("lp-play").textContent = `▶ ${t("player.play")}`;
-}
-document.getElementById("lp-play").addEventListener("click", () => playing ? pauseAll() : playAll());
-document.getElementById("lp-rate").addEventListener("change", () => {
-  $m.playbackRate = rate(); $p.querySelectorAll("video").forEach(v => v.playbackRate = rate());
-});
-$m.addEventListener("error", () => document.getElementById("lp-hevc").style.display = "block");
-$m.addEventListener("ended", () => segIdx < cur.segments.length - 1 ? loadSeg(segIdx + 1) : pauseAll());
-setInterval(() => {
-  if (!playing) return;
-  $p.querySelectorAll("video").forEach(v => {
-    if (Math.abs(v.currentTime - $m.currentTime) > 0.3) v.currentTime = $m.currentTime;
+    // dataTransfer.items is gone after the first await — take every entry first
+    const roots = [...e.dataTransfer.items].map((it) => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean);
+    for (const entry of roots) await walk(entry, "");
+    ingest(entries);
   });
-}, 1000);
-$m.addEventListener("timeupdate", () => {
-  if (!cur) return;
-  const total = cur.segments.length * 60, pos = segIdx * 60 + $m.currentTime;
-  document.getElementById("lp-seek").value = total ? pos / total * 100 : 0;
-  document.getElementById("lp-time").textContent = fmt.ts(pos) + " / " + fmt.ts(total);
-});
-document.getElementById("lp-seek").addEventListener("input", (e) => {
-  const want = +e.target.value / 100 * cur.segments.length * 60;
-  const i = Math.min(Math.floor(want / 60), cur.segments.length - 1);
-  i !== segIdx ? loadSeg(i, want - i * 60) : $m.currentTime = want - i * 60;
-});
 
-/* 取视频真实时长（哨兵事件末段不足 60s，按 60s 估 fps 会拉伸时间轴） */
-const durCache = new WeakMap();
-function fileDuration(file) {
-  if (durCache.has(file)) return Promise.resolve(durCache.get(file));
-  return new Promise((resolve) => {
-    const v = document.createElement("video");
-    v.preload = "metadata";
-    const u = URL.createObjectURL(file);
-    v.onloadedmetadata = () => {
-      durCache.set(file, v.duration);
-      URL.revokeObjectURL(u);
-      resolve(v.duration);
-    };
-    v.onerror = () => { URL.revokeObjectURL(u); resolve(60); };
-    v.src = u;
-  });
-}
-
-async function loadSei(i) {
-  if (seiCache[i] !== undefined) { updateStats(); return; }
-  seiCache[i] = null;
-  const gen = playerGen;
-  const cams = cur.segments[i].cameras;
-  const f = cams.front || cams[Object.keys(cams)[0]];
-  let samples = [];
-  if (f) {
-    const dur = await fileDuration(f);
-    samples = await omtSei.extract(f, { durationS: dur && isFinite(dur) ? dur : 60 });
+  async function ingest(entries) {
+    closePlayer();
+    freePool("grid");
+    localEvents = scanFileList(entries);
+    fileCount = entries.length;
+    await Promise.all(localEvents.map(loadMeta));
+    $("pick").hidden = localEvents.length > 0;
+    $("browser").hidden = false;
+    $("scan-info").textContent = t("usb.scan.summary", { events: localEvents.length, files: fileCount });
+    renderGrid();
+    // lengths and encryption, newest first, a few at a time
+    const queue = [...localEvents];
+    await Promise.all([0, 1, 2].map(async () => {
+      while (queue.length) { const ev = queue.shift(); await measure(ev); paintCard(ev); }
+    }));
   }
-  if (gen !== playerGen) return;  // 期间已切换事件，丢弃
-  seiCache[i] = samples;
-  updateStats();
-}
-async function loadServerTelemetry() {
-  const gen = playerGen;
-  try {
-    const start = cur.segments[0].start.replace("_", "T").replace(/-(\d{2})-(\d{2})$/, ":$1:$2");
-    const endD = new Date(parseTs(cur.segments[cur.segments.length - 1].start).getTime() + 60000);
-    const pad = n => String(n).padStart(2, "0");
-    const end = `${endD.getFullYear()}-${pad(endD.getMonth() + 1)}-${pad(endD.getDate())}T${pad(endD.getHours())}:${pad(endD.getMinutes())}:${pad(endD.getSeconds())}`;
-    const savedCar = +localStorage.getItem("omt_car");
-    const r = await apiGet(`/api/dashcam/telemetry?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}&step=1`
-                           + (savedCar ? `&car_id=${savedCar}` : ""));
+
+  $("type-pick").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+    $("type-pick").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+    curType = b.dataset.type;
+    renderGrid();
+  }));
+
+  function cardMeta(ev) {
+    const reason = ev.reason ? (REASON_KEYS[ev.reason] ? t(REASON_KEYS[ev.reason]) : ev.reason) : "";
+    const length = ev.duration != null ? len(ev.duration) + (ev.segments.some((s) => !s.duration_known) ? " +" : "") : "…";
+    return [ev.city, reason, length].filter(Boolean).join(" · ");
+  }
+  function paintCard(ev) {
+    const card = document.querySelector(`.usb-card[data-i="${localEvents.indexOf(ev)}"]`);
+    if (!card) return;
+    card.querySelector(".r2").textContent = cardMeta(ev);
+    const th = card.querySelector(".th");
+    if (ev.locked && !th.querySelector(".lock")) th.insertAdjacentHTML("beforeend", `<span class="lock">${icon("lock", 12)}${esc(t("player.seg.locked"))}</span>`);
+  }
+  function renderGrid() {
+    freePool("grid");
+    const items = localEvents.filter((e) => !curType || e.type === curType);
+    const div = $("local-events");
+    div.innerHTML = items.map((e) => `
+      <button type="button" class="usb-card" data-i="${localEvents.indexOf(e)}">
+        <div class="th">${e.thumbFile ? `<img alt="" src="${mkUrl("grid", e.thumbFile)}">` : icon("film", 24)}</div>
+        <div class="m">
+          <div class="r1">${icon(TYPE_ICON[e.type] || "film", 14)}<span>${esc(t(TYPE_KEYS[e.type] || "dashcam.recent"))}</span><span class="sp"></span>
+            <span class="when">${esc(clock(naiveMs(isoOf(e.folder)), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }))}</span></div>
+          <div class="r2">${esc(cardMeta(e))}</div>
+        </div>
+      </button>`).join("") || `<div class="empty" style="grid-column:1/-1">${esc(t("usb.empty"))}</div>`;
+    div.querySelectorAll(".usb-card").forEach((card) => card.addEventListener("click", () => openPlayer(localEvents[+card.dataset.i])));
+    items.forEach((e) => { if (e.measured) e.measured.then(() => paintCard(e)); });
+  }
+
+  /* blob URLs: 80 MB clips that are never revoked fill the tab's memory */
+  const urlPools = { grid: [], seg: [] };
+  function mkUrl(pool, file) { const u = URL.createObjectURL(file); urlPools[pool].push(u); return u; }
+  function freePool(pool) {
+    const old = urlPools[pool];
+    urlPools[pool] = [];
+    setTimeout(() => old.forEach((u) => URL.revokeObjectURL(u)), 2000);   // after <video>/<img> let go
+  }
+
+  /* ------------------------------------------------------------ player */
+  let cur = null, segIdx = 0, mainCam = "front", playing = false, seiCache = {}, tmSamples = [];
+  let playerGen = 0;      // bumps on every event switch so late async results are dropped
+  let tmBase = NaN, tmEnd = NaN, tmLoading = false;   // naive-ms window the TeslaMate samples cover
+  const TM_WINDOW_MS = 4 * 3600 * 1000;               // the hub caps one request at 4.5 h
+  let carId = null;
+  const $m = $("lp-main"), $p = $("lp-pips"), $seek = $("lp-seek");
+  const rate = () => +$("lp-rate").value;
+  const seg = (i) => cur.segments[i];
+  const position = () => (cur ? seg(segIdx).offset + ($m.currentTime || 0) : 0);
+
+  function locate(pos) {
+    const p = Math.max(0, Math.min(pos, cur.duration));
+    let i = 0;
+    while (i < cur.segments.length - 1 && p >= seg(i + 1).offset) i++;
+    return { idx: i, within: Math.max(0, Math.min(p - seg(i).offset, seg(i).duration - 0.05)) };
+  }
+
+  async function openPlayer(ev) {
+    const gen = ++playerGen;
+    cur = ev; segIdx = 0; seiCache = {}; tmSamples = []; mainCam = "front"; tmBase = NaN; tmEnd = NaN; tmLoading = false;
+    $("browser").hidden = true;
+    $("pick").hidden = true;
+    $("usb-head").hidden = true;
+    document.querySelector(".usb-sub").hidden = true;
+    $("local-player").hidden = false;
+    window.scrollTo({ top: 0 });
+    await measure(ev);
     if (gen !== playerGen) return;
-    tmSamples = r.samples;
-  } catch (e) { if (gen === playerGen) tmSamples = []; }
-}
-function nearest(arr, at) {
-  if (!arr || !arr.length) return null;
-  let best = null, bd = 1e9;
-  for (const s of arr) { const d = Math.abs(s.t - at); if (d < bd) { bd = d; best = s; } }
-  return bd <= 3 ? best : null;
-}
-setInterval(() => {
-  if (!cur) return;
-  const se = nearest(seiCache[segIdx], $m.currentTime);
-  const tm = nearest(tmSamples, segIdx * 60 + $m.currentTime);
-  const set = (id, v) => document.getElementById(id).textContent = v;
-  const speed = se && se.speed_kmh != null ? se.speed_kmh : (tm && tm.speed != null ? tm.speed : null);
-  set("lh-speed", speed != null ? U.speed(speed) : "--");
-  set("lh-speed-unit", U.speedLabel());
-  set("lh-gear", se ? `${se.gear || "–"}${se.ap ? " · " + se.ap : ""}${se.brake ? " · " + t("player.hud.brake") : ""}` : "–");
-  set("lh-steer", se && se.steering_angle != null ? (se.steering_angle > 0 ? "+" : "") + Math.round(se.steering_angle) + "°" : "–");
-  set("lh-pedal", se && se.accel_pedal != null ? Math.round(se.accel_pedal) + "%" : "–");
-  set("lh-power", tm && tm.power != null ? Math.round(tm.power) + " kW" : "–");
-  set("lh-soc", tm && (tm.usable_battery_level ?? tm.battery_level) != null ? Math.round(tm.usable_battery_level ?? tm.battery_level) + "%" : "–");
-  const clk = new Date(parseTs(cur.segments[segIdx].start).getTime() + $m.currentTime * 1000);
-  set("lh-clock", clk.toLocaleString(localeTag()));
-}, 300);
-
-function updateStats() {
-  const s = seiCache[segIdx];
-  const div = document.getElementById("lp-stats");
-  if (!s || !s.length) { div.innerHTML = `<b>${t("dashcam.sei.title_short")}</b><div class='muted mt'>${t("dashcam.sei.none")}</div>`; return; }
-  let apN = 0, brakes = 0, prevBrake = false, maxG = 0, maxV = 0;
-  for (const x of s) {
-    if (x.ap) apN++;
-    if (x.brake && !prevBrake) brakes++;
-    prevBrake = x.brake;
-    if (x.accel_x != null && x.accel_y != null) maxG = Math.max(maxG, Math.hypot(x.accel_x, x.accel_y) / 9.81);
-    if (x.speed_kmh) maxV = Math.max(maxV, x.speed_kmh);
+    paintHead();
+    paintImportCard();
+    $("lp-segs").innerHTML = ev.segments.map((s, i) =>
+      `<button type="button" class="${s.duration_known ? "" : "unknown"}" data-i="${i}">${esc(hms(naiveMs(s.start)))}<small>${s.duration_known ? esc(len(s.duration)) : ev.locked ? icon("lock", 12) : "?"}</small></button>`).join("");
+    $("lp-segs").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => loadSeg(+b.dataset.i)));
+    paintTrack();
+    $("lp-import-status").textContent = "";
+    $("lp-progress").hidden = true;
+    loadServerTelemetry();
+    loadSeg(0);
   }
-  div.innerHTML = `<b>${t("dashcam.sei.title")}</b><div class="muted mt">
-    ${t("dashcam.sei.summary_ap", { pct: Math.round(apN / s.length * 100), brakes })}<br>
-    ${t("dashcam.sei.summary_max", { speed: U.speed(maxV), unit: U.speedLabel(), g: maxG.toFixed(2) })}</div>`;
-}
 
-/* ---------------- 导入到服务器 ---------------- */
-document.getElementById("lp-import").addEventListener("click", async () => {
-  const btn = document.getElementById("lp-import");
-  const status = document.getElementById("lp-import-status");
-  btn.disabled = true;
-  const items = [];
-  const dir = cur.type === "recent" ? null : cur.id;  // "SentryClips/2026-.../"
-  for (const seg of cur.segments)
-    for (const [cam, file] of Object.entries(seg.cameras))
-      items.push({ rel: dir ? `${dir}/${seg.start}-${cam}.mp4` : `RecentClips/${seg.start}-${cam}.mp4`, file });
-  if (cur.metaFile && dir) items.push({ rel: `${dir}/event.json`, file: cur.metaFile });
-  if (cur.thumbFile && dir) items.push({ rel: `${dir}/thumb.png`, file: cur.thumbFile });
+  function closePlayer() {
+    if (!cur) return;
+    pauseAll();
+    playerGen++;
+    cur = null;
+    $m.removeAttribute("src"); $m.load();
+    $p.querySelectorAll("video").forEach((v) => { v.removeAttribute("src"); v.load(); });
+    $p.innerHTML = "";
+    freePool("seg");
+    $("local-player").hidden = true;
+    $("browser").hidden = false;
+    $("usb-head").hidden = false;
+    document.querySelector(".usb-sub").hidden = false;
+  }
+  $("lp-close").addEventListener("click", closePlayer);
 
-  let done = 0, failed = 0;
-  for (const [idx, it] of items.entries()) {
-    status.textContent = t("usb.import.uploading", { done: done + 1, total: items.length, file: it.rel.split("/").pop() });
-    const fd = new FormData();
-    fd.append("files", it.file, it.file.name);
-    fd.append("paths", it.rel);
-    if (idx === items.length - 1) fd.append("rescan", "true");  // 全部传完才重扫一次
+  function paintHead() {
+    $("lp-kind").textContent = [t(TYPE_KEYS[cur.type] || "dashcam.recent"), cur.city].filter(Boolean).join(" · ");
+    const at = naiveMs(cur.timestamp);
+    $("lp-title").textContent = isNaN(at) ? cur.folder
+      : clock(at, { weekday: "long", month: "long", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    const cams = [...new Set(cur.segments.flatMap((s) => Object.keys(s.cameras)))];
+    const facts = [];
+    if (cur.reason) facts.push(`<span>${esc(REASON_KEYS[cur.reason] ? t(REASON_KEYS[cur.reason]) : cur.reason)}</span>`);
+    const unknown = cur.segments.some((s) => !s.duration_known);
+    facts.push(`<span>${icon("clock", 15)}${esc(len(cur.duration))}${unknown ? " " + esc(t("player.facts.approx")) : ""}</span>`);
+    facts.push(`<span>${icon("film", 15)}${esc(t(cams.length === 1 ? "player.facts.camera_one" : "player.facts.cameras", { n: cams.length }))}</span>`);
+    if (cur.locked) facts.push(`<span class="warn">${icon("lock", 15)}${esc(t("player.seg.locked"))}</span>`);
+    $("lp-facts").innerHTML = facts.join("");
+  }
+
+  function paintImportCard() {
+    const recent = cur.type === "recent";
+    $("lp-import-desc").textContent = cur.locked ? t("usb.import.desc_locked")
+      : recent ? t("usb.import.desc_recent") : t("usb.import.desc");
+  }
+
+  function paintVeil(kind) {
+    const v = $("lp-veil");
+    v.hidden = !kind;
+    if (!kind) return;
+    v.innerHTML = kind === "locked"
+      ? `${icon("lock", 28)}<div class="t">${esc(t("player.veil.locked_title"))}</div><div class="s">${esc(t("usb.veil.locked_body"))}</div>`
+      : `${icon("warn", 28)}<div class="t">${esc(t("player.veil.bad_title"))}</div><div class="s">${esc(t("player.veil.bad_body"))}</div>`;
+  }
+
+  function loadSeg(i, keep = 0) {
+    segIdx = i;
+    freePool("seg");
+    const cams = seg(i).cameras;
+    if (!cams[mainCam]) mainCam = cams.front ? "front" : Object.keys(cams)[0];
+    if (cur.locked) { $m.removeAttribute("src"); $m.load(); paintVeil("locked"); }
+    else {
+      paintVeil(null);
+      $m.src = mkUrl("seg", cams[mainCam]);
+      $m.currentTime = keep; $m.playbackRate = rate();
+    }
+    $("lp-camtag").hidden = false;
+    $("lp-camtag").textContent = camName(mainCam);
+    $p.querySelectorAll("video").forEach((v) => { v.pause(); v.removeAttribute("src"); v.load(); });
+    $p.innerHTML = "";
+    if (!cur.locked) {
+      for (const cam of [...CAMS, ...Object.keys(cams).filter((c) => !CAMS.includes(c))]) {
+        if (cam === mainCam || !cams[cam]) continue;
+        const b = document.createElement("button");
+        b.type = "button"; b.className = "pip"; b.title = camName(cam);
+        const v = document.createElement("video");
+        v.muted = true; v.playsInline = true;
+        v.src = mkUrl("seg", cams[cam]);
+        v.currentTime = keep; v.playbackRate = rate();
+        b.append(v);
+        b.insertAdjacentHTML("beforeend", `<span>${esc(camName(cam))}</span>`);
+        b.addEventListener("click", () => { mainCam = cam; loadSeg(segIdx, $m.currentTime); });
+        $p.append(b);
+      }
+    }
+    $("lp-segs").querySelectorAll("button").forEach((b, j) => b.classList.toggle("on", j === i));
+    $("lp-hevc").hidden = true;
+    if (playing) playAll();
+    loadSei(i);
+    paintTime();
+  }
+
+  function seekTo(pos) {
+    const { idx, within } = locate(pos);
+    if (idx !== segIdx || !$m.getAttribute("src")) loadSeg(idx, within);
+    else { $m.currentTime = within; $p.querySelectorAll("video").forEach((v) => { v.currentTime = within; }); }
+    paintTime();
+  }
+
+  function paintPlay() {
+    $("lp-play").innerHTML = playing ? pauseIcon(18) : icon("play", 18);
+    $("lp-play").setAttribute("aria-label", playing ? t("player.pause") : t("player.play"));
+  }
+  function playAll() {
+    playing = true;
+    if ($m.getAttribute("src")) $m.play().catch(() => {});
+    $p.querySelectorAll("video").forEach((v) => v.play().catch(() => {}));
+    paintPlay();
+  }
+  function pauseAll() {
+    playing = false;
+    $m.pause();
+    $p.querySelectorAll("video").forEach((v) => v.pause());
+    paintPlay();
+  }
+  $("lp-play").addEventListener("click", () => (playing ? pauseAll() : playAll()));
+  $("lp-rate").addEventListener("change", () => {
+    $m.playbackRate = rate();
+    $p.querySelectorAll("video").forEach((v) => { v.playbackRate = rate(); });
+  });
+  $m.addEventListener("error", () => {
+    if (!cur || !$m.getAttribute("src")) return;
+    if (!seg(segIdx).duration_known) paintVeil("bad");
+    else $("lp-hevc").hidden = false;
+  });
+  $m.addEventListener("ended", () => (segIdx < cur.segments.length - 1 ? loadSeg(segIdx + 1) : pauseAll()));
+  setInterval(() => {
+    if (!playing) return;
+    $p.querySelectorAll("video").forEach((v) => {
+      if (Math.abs(v.currentTime - $m.currentTime) > 0.3) v.currentTime = $m.currentTime;
+    });
+  }, 1000);
+
+  function paintTrack() {
+    const T = cur.duration || 1, pct = (x) => ((x / T) * 100).toFixed(3) + "%";
+    $("lp-track").innerHTML = cur.segments.map((s) =>
+      `<i class="tk-seg${s.duration_known ? "" : " unknown"}" style="left:${pct(s.offset)};width:${pct(s.duration)}"></i>`).join("")
+      + `<i class="tk-fill" id="lp-fill"></i>`
+      + cur.segments.slice(1).map((s) => `<i class="tk-cut" style="left:${pct(s.offset)}"></i>`).join("");
+    $seek.max = T;
+  }
+  function paintTime() {
+    if (!cur) return;
+    const pos = position(), T = cur.duration;
+    $seek.value = pos;
+    $("lp-time").textContent = fmt.ts(pos) + " / " + len(T);
+    const fill = $("lp-fill");
+    if (fill) fill.style.width = (T ? (pos / T) * 100 : 0) + "%";
+  }
+  $m.addEventListener("timeupdate", paintTime);
+  $seek.addEventListener("input", () => { if (cur) seekTo(+$seek.value); });
+
+  /* SEI decodes in the browser; the clip's own length sets the frame timing */
+  async function loadSei(i) {
+    if (seiCache[i] !== undefined || cur.locked) { paintStats(); return; }
+    seiCache[i] = null;
+    const gen = playerGen;
+    const cams = seg(i).cameras;
+    const f = cams.front || cams[Object.keys(cams)[0]];
+    const samples = f ? await omtSei.extract(f, { step: 0.5 }) : [];
+    if (gen !== playerGen) return;
+    seiCache[i] = samples;
+    paintStats();
+  }
+
+  async function loadServerTelemetry() {
+    const gen = playerGen;
+    const last = seg(cur.segments.length - 1);
+    let from = naiveMs(seg(0).start), to = naiveMs(last.start) + (last.duration + 2) * 1000;
+    if (to - from > TM_WINDOW_MS) {
+      from = Math.max(from, naiveMs(seg(segIdx).start) - 30 * 60 * 1000);
+      to = Math.min(to, from + TM_WINDOW_MS);
+    }
+    tmLoading = true;
+    let samples = [];
     try {
-      const r = await fetch("/api/dashcam/import", { method: "POST", body: fd });
-      if (!r.ok) failed++;
-    } catch (e) { failed++; }
-    done++;
+      const r = await apiGet(`/api/dashcam/telemetry?start=${encodeURIComponent(naiveIso(from))}&end=${encodeURIComponent(naiveIso(to))}&step=1`
+                             + (carId ? `&car_id=${carId}` : ""));
+      samples = r.samples || [];
+    } catch (e) { samples = []; }
+    if (gen !== playerGen) return;
+    tmSamples = samples; tmBase = from; tmEnd = to; tmLoading = false;
   }
-  // RecentClips 伪事件在服务器端会与已有片段重新分组，id 可能变化 → 链接到列表页
-  const link = cur.type === "recent"
-    ? `<a href="/dashcam">${t("usb.import.link_list")}</a>`
-    : `<a href="/dashcam/play?id=${encodeURIComponent(cur.id)}">${t("usb.import.link_player")}</a>`;
-  status.innerHTML = failed
-    ? t("usb.import.partial", { failed })
-    : t("usb.import.done", { count: done, link });
-  btn.disabled = false;
-});
+
+  function nearestT(arr, tt, maxGap = 3) {
+    if (!arr || !arr.length) return null;
+    let lo = 0, hi = arr.length - 1;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (arr[mid].t < tt) lo = mid + 1; else hi = mid; }
+    let best = arr[lo];
+    if (lo > 0 && Math.abs(arr[lo - 1].t - tt) < Math.abs(best.t - tt)) best = arr[lo - 1];
+    return Math.abs(best.t - tt) <= maxGap ? best : null;
+  }
+  const setText = (id, v) => { const n = $(id); if (n.textContent !== v) n.textContent = v; };
+  setInterval(() => {
+    if (!cur || cur.duration == null) return;
+    $("lp-hud").hidden = !!cur.locked;
+    const c = $m.currentTime || 0;
+    const startMs = naiveMs(seg(segIdx).start);
+    const se = nearestT(seiCache[segIdx], c, 1.5);
+    // TeslaMate samples are keyed by wall-clock seconds since the requested start
+    const nowMs = startMs + c * 1000;
+    if (!tmLoading && !isNaN(tmBase) && (nowMs < tmBase || nowMs > tmEnd)) loadServerTelemetry();
+    const tm = nearestT(tmSamples, (nowMs - tmBase) / 1000);
+    const speed = se && se.speed_kmh != null ? se.speed_kmh : tm && tm.speed != null ? tm.speed : null;
+    setText("lh-speed", speed != null ? String(U.speed(speed)) : "–");
+    setText("lh-speed-unit", U.speedLabel());
+    setText("lh-gear", se ? [se.gear || "–", se.ap, se.brake ? t("player.hud.brake") : ""].filter(Boolean).join(" · ") : "–");
+    setText("lh-steer", se && se.steering_angle != null ? (se.steering_angle > 0 ? "+" : "") + Math.round(se.steering_angle) + "°" : "–");
+    setText("lh-pedal", se && se.accel_pedal != null ? Math.round(se.accel_pedal) + "%" : "–");
+    setText("lh-power", tm && tm.power != null ? Math.round(tm.power) + " kW" : "–");
+    const soc = tm && (tm.usable_battery_level ?? tm.battery_level);
+    setText("lh-soc", soc != null ? Math.round(soc) + "%" : "–");
+    setText("lh-clock", clock(startMs + c * 1000, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+  }, 250);
+
+  function paintStats() {
+    const s = seiCache[segIdx];
+    const box = $("lp-stats");
+    if (!s || !s.length) { $("v-lp-sei").textContent = ""; box.textContent = t("dashcam.sei.none"); return; }
+    let apN = 0, brakes = 0, prev = false, maxG = 0, maxV = 0;
+    for (const x of s) {
+      if (x.ap) apN++;
+      if (x.brake && !prev) brakes++;
+      prev = x.brake;
+      if (x.accel_x != null && x.accel_y != null) maxG = Math.max(maxG, Math.hypot(x.accel_x, x.accel_y) / 9.81);
+      if (x.speed_kmh) maxV = Math.max(maxV, x.speed_kmh);
+    }
+    $("v-lp-sei").textContent = t("player.sei.value", { speed: U.speed(maxV), unit: U.speedLabel() });
+    box.innerHTML = `<div class="tertiary">${esc(t("player.sei.scope", { time: hms(naiveMs(seg(segIdx).start)) }))}</div>
+      <div class="mt">${esc(t("dashcam.sei.summary_ap", { pct: Math.round((apN / s.length) * 100), brakes }))}</div>
+      <div class="mt">${esc(t("dashcam.sei.summary_max", { speed: U.speed(maxV), unit: U.speedLabel(), g: maxG.toFixed(2) }))}</div>`;
+  }
+
+  /* ------------------------------------------------------------ import */
+  $("lp-import").addEventListener("click", async () => {
+    const btn = $("lp-import"), status = $("lp-import-status"), bar = $("lp-progress");
+    const ev = cur;
+    btn.disabled = true;
+    const items = [];
+    const dir = ev.type === "recent" ? null : ev.id;
+    for (const s of ev.segments)
+      for (const [cam, file] of Object.entries(s.cameras))
+        items.push({ rel: dir ? `${dir}/${s.stamp}-${cam}.mp4` : `RecentClips/${s.stamp}-${cam}.mp4`, file });
+    if (ev.metaFile && dir) items.push({ rel: `${dir}/event.json`, file: ev.metaFile });
+    if (ev.thumbFile && dir) items.push({ rel: `${dir}/thumb.png`, file: ev.thumbFile });
+
+    let done = 0, failed = 0;
+    bar.hidden = false;
+    for (const [idx, it] of items.entries()) {
+      status.textContent = t("usb.import.uploading", { done: done + 1, total: items.length, file: it.rel.split("/").pop() });
+      const fd = new FormData();
+      fd.append("files", it.file, it.file.name);
+      fd.append("paths", it.rel);
+      if (idx === items.length - 1) fd.append("rescan", "true");   // rescan once, after the last file
+      try {
+        const r = await fetch("/api/dashcam/import", { method: "POST", body: fd });
+        if (!r.ok) failed++;
+      } catch (e) { failed++; }
+      done++;
+      bar.firstElementChild.style.width = Math.round((done / items.length) * 100) + "%";
+    }
+    // A RecentClips event is regrouped with what the hub already has, so its id may change
+    const link = ev.type === "recent"
+      ? `<a href="/dashcam" style="text-decoration:underline">${esc(t("usb.import.link_list"))}</a>`
+      : `<a href="/dashcam/play?id=${encodeURIComponent(ev.id)}" style="text-decoration:underline">${esc(t(ev.locked ? "usb.import.link_decrypt" : "usb.import.link_player"))}</a>`;
+    status.innerHTML = failed ? esc(t("usb.import.partial", { failed })) : t("usb.import.done", { count: done, link });
+    btn.disabled = false;
+  });
+
+  /* ------------------------------------------------------------- start */
+  window.addEventListener("omt:locale", () => {
+    document.title = t("usb.page_title");
+    if (localEvents.length) { $("scan-info").textContent = t("usb.scan.summary", { events: localEvents.length, files: fileCount }); renderGrid(); }
+    if (cur) { paintHead(); paintImportCard(); paintStats(); }
+    paintPlay();
+  });
+
+  i18nReady.catch(() => {}).then(async () => {
+    paintPlay();
+    carId = await initCarPicker("#car-picker", (id) => { carId = id; if (cur) loadServerTelemetry(); });
+  });
+})();
 </script>
 {% endblock %}

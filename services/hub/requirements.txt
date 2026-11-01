@@ -15,3 +15,7 @@ pywebpush>=2.0
 # 只能靠 uvicorn[standard] 间接带进来（版本不定），配好 token 才会发现连不上。
 websockets>=12
 
+# Signed vehicle commands (Fleet API) and Bluetooth, implemented in-process.
+# Every 2021+ car — Cybertruck included — rejects unsigned commands; this
+# replaces the separate Go signing proxy. Apache-2.0, needs Python >= 3.13.
+tesla-fleet-api==1.20.1

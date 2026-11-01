@@ -32,27 +32,15 @@ SETTINGS_KEY = "automations"
 # 每条规则两次执行之间的最小间隔（秒）。可按规则覆盖。
 DEFAULT_COOLDOWN_S = 300
 
-# 允许自动化调用的指令。**故意不含 door_unlock**：
-# 一条写错的规则半夜把车解锁，和其它任何 bug 都不是一个量级的后果。
-# 要用的人可以在 .env 里显式放开（AUTOMATION_ALLOW_UNLOCK=true）。
-SAFE_COMMANDS = frozenset({
-    "climate_on", "climate_off", "set_temps", "driver_temp",
-    "charge_start", "charge_stop", "set_charge_limit",
-    "charge_port_open", "charge_port_close",
-    "door_lock", "sentry_on", "sentry_off",
-    "flash_lights", "honk_horn", "vent_windows", "close_windows",
-    "wake_up",
-    # 补齐的那批里，语义安全的都放进来。boombox 归到高危：
-    # 它会在车外放声音，半夜被一条规则触发是扰民。
-    "seat_heater_left", "seat_heater_right",
-    "steering_heater_on", "steering_heater_off",
-    "defrost_on", "defrost_off", "set_charge_amps",
-    "dog_mode_on", "camp_mode_on", "keeper_off",
-    "cabin_overheat_on", "cabin_overheat_off",
-    "media_toggle", "media_next", "media_prev",
-    "schedule_charge", "schedule_charge_off",
-})
-RISKY_COMMANDS = frozenset({"door_unlock", "trunk", "frunk", "boombox"})
+# 允许自动化调用的指令，按指令表里的风险等级划分（tesla/catalog.py 是唯一来源）。
+# 风险 0 的可以直接用；风险 ≥1 的（解锁、开前备箱/尾门、关哨兵、开车窗……）
+# 要在 .env 里显式放开（AUTOMATION_ALLOW_UNLOCK=true）——一条写错的规则半夜
+# 把车解锁，和其它任何 bug 都不是一个量级的后果。风险 2（远程启动）永远不行。
+from ..tesla import catalog as _catalog  # noqa: E402
+
+SAFE_COMMANDS = frozenset(
+    [c.id for c in _catalog.COMMANDS.values() if c.risk == 0] + list(_catalog.ALIASES))
+RISKY_COMMANDS = frozenset(c.id for c in _catalog.COMMANDS.values() if c.risk == 1)
 
 # 支持的触发类型
 TRIGGERS = {
@@ -209,13 +197,23 @@ class AutomationEngine:
                 log.error("automation %s: %s is not an allowed command", rule.get("id"), name)
                 continue
 
+            t0 = time.time()
             try:
                 res = await cmd.send(int(car_id), name, action.get("params") or {})
                 log.info("automation %s ran %s -> %s", rule.get("id"), name, res.get("ok"))
+                # Logged on success too: Sentry reads this log to tell the
+                # owner's own actions (an automation opening the frunk) from
+                # someone at the car, and it's the audit trail.
+                await store.log_command(car_id, name, action.get("params"),
+                                        f"automation:{rule.get('id')}", bool(res.get("ok", True)), "",
+                                        int((time.time() - t0) * 1000))
             except Exception as e:
                 log.exception("automation %s: command %s failed", rule.get("id"), name)
+                code = getattr(e, "code", "")
                 await store.log_command(car_id, name, action.get("params"),
-                                        f"automation:{rule.get('id')}", False, str(e), 0)
+                                        f"automation:{rule.get('id')}", False,
+                                        f"{code}: {e}" if code else str(e),
+                                        int((time.time() - t0) * 1000))
 
     async def _maybe_run(self, rule: dict, car_id: str, why: str) -> None:
         rid = str(rule.get("id"))

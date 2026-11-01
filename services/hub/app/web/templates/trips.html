@@ -1,8 +1,6 @@
 {% extends "shell.html" %}
 {% block title %}{{ t('trips.page_title') }}{% endblock %}
 
-{% block head %}<link rel="stylesheet" href="/static/vendor/leaflet/leaflet.css">{% endblock %}
-
 {% block content %}
 <div class="page" style="padding-bottom:96px">
 
@@ -79,20 +77,33 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/vendor/leaflet/leaflet.js"></script>
 <script src="/static/js/geo.js"></script>
+<script src="/static/js/map.js"></script>
 <script>
-let map, trackLayer, marker, datum = "wgs84", drives = [], ghosts = null, curId = null;
+let map, mapReady, hover, drives = [], curId = null;
 let curCarId = null;
+const EMPTY = { type: "FeatureCollection", features: [] };
 
 async function initMap() {
-  const cfg = await apiGet("/api/config");
-  map = L.map("map", { zoomControl: true, attributionControl: true }).setView([39, -98], 3);
-  datum = cfg.tile_datum || "wgs84";
-  const opts = { maxZoom: 19, attribution: datum === "gcj02" ? t("drives.map.attrib_amap") : t("drives.map.attrib_osm") };
-  if (cfg.tile_url.includes("{s}"))
-    opts.subdomains = cfg.tile_url.includes("cartocdn") ? ["a","b","c","d"] : ["1","2","3","4"];
-  L.tileLayer(cfg.tile_url, opts).addTo(map);
+  map = await OmtMap.create(document.getElementById("map"), { center: [39, -98], zoom: 3 });
+  await OmtMap.ready(map);
+  const accent = getComputedStyle(document.body).getPropertyValue("--series-1").trim() || "#3E6AE1";
+  // Recent routes stay underneath as "where I've been"; the picked one is
+  // drawn on top. Both are single sources, so redraws never pile up layers.
+  map.addSource("ghosts", { type: "geojson", data: EMPTY });
+  map.addLayer({ id: "ghosts", type: "line", source: "ghosts",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": "#5B7FD4", "line-width": 1.8, "line-opacity": 0.34 } });
+  map.addSource("trip", { type: "geojson", data: EMPTY });
+  map.addLayer({ id: "trip-casing", type: "line", source: "trip",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": "#000", "line-width": 7, "line-opacity": 0.25, "line-blur": 2 } });
+  map.addLayer({ id: "trip", type: "line", source: "trip",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: { "line-color": accent, "line-width": 4 } });
+  map.on("click", "ghosts", (e) => { const f = e.features && e.features[0]; if (f) select(f.properties.id); });
+  map.on("mouseenter", "ghosts", () => { map.getCanvas().style.cursor = "pointer"; });
+  map.on("mouseleave", "ghosts", () => { map.getCanvas().style.cursor = ""; });
 }
 
 function metric(label, value, unit) {
@@ -171,25 +182,20 @@ async function drawGhosts(carId) {
   let all;
   try { all = await apiGet(`/api/drives/tracks?car_id=${carId}&limit=20`); }
   catch (e) { return; }
-  if (ghosts) map.removeLayer(ghosts);
-  ghosts = L.layerGroup();
-  all.forEach((t) => {
-    const line = L.polyline(omtGeo.project(t.points, datum),
-      { color: "#5B7FD4", weight: 1.6, opacity: .34, interactive: true });
-    line._driveId = t.id;
-    line.on("click", () => select(t.id));
-    ghosts.addLayer(line);
-  });
-  ghosts.addTo(map);
-  const group = L.featureGroup(ghosts.getLayers());
-  if (group.getBounds().isValid()) map.fitBounds(group.getBounds(), { padding: [30, 30] });
+  await mapReady;
+  if (!map || carId !== curCarId) return;
+  const features = all.filter((t) => t.points && t.points.length > 1).map((t) => ({
+    type: "Feature", properties: { id: t.id },
+    geometry: { type: "LineString", coordinates: OmtMap.line(map, t.points) } }));
+  map.getSource("ghosts").setData({ type: "FeatureCollection", features });
+  if (!curId) OmtMap.fit(map, features.flatMap((f) => f.geometry.coordinates), 30);
   paintGhosts();
 }
 
 function paintGhosts() {
-  if (!ghosts) return;
-  ghosts.getLayers().forEach((l) =>
-    l.setStyle({ opacity: l._driveId === curId ? 0 : .34 }));   // 选中的那条由高亮层画
+  if (!map || !map.getLayer("ghosts")) return;
+  // 选中的那条由高亮层画
+  map.setPaintProperty("ghosts", "line-opacity", ["case", ["==", ["get", "id"], curId ?? -1], 0, 0.34]);
 }
 
 /* ------------------------------------------------ 标记与导出 -- */
@@ -252,29 +258,27 @@ async function showTrip(d) {
   try { track = await apiGet(`/api/drives/${d.id}/track`); } catch (e) { /* 无轨迹 */ }
   if (gen !== tripGen) return;                 // 已经切走了
 
-  if (trackLayer) map.removeLayer(trackLayer);
-  if (marker) map.removeLayer(marker);
-
   let maxSpeed = null, socStart = null, socEnd = null;
   if (track.length) {
-    // 数据库存 WGS-84；国内地图源是 GCJ-02，必须在渲染时偏移，
-    // 绝不能在入库时转（会永久污染地理围栏且无法回退）
-    const latlngs = omtGeo.project(track.map((p) => [p.lat, p.lon]), datum);
-    trackLayer = L.polyline(latlngs, {
-      color: getComputedStyle(document.body).getPropertyValue("--series-1").trim() || "#3E6AE1",
-      weight: 3.5, opacity: 1,
-    }).addTo(map);
-    map.fitBounds(trackLayer.getBounds(), { padding: [40, 40] });
     maxSpeed = Math.max(...track.map((p) => p.speed || 0));
     socStart = track[0].soc; socEnd = track[track.length - 1].soc;
-    trackLayer.on("mousemove", (e) => {
-      if (marker) map.removeLayer(marker);
-      marker = L.circleMarker(e.latlng, { radius: 5, color: "#7C9BFF", weight: 2 }).addTo(map);
-    });
   } else {
     document.getElementById("map-idle").style.display = "grid";
     document.getElementById("map-idle").textContent = t("drives.track_none");
   }
+  // The numbers don't wait for the map; the route is drawn once it's there.
+  mapReady.then(() => {
+    if (gen !== tripGen || !map) return;
+    if (hover) { hover.remove(); hover = null; }
+    if (!track.length) { map.getSource("trip").setData(EMPTY); return; }
+    // 数据库存 WGS-84；国内地图源是 GCJ-02，必须在渲染时偏移，
+    // 绝不能在入库时转（会永久污染地理围栏且无法回退）
+    const coords = OmtMap.line(map, track.map((p) => [p.lat, p.lon]));
+    map.getSource("trip").setData({ type: "Feature", properties: {},
+      geometry: { type: "LineString", coordinates: coords } });
+    OmtMap.fit(map, coords, 48);
+    trackHover(track, coords);
+  });
 
   document.getElementById("trip-metrics").innerHTML =
     metric(t("cmdk.distance"), U.dist(d.km, 1), U.distLabel()) +
@@ -291,7 +295,7 @@ async function showTrip(d) {
     document.getElementById("v-clips").textContent = t("trips.n_clips", { n: footage.length });
     document.getElementById("clip-list").innerHTML = footage.map((f) => `
       <a class="card" style="padding:0;overflow:hidden;display:block"
-         href="/dashcam/play?id=${encodeURIComponent(f.event_id)}&t=${f.seek}">
+         href="/dashcam/play?id=${encodeURIComponent(f.event_id)}&${f.at ? `at=${encodeURIComponent(f.at)}` : `t=${f.seek}`}">
         <img loading="lazy" src="/api/dashcam/thumb?id=${encodeURIComponent(f.event_id)}"
              style="width:100%;aspect-ratio:16/9;object-fit:cover;display:block;background:var(--bg-elevated)"
              onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'empty',style:'aspect-ratio:16/9;display:grid;place-items:center',innerHTML:icon('film',22)}))">
@@ -304,6 +308,36 @@ async function showTrip(d) {
   } catch (e) { dc.style.display = "none"; }
 }
 
+/* Hovering the route shows where you were then: time, speed, battery. */
+let hoverOff = null;
+function trackHover(track, coords) {
+  if (hoverOff) hoverOff();
+  const move = (e) => {
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < coords.length; i++) {
+      const p = map.project(coords[i]);
+      const d = (p.x - e.point.x) ** 2 + (p.y - e.point.y) ** 2;
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    const pt = track[best];
+    const at = pt.t ? new Date(pt.t).toLocaleTimeString(localeTag(), { hour: "numeric", minute: "2-digit" }) : "";
+    const bits = [at, pt.speed != null ? `${U.speed(pt.speed)} ${U.speedLabel()}` : "",
+                  pt.soc != null ? `${pt.soc}%` : ""].filter(Boolean).join(" · ");
+    if (!hover) {
+      const el = document.createElement("div");
+      el.className = "trip-dot";
+      el.innerHTML = '<i></i><span></span>';
+      hover = new maplibregl.Marker({ element: el, anchor: "left" }).setLngLat(coords[best]).addTo(map);
+    }
+    hover.setLngLat(coords[best]);
+    hover.getElement().querySelector("span").textContent = bits;
+  };
+  const leave = () => { if (hover) { hover.remove(); hover = null; } };
+  map.on("mousemove", "trip", move);
+  map.on("mouseleave", "trip", leave);
+  hoverOff = () => { map.off("mousemove", "trip", move); map.off("mouseleave", "trip", leave); };
+}
+
 window.addEventListener("omt:locale", () => {
   document.title = t("trips.page_title");
   const th = document.getElementById("th-dist");
@@ -312,7 +346,8 @@ window.addEventListener("omt:locale", () => {
 
 i18nReady.catch(() => {}).then(async () => {
   document.getElementById("th-dist").textContent = U.distLabel();
-  await initMap();
+  // The list doesn't wait for the map: a slow tile server only delays the drawing.
+  mapReady = initMap().catch((e) => { console.warn("map unavailable", e); map = null; });
   const carId = await initCarPicker("#car-picker", loadTrips);
   loadTrips(carId);
 });
@@ -320,19 +355,13 @@ i18nReady.catch(() => {}).then(async () => {
 <style>
   #trip-list tr.on { background: var(--bg-hover); }
   #map { background: var(--bg-secondary); }
-  /* Leaflet 的图层 z-index 是 400+，空态提示要压在它上面 */
-  #map-idle { z-index: 500; }
-  .leaflet-container { background: var(--bg-secondary); font: inherit; }
-  .leaflet-control-attribution {
-    background: rgba(15,15,16,.72) !important; color: var(--text-tertiary) !important;
-    font-size: 10px !important;
-  }
-  .leaflet-control-attribution a { color: var(--text-secondary) !important; }
-  .leaflet-bar a {
-    background: var(--bg-elevated) !important; color: var(--text-primary) !important;
-    border-color: var(--border-subtle) !important;
-  }
-  .leaflet-bar a:hover { background: var(--bg-hover) !important; }
+  #map-idle { z-index: 3; }
+  .trip-dot { display: flex; align-items: center; gap: 8px; pointer-events: none; }
+  .trip-dot i { width: 12px; height: 12px; border-radius: 50%; background: #fff; border: 3px solid var(--series-1, #3E6AE1);
+    box-shadow: 0 0 0 4px rgba(62,106,225,.25); flex: none; transform: translateX(-6px); }
+  .trip-dot span { font-size: 12px; padding: 4px 8px; border-radius: 8px; white-space: nowrap;
+    background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--line, rgba(255,255,255,.1)); }
+  .trip-dot span:empty { display: none; }
   @media (max-width: 900px) {
     .page .grid[style*="minmax"] { grid-template-columns: 1fr !important; }
   }

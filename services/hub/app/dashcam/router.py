@@ -2,41 +2,59 @@ import asyncio
 import contextlib
 import hashlib
 import re
-import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from .. import db
 from ..config import settings
-from . import align, sei, telemetry
-from .composer import CAMERA_NAMES_ZH
-from .jobs import jobs
-from .scanner import scanner
+from . import align, ff, sei, telemetry
+from .composer import CAMERA_NAMES_ZH, CAMERAS
+from .jobs import get_reports, jobs
+from .scanner import fill_durations, scanner
+from .teslausb import router as teslausb_router
 
 router = APIRouter(prefix="/api/dashcam", tags=["dashcam"])
+router.include_router(teslausb_router)
 
 
 @router.get("/status")
 async def status():
-    events = scanner.scan()
+    from .localtime import describe
+
+    events = await scanner.ascan()
     base = scanner.base_path()
     root = Path(settings.teslacam_root)
+
+    def _root_state() -> tuple[bool, bool]:
+        exists = root.exists()
+        return exists, exists and not any(root.iterdir())
+
+    root_exists, root_empty = await asyncio.to_thread(_root_state)
+    stats = scanner.stats or {}
     # "目录不存在" 和 "目录在但还没放东西" 是两回事，混为一谈会让人以为坏了
     return {
         "root": settings.teslacam_root,
         "found": base is not None,
-        "root_exists": root.exists(),  # noqa: ASYNC240 - 本地 stat/exists，微秒级；为它开线程的开销大于调用本身
-        "root_empty": root.exists() and not any(root.iterdir()),  # noqa: ASYNC240 - 本地 stat/exists，微秒级；为它开线程的开销大于调用本身
+        "base": str(base) if base else None,
+        "root_exists": root_exists,
+        "root_empty": root_empty,
         "events": len(events),
         "by_type": {
             t: sum(1 for e in events if e.type == t)
             for t in ("sentry", "saved", "recent")
         },
         "camera_names": CAMERA_NAMES_ZH,
+        # 文件名按哪个时区解释、这个时区是怎么来的 —— 排查"整体差一小时"用
+        "time_zone": describe(),
+        # 扫描时跳过的条目（坏文件名、读不了的目录）和被挡住的另一种布局
+        "scan": {"skipped": stats.get("skipped", 0),
+                 "skipped_items": stats.get("skipped_items", [])[:10],
+                 "shadowed_root": stats.get("shadowed_root"),
+                 "seconds": stats.get("scan_seconds")},
         **(await _readability(base, events)),
     }
 
@@ -58,11 +76,14 @@ async def _readability(base, events) -> dict:
         return_exceptions=True,
     )
     ok = [r for r in results if isinstance(r, dict)]
-    bad = sum(1 for r in ok if not r["readable"])
+    # 探测超时（多半是网络挂载卡了一下）不算"读不出来"，单独报
+    timeouts = sum(1 for r in ok if not r["readable"] and r["reason"] == "timeout")
+    bad = sum(1 for r in ok if not r["readable"]) - timeouts
     hevc = sum(1 for r in ok if r["readable"] and r["reason"] == "needs_transcode")
     return {
         "unreadable": bad,
         "needs_transcode": hevc,
+        "probe_timeouts": timeouts,
         "sampled": len(ok),
     }
 
@@ -77,78 +98,24 @@ async def thumb(id: str = Query(...)):
     """
     from fastapi.responses import FileResponse
 
-    ev = scanner.get(id)
+    from . import thumbs
+
+    ev = await scanner.aget(id)
     base = scanner.base_path()
     if ev is None or base is None:
         raise HTTPException(404, "event not found")
-
-    if ev.thumb:                                  # 车机自带的，直接给
-        f = (base / ev.thumb).resolve()
-        if f.is_file() and f.is_relative_to(base.resolve()):
-            return FileResponse(f, media_type="image/png")
-
-    cache = Path(settings.preview_dir) / "thumbs"
-    cache.mkdir(parents=True, exist_ok=True)
-    dest = cache / (hashlib.sha256(id.encode()).hexdigest()[:20] + ".jpg")
-    if dest.is_file() and dest.stat().st_size > 512:
-        return FileResponse(dest, media_type="image/jpeg")
-
-    src = _first_readable(base, ev)
-    if src is None:
-        raise HTTPException(404, "no readable frame")
-
-    # 临时名要带随机后缀。固定用 .part 的话，两个浏览器标签同时请求同一个
-    # 事件的缩略图，两个 ffmpeg 会往同一个文件里写，谁先 rename 谁把另一个
-    # 写了一半的内容变成"成品"。
-    tmp = dest.with_suffix(f".{secrets.token_hex(4)}.part")
-    proc = await asyncio.create_subprocess_exec(
-        # -update 1 必须有：没有它 ffmpeg 会把输出当成图片序列，
-        # 因为文件名里没有 %03d 这类模式而报错退出
-        "ffmpeg", "-v", "error", "-y", "-ss", "2", "-i", str(src),
-        "-frames:v", "1", "-update", "1", "-vf", "scale=480:-2",
-        "-q:v", "5", "-f", "image2", str(tmp),
-        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-    )
     try:
-        await asyncio.wait_for(proc.wait(), timeout=25)
+        hit = await thumbs.event_thumbnail(base, ev)
     except asyncio.TimeoutError:
-        proc.kill()
         raise HTTPException(504, "thumbnail timed out") from None
-    if not tmp.is_file() or tmp.stat().st_size < 512:
-        # 片段不足 2 秒时 -ss 2 会落在片尾之后，退回第一帧再试
-        tmp.unlink(missing_ok=True)
-        retry = await asyncio.create_subprocess_exec(
-            "ffmpeg", "-v", "error", "-y", "-i", str(src),
-            "-frames:v", "1", "-update", "1", "-vf", "scale=480:-2",
-            "-q:v", "5", "-f", "image2", str(tmp),
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-        )
-        try:
-            await asyncio.wait_for(retry.wait(), timeout=25)
-        except asyncio.TimeoutError:
-            retry.kill()
-    if not tmp.is_file() or tmp.stat().st_size < 512:
-        tmp.unlink(missing_ok=True)
+    if hit is None:
         raise HTTPException(404, "could not extract a frame")
-    tmp.replace(dest)                             # 原子替换，避免读到写一半的文件
-    return FileResponse(dest, media_type="image/jpeg")
-
-
-def _first_readable(base: Path, ev) -> Path | None:
-    """挑一个用来抽帧的片段：优先前摄，其次任意机位。"""
-    for seg in ev.segments:
-        for cam in ("front", "back", "left_repeater", "right_repeater"):
-            rel = seg.cameras.get(cam)
-            if rel:
-                f = (base / rel).resolve()
-                if f.is_file() and f.stat().st_size > 10_000:
-                    return f
-    return None
+    return FileResponse(hit[0], media_type=hit[1])
 
 
 @router.get("/events")
 async def list_events(type: str | None = None, limit: int = 200, force: bool = False):
-    events = scanner.scan(force=force)
+    events = await scanner.ascan(force=force)
     if type:
         events = [e for e in events if e.type == type]
     events.sort(key=lambda e: e.timestamp, reverse=True)
@@ -159,10 +126,26 @@ async def list_events(type: str | None = None, limit: int = 200, force: bool = F
 
 @router.get("/event")
 async def get_event(id: str = Query(...)):
-    ev = scanner.get(id)
-    if ev is None:
+    """事件详情。每段带实测时长 duration 和它在事件时间轴上的起点 offset（秒）。
+
+    播放器的总时长、进度条、"第几段第几秒"都应该按这两个字段算，不要再假设
+    每段 60 秒 —— 事件的最后一段、被截断的片段都更短。区间导出的
+    start_offset / end_offset 也是按这条时间轴解释的。
+    """
+    ev = await scanner.aget(id)
+    base = scanner.base_path()
+    if ev is None or base is None:
         raise HTTPException(404, "event not found")
-    return ev.to_dict(with_segments=True)
+    await fill_durations(ev, base)
+    d = ev.to_dict(with_segments=True)
+    t = 0.0
+    for seg in d["segments"]:
+        seg["offset"] = round(t, 3)
+        seg["duration_known"] = "duration" in seg
+        seg.setdefault("duration", 60.0)
+        t += seg["duration"]
+    d["duration"] = round(t, 3)
+    return d
 
 
 @router.get("/telemetry")
@@ -343,13 +326,23 @@ class ComposeRequest(BaseModel):
 
 @router.post("/compose")
 async def compose(req: ComposeRequest):
-    ev = scanner.get(req.event_id)
-    if ev is None:
+    ev = await scanner.aget(req.event_id)
+    base = scanner.base_path()
+    if ev is None or base is None:
         raise HTTPException(404, "event not found")
     if req.start_offset < 0:
         raise HTTPException(400, "start_offset must be >= 0")
     if req.end_offset is not None and req.end_offset <= req.start_offset:
         raise HTTPException(400, "end_offset must be greater than start_offset")
+    if req.cameras and not any(c in CAMERAS for c in req.cameras):
+        raise HTTPException(400, f"unknown cameras: {req.cameras}")
+    if req.start_offset > 0 and not req.segment:
+        # 起点越过片尾时 ffmpeg 会 rc 0 产出一个没有画面的空壳 mp4，任务还显示"完成"
+        await fill_durations(ev, base)
+        total = sum(s.duration or 60.0 for s in ev.segments)
+        if req.start_offset >= total:
+            raise HTTPException(
+                400, f"start_offset {req.start_offset:g}s is beyond the end of the event ({total:.1f}s)")
     job_id = await jobs.submit(req.event_id, req.model_dump(exclude={"event_id"}))
     return {"job_id": job_id}
 
@@ -368,10 +361,14 @@ _IMPORT_RE = re.compile(
 
 
 def _import_base() -> Path:
+    """导入写到当前生效的素材根；还没有的话直接用根目录。
+
+    以前这里会在空根目录下建一个空的 TeslaCam/，而扫描器只要看到 TeslaCam/
+    存在就只看它 —— 之后 teslausb 落在根目录的素材就全看不见了。
+    """
     base = scanner.base_path()
     if base is None:
-        root = Path(settings.teslacam_root)
-        base = root / "TeslaCam"
+        base = Path(settings.teslacam_root)
         base.mkdir(parents=True, exist_ok=True)
     return base
 
@@ -394,7 +391,7 @@ async def import_files(
 
     if len(files) != len(paths):
         raise HTTPException(400, "files/paths mismatch")
-    base = _import_base()
+    base = await asyncio.to_thread(_import_base)
     imported, skipped = 0, []
     for f, rel in zip(files, paths, strict=False):
         rel = rel.replace("\\", "/").lstrip("/")  # noqa: PLW2901 - 循环变量被规范化后复用是本意，改名反而要多一个中间变量
@@ -424,7 +421,7 @@ async def import_files(
             raise HTTPException(507, f"写入失败: {e}") from e
         imported += 1
     if rescan:
-        await asyncio.to_thread(scanner.scan, True)
+        await scanner.ascan(force=True)
     return {"imported": imported, "skipped": skipped}
 
 
@@ -460,15 +457,18 @@ async def preview(path: str = Form(...)):
                 # 临时文件名唯一：即使极端并发下重复转码，rename 覆盖也无害
                 tmp = settings.preview_dir / f"{key}.{uuid.uuid4().hex[:6]}.tmp.mp4"
                 proc = await asyncio.create_subprocess_exec(
-                    "ffmpeg", "-hide_banner", "-y", "-i", str(target),
+                    ff.ffmpeg(), "-hide_banner", "-nostdin", "-y", "-i", str(target),
                     "-vf", "scale=960:-2", "-c:v", "libx264", "-preset", "ultrafast",
-                    "-crf", "28", "-an", "-movflags", "+faststart", str(tmp),
+                    "-crf", "28", "-pix_fmt", "yuv420p", "-an", "-movflags", "+faststart", str(tmp),
+                    stdin=asyncio.subprocess.DEVNULL,
                     stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.PIPE,
                 )
                 try:
                     _, err = await asyncio.wait_for(proc.communicate(), timeout=240)
                 except asyncio.TimeoutError:
                     proc.kill()
+                    with contextlib.suppress(Exception):
+                        await proc.wait()
                     with contextlib.suppress(OSError):
                         tmp.unlink()
                     raise HTTPException(504, "transcode timeout") from None
@@ -486,9 +486,18 @@ async def preview(path: str = Form(...)):
 
 # ---------------- 时钟自动校正 ----------------
 
+
+async def _say(key: str, **vars_) -> str:
+    """A refusal in the owner's language (the page shows it as is)."""
+    from ..i18n.prefs import get as get_prefs
+    from ..i18n.router import t
+
+    return t(key, (await get_prefs())["locale"], **vars_)
+
 @router.post("/align")
 async def auto_align_clock(event_id: str = Form(...), car_id: int | None = Form(None)):
-    ev = scanner.get(event_id)
+    """拟合不可信（误差太大、没有明显的最优点、车速没变化）时返回 422 并保留原偏移。"""
+    ev = await scanner.aget(event_id)
     if ev is None:
         raise HTTPException(404, "event not found")
     base = scanner.base_path()
@@ -503,10 +512,12 @@ async def auto_align_clock(event_id: str = Form(...), car_id: int | None = Form(
             raise HTTPException(404, "no car in TeslaMate yet")
         if len(rows) > 1:
             # 校准结果会写入指定车辆并影响其所有叠加——多车时必须显式指定
-            raise HTTPException(422, "多车账号请先在播放器里选择车辆再校准")
+            raise HTTPException(422, await _say("align.pick_car"))
         car_id = rows[0]["id"]
     try:
         result = await align.auto_align(ev, base, car_id)
+    except align.AlignRefused as e:
+        raise HTTPException(422, await _say(e.key, **e.vars)) from e
     except ValueError as e:
         raise HTTPException(422, str(e)) from e
     except db.DbUnavailable as e:
@@ -516,9 +527,15 @@ async def auto_align_clock(event_id: str = Form(...), car_id: int | None = Form(
 
 @router.get("/jobs")
 async def list_jobs():
+    """任务列表。每个任务多一个 report：跳过的分段及原因、不完整的片段、
+    叠加层状态（burned / unavailable / no_telemetry / off）、编码器、警告。"""
     from ..alerts.store import store
 
-    return await store.list_jobs()
+    rows = await store.list_jobs()
+    reports = await get_reports()
+    for r in rows:
+        r["report"] = reports.get(str(r["id"]))
+    return rows
 
 
 @router.get("/jobs/{job_id}")
@@ -528,6 +545,7 @@ async def get_job(job_id: int):
     job = await store.get_job(job_id)
     if job is None:
         raise HTTPException(404, "job not found")
+    job["report"] = (await get_reports()).get(str(job_id))
     return job
 
 
@@ -547,18 +565,19 @@ async def cancel_job(job_id: int):
 async def evidence_package(id: str, car_id: int | None = None):
     """取证包：原始片段 + 事件元数据 + 遥测 CSV + 校验和，打成一个 ZIP。
 
-    整包在内存里拼，几十到几百 MB。zipfile 是同步的，必须扔线程池 ——
-    否则打包期间整个门户（单进程 uvicorn）全程无响应。
+    流式输出：边打包边下载，内存占用与事件大小无关（几 GB 的事件也只占几 MB）。
+    因此没有 Content-Length —— 浏览器显示的是已下载量而不是百分比。
     """
     from . import evidence
 
     try:
-        blob, name = await evidence.build(id, car_id)
+        stream, name = await evidence.build(id, car_id)
     except ValueError as e:
         raise HTTPException(404, str(e)) from e
-    return Response(
-        blob, media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    return StreamingResponse(
+        stream, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{name}"',
+                 "X-Accel-Buffering": "no", "Cache-Control": "no-store"},
     )
 
 
@@ -613,3 +632,79 @@ async def driving_events(kind: str | None = None, days: int = 90, limit: int = 2
     if kind and kind not in ("hard_brake", "disengage"):
         raise HTTPException(422, "kind must be hard_brake or disengage")
     return await sei_index.driving_events(kind, days, limit)
+
+
+@router.get("/watcher")
+async def watcher_status():
+    """新录像推送的状态：基线里有多少事件、哪些还在等落定/重试。"""
+    from .watcher import watcher
+
+    return watcher.status()
+
+
+# ---------------- 2026.20+ 加密片段解密 ----------------
+#
+# 流程（详见 decrypt.py）：先 GET /decrypt/scan 看这个事件里有几个加密片段、
+# 会往 Tesla 发什么（只有头部元数据：VIN、key_id、时间戳、wrapped key）；
+# 用户贴入 dashcam.tesla.com 的登录 token 后 POST /decrypt 开始，
+# GET /decrypt/status 轮询进度。token 只在内存里用这一次，不落盘、不进日志。
+
+class DecryptRequest(BaseModel):
+    event_id: str
+    token: str
+    keep_encrypted: bool = True   # 把加密原件留成 <名字>.mp4.enc
+
+
+async def _event_clip_paths(event_id: str) -> tuple[Path, list[Path]]:
+    ev = await scanner.aget(event_id)
+    base = scanner.base_path()
+    if ev is None or base is None:
+        raise HTTPException(404, "event not found")
+    paths = [base / rel for seg in ev.segments for rel in seg.cameras.values()]
+    return base, [p for p in paths if p.resolve().is_relative_to(base.resolve())]
+
+
+@router.get("/decrypt/scan")
+async def decrypt_scan(id: str = Query(...)):
+    from . import decrypt
+
+    base, paths = await _event_clip_paths(id)
+    enc = await asyncio.to_thread(decrypt.find_encrypted, paths)
+    try:
+        items = await asyncio.to_thread(decrypt.key_request_items, enc)
+    except (OSError, ValueError) as e:
+        raise HTTPException(422, f"could not read an encrypted clip header: {e}") from e
+    return {
+        "event_id": id,
+        "clips": len(paths),
+        "encrypted": len(enc),
+        "encrypted_paths": [str(p.relative_to(base)) for p in enc],
+        # 原样展示将要发给 Tesla 的内容：只有元数据，没有视频字节
+        "key_service": decrypt.DECRYPT_ENDPOINT,
+        "request_preview": items,
+        "running": decrypt.decryptor.running,
+    }
+
+
+@router.post("/decrypt")
+async def decrypt_start(req: DecryptRequest):
+    from . import decrypt
+
+    token = req.token.strip().removeprefix("Bearer ").strip()
+    if not token:
+        raise HTTPException(422, "a dashcam.tesla.com access token is required")
+    base, paths = await _event_clip_paths(req.event_id)
+    enc = await asyncio.to_thread(decrypt.find_encrypted, paths)
+    if not enc:
+        return {"state": "nothing_to_do", "event_id": req.event_id, "encrypted": 0}
+    try:
+        return decrypt.decryptor.start(req.event_id, enc, base, token, req.keep_encrypted)
+    except RuntimeError as e:
+        raise HTTPException(409, str(e)) from e
+
+
+@router.get("/decrypt/status")
+async def decrypt_status():
+    from . import decrypt
+
+    return decrypt.decryptor.state

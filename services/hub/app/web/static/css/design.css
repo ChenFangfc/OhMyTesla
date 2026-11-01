@@ -497,6 +497,7 @@ h1, h2, h3, h4 { margin: 0; font-weight: 500; letter-spacing: -0.3px; }
 .section-head {
   display: flex; align-items: baseline; gap: var(--s-3);
   margin-bottom: var(--s-4);
+  flex-wrap: wrap;            /* a heading + filter row stack on a phone instead of overflowing */
 }
 .section-head h2 { font-size: 19px; font-weight: 500; letter-spacing: -0.3px; }
 .section-head .note { font-size: 13px; color: var(--text-tertiary); }
@@ -907,14 +908,16 @@ input[type="range"] { accent-color: var(--tesla-blue); }
 label.check { display: inline-flex; gap: 7px; align-items: center; cursor: pointer; font-size: 13.5px; }
 label.check input[type="checkbox"] { accent-color: var(--tesla-blue); width: 15px; height: 15px; }
 
-button:not(.btn):not(.control):not(.chip-btn):not(.segmented button):not(.tabs button) {
+/* :where() keeps this a *default*: zero specificity, so any component class
+   (.qbtn, .cbtn, .tab …) wins without fighting a 5-class selector. */
+:where(button:not(.btn):not(.control):not(.chip-btn):not(.segmented button):not(.tabs button)) {
   height: 36px; padding: 0 16px;
   border-radius: var(--r-sm); border: 1px solid var(--border-medium);
   background: transparent; color: var(--text-primary);
   font: inherit; font-size: 13.5px; font-weight: 500; cursor: pointer;
   transition: background var(--t-button) var(--ease);
 }
-button:not(.btn):not(.control):not(.chip-btn):hover { background: var(--bg-hover); }
+:where(button:not(.btn):not(.control):not(.chip-btn)):hover { background: var(--bg-hover); }
 button.primary { background: var(--text-primary) !important; color: #0B0B0C !important; border-color: transparent !important; }
 button:disabled { opacity: .4; cursor: default; }
 

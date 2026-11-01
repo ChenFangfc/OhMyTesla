@@ -156,6 +156,11 @@ class Store:
 
     async def log_command(self, car_id: str, command: str, params: dict | None,
                           source: str, ok: bool, error: str, ms: int) -> None:
+        if params:
+            # Valet / speed-limit PINs would otherwise sit in the log and come
+            # back out of /api/tesla/commands/log and the full export.
+            params = {k: ("•••" if "pin" in k.lower() or "password" in k.lower() else v)
+                      for k, v in params.items()}
         try:
             await self.db.execute(
                 "INSERT INTO command_log (ts, car_id, command, params, source, ok, error, ms)"

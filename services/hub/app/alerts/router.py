@@ -27,29 +27,38 @@ async def history(limit: int = 100):
 
 @router.get("/rules")
 async def rules():
-    states = await engine.rule_states()
+    modes = await engine.rule_modes()
     return [
         {
             "id": rule.id,
             "level": rule.level,
             "title_zh": rule.title_zh,
             "title_en": rule.title_en,
-            "enabled": states.get(rule.id, rule.default_enabled),
+            "mode": modes[rule.id],
+            "default_mode": rule.mode,
+            "enabled": modes[rule.id] != "off",
         }
         for rule in RULES.values()
     ]
 
 
 class RuleUpdate(BaseModel):
-    enabled: bool
+    enabled: bool | None = None
+    mode: str | None = None          # push | app | off
 
 
 @router.post("/rules/{rule_id}")
 async def update_rule(rule_id: str, body: RuleUpdate):
     if rule_id not in RULES:
         return {"ok": False, "error": "unknown rule"}
-    await engine.set_rule(rule_id, body.enabled)
-    return {"ok": True}
+    try:
+        if body.mode is not None:
+            await engine.set_mode(rule_id, body.mode)
+        elif body.enabled is not None:
+            await engine.set_rule(rule_id, body.enabled)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    return {"ok": True, "mode": (await engine.rule_modes())[rule_id]}
 
 
 @router.get("/maintenance")
@@ -136,7 +145,87 @@ async def set_snooze(body: SnoozeBody):
 @router.get("/channels")
 async def channels():
     return {"channels": await notifier.configured_channels(),
-            "email_problem": notifier.email_config_problem()}
+            "email_problem": await notifier.email_config_problem()}
+
+
+@router.get("/channels/config")
+async def channels_config():
+    """Every channel, whether it can send, and what's missing — never secrets."""
+    from . import channels as chan
+
+    return {"channels": await chan.describe(), "webpush_devices": await webpush.count()}
+
+
+class ChannelBody(BaseModel):
+    values: dict
+
+
+@router.put("/channels/{name}")
+async def channel_save(name: str, body: ChannelBody):
+    from . import channels as chan
+
+    try:
+        await chan.save(name, body.values)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    return {"channels": await chan.describe()}
+
+
+class EnabledBody(BaseModel):
+    enabled: bool
+
+
+@router.post("/channels/{name}/enabled")
+async def channel_enabled(name: str, body: EnabledBody):
+    from . import channels as chan
+
+    if name not in chan.SCHEMA:
+        raise HTTPException(404, "unknown channel")
+    await chan.set_enabled(name, body.enabled)
+    return {"channels": await chan.describe()}
+
+
+@router.delete("/channels/{name}")
+async def channel_reset(name: str):
+    from . import channels as chan
+
+    await chan.reset(name)
+    return {"channels": await chan.describe()}
+
+
+@router.post("/channels/ntfy/new-topic")
+async def ntfy_new_topic():
+    """Create an unguessable private topic and switch ntfy to it."""
+    from . import channels as chan
+
+    topic = chan.new_ntfy_topic()
+    cur = (await chan.config())["ntfy"]
+    await chan.save("ntfy", {"url": cur.get("url") or "https://ntfy.sh", "topic": topic})
+    base = (cur.get("url") or "https://ntfy.sh").rstrip("/")
+    return {"topic": topic, "subscribe_url": f"{base}/{topic}",
+            "app_url": f"ntfy://{base.split('://', 1)[-1]}/{topic}"}
+
+
+@router.post("/channels/{name}/test")
+async def channel_test(name: str):
+    """Send a test to one channel. For ntfy, read the topic back to prove the
+    server really has it — `200 OK` from a send only proves we sent it."""
+    import secrets as _secrets
+
+    from . import channels as chan
+
+    if name != "webpush" and name not in chan.SCHEMA:
+        raise HTTPException(404, "unknown channel")
+    loc = (await get_prefs())["locale"]
+    marker = _secrets.token_hex(4)
+    title = t("push.test", loc)
+    body = t("push.test_body", loc, car="OhmyTesla") + f" · #{marker}"
+    ok, delivered = await notifier.send(title, body, payload={"rule": "test", "level": "info"},
+                                        only=[name])
+    verified = None
+    if ok and name == "ntfy":
+        verified = await notifier.verify_ntfy(marker)
+    return {"ok": ok, "delivered": delivered, "verified": verified}
 
 
 @router.post("/history/clear")
@@ -147,14 +236,70 @@ async def clear_history():
 # ---------------- 哨兵活动会话 ----------------
 
 @router.get("/sentry/sessions")
-async def sentry_sessions(limit: int = 100):
+async def sentry_sessions(limit: int = 100, car_id: str | None = None, before: float | None = None):
     """哨兵会话，附带对应的行车记录仪片段。
 
     「有人靠近你的车」和「看那段录像」本来就是同一件事，之前拆在两个页面
-    上，用户得自己对时间戳。这里在服务端接起来。
+    上，用户得自己对时间戳。这里在服务端接起来。`before` pages backwards
+    (pass the oldest `started` you have).
     """
-    rows = await sentry_tracker.recent(max(1, min(limit, 500)))
+    rows = await sentry_tracker.recent(max(1, min(limit, 500)), before=before, car_id=car_id)
     return await _attach_clips(rows)
+
+
+@router.get("/sentry/active")
+async def sentry_active():
+    """Incidents happening right now (for the nav badge and the live banner)."""
+    return {"active": sentry_tracker.active()}
+
+
+@router.get("/sentry/config")
+async def sentry_config():
+    from .fastpoll import poller
+
+    return {"home": await sentry_tracker.home(), "fast_poll_seconds": await poller.interval(),
+            "fast_poll": poller.status(), "policies": await sentry_tracker.policies(),
+            "fleet": {cid: sentry_tracker.has_fleet(cid) for cid in live.cars if cid.isdigit()}}
+
+
+class HomeBody(BaseModel):
+    lat: float | None = None
+    lon: float | None = None
+    radius_m: float = 150
+    label: str = ""
+    from_car: str | None = None     # use this car's current position
+
+
+@router.post("/sentry/home")
+async def sentry_set_home(body: HomeBody):
+    lat, lon = body.lat, body.lon
+    if body.from_car:
+        car = live.cars.get(body.from_car, {})
+        try:
+            lat, lon = float(car["latitude"]), float(car["longitude"])
+        except (KeyError, TypeError, ValueError):
+            raise HTTPException(409, "that car's position isn't known yet") from None
+    if lat is None or lon is None:
+        raise HTTPException(400, "lat/lon or from_car required")
+    return await sentry_tracker.set_home(lat, lon, max(50, min(body.radius_m, 2000)), body.label)
+
+
+@router.delete("/sentry/home")
+async def sentry_clear_home():
+    await store.set_setting("home_location", None)
+    return {"ok": True}
+
+
+class FastPollBody(BaseModel):
+    seconds: int
+
+
+@router.post("/sentry/fast-poll")
+async def sentry_fast_poll(body: FastPollBody):
+    """0 = off. Never below 5 s (Tesla rate limits), never above 120 s."""
+    v = 0 if body.seconds <= 0 else max(5, min(body.seconds, 120))
+    await store.set_setting("sentry_fast_poll_seconds", v)
+    return {"fast_poll_seconds": v}
 
 
 async def _attach_clips(rows: list[dict]) -> list[dict]:
@@ -164,7 +309,7 @@ async def _attach_clips(rows: list[dict]) -> list[dict]:
         from ..dashcam import telemetry
         from ..dashcam.scanner import scanner
 
-        events = [e for e in scanner.scan() if e.type == "sentry"]
+        events = [e for e in await scanner.ascan() if e.type == "sentry"]
         if not events:
             return rows
         tz = telemetry.local_tz()
@@ -196,9 +341,13 @@ async def _attach_clips(rows: list[dict]) -> list[dict]:
         if best is None:
             continue
         seek = max(0.0, (started - best.start).total_seconds())
+        at = min(max(started, best.start), best.end)
         r["clip"] = {
             "event_id": best.id,
             "thumb": best.thumb,
+            # `at` (the car's local wall clock, as in the file names) is what the
+            # player maps onto its timeline, gaps and short segments included.
+            "at": at.isoformat(timespec="seconds"),
             "seek": round(min(seek, max(0.0, (best.end - best.start).total_seconds()))),
             "exact": best_gap == 0.0,
         }
@@ -274,8 +423,7 @@ async def test_notification():
     )
     loc = (await get_prefs())["locale"]
     ok, chans = await notifier.send(
-        t("notify.test_title", loc),
-        t("notify.test_body", loc, car=car_name),
-        payload={"rule": "test", "level": "info"},
+        t("push.test", loc), t("push.test_body", loc, car=car_name),
+        payload={"rule": "test", "level": "info"}, url="/security",
     )
     return {"ok": ok, "channels": chans}

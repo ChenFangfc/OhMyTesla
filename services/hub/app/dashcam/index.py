@@ -20,8 +20,8 @@ from pathlib import Path
 
 from ..alerts.store import store
 from . import sei
+from .localtime import local_naive_to_utc
 from .scanner import Event, scanner
-from .telemetry import local_naive_to_utc
 
 log = logging.getLogger(__name__)
 
@@ -126,11 +126,58 @@ def _analyse(samples: list[dict], seg_epoch: float) -> tuple[dict, list[dict]]:
     return agg, events
 
 
+async def _write_segment(rel: str, ev_id: str, cam: str, seg_epoch: float, mtime: float,
+                         agg: dict, events: list[dict], readable: bool, encrypted: bool) -> None:
+    """把一段的解析结果写进库。
+
+    clip_sei 有两个唯一约束：path（主键）和 (event_id, seg_start)。以前只对后者
+    做 upsert —— 于是同一个文件的 event_id 或 seg_start 一变（RecentClips 重新
+    分组、改了 TESLACAM_TZ、夏令时切换），插入就撞上 path 主键，整个事件从此
+    再也索引不进去，force=True 也没用；而撞车之前已经执行的 INSERT 留在共享
+    连接的事务里，被别的子系统下一次 commit 带进库。
+
+    现在先删掉所有会冲突的旧行（同一 path、或同一 (event_id, seg_start)），
+    再做普通 INSERT —— 不存在会失败的约束，也就不会留下半截写入。
+    急刹/接管事件按 path 删（它们本来就是按片段文件记的），不再按时间窗删 ——
+    那个窗口是 3600 秒，重解一段就会把同一事件后面一小时的事件一起删掉。
+    """
+    db_ = store.db
+    old = await db_.execute_fetchall(
+        "SELECT path FROM clip_sei WHERE path = ? OR (event_id = ? AND seg_start = ?)",
+        (rel, ev_id, seg_epoch),
+    )
+    paths = {r["path"] for r in old} | {rel}
+    marks = ",".join("?" * len(paths))
+    await db_.execute(f"DELETE FROM sei_event WHERE path IN ({marks})", tuple(paths))  # noqa: S608 - 只拼占位符
+    await db_.execute(f"DELETE FROM clip_sei WHERE path IN ({marks})", tuple(paths))  # noqa: S608 - 只拼占位符
+    await db_.execute(
+        """INSERT INTO clip_sei
+           (path, event_id, camera, seg_start, mtime, indexed_at, duration_s, samples,
+            fsd_s, ap_s, tacc_s, manual_s, dist_km, speed_max, speed_avg, disengage,
+            lat, lon, readable, encrypted)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+        (rel, ev_id, cam, seg_epoch, mtime, time.time(),
+         agg["duration_s"], agg["samples"], agg["fsd_s"], agg["ap_s"], agg["tacc_s"],
+         agg["manual_s"], agg["dist_km"], agg["speed_max"], agg["speed_avg"],
+         agg["disengage"], agg["lat"], agg["lon"], int(readable), int(encrypted)),
+    )
+    for e in events:
+        await db_.execute(
+            """INSERT OR IGNORE INTO sei_event
+               (path, event_id, kind, ts, t_offset, magnitude, speed_kmh, mode, lat, lon)
+               VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (rel, ev_id, e["kind"], e["ts"], e["t_offset"], e["magnitude"],
+             e["speed_kmh"], e["mode"], e["lat"], e["lon"]),
+        )
+    # 每段单独提交：共享连接上的未提交窗口越短，被别人的 commit/失败牵连的可能越小
+    await db_.commit()
+
+
 async def index_event(ev: Event, base: Path, force: bool = False) -> int:
     """解析一个事件下所有分段的 SEI 并入库，返回新解析的分段数。
 
-    幂等：路径 + mtime 没变就跳过。U 盘重新挂载导致 mtime 变化时会重解，
-    代价是一次多余的解析，比漏掉新片段安全。
+    幂等：同一分段、同一文件、mtime 没变就跳过。U 盘重新挂载导致 mtime
+    变化时会重解，代价是一次多余的解析，比漏掉新片段安全。
     """
     done = 0
     for seg in ev.segments:
@@ -145,17 +192,17 @@ async def index_event(ev: Event, base: Path, force: bool = False) -> int:
             log.debug("suppressed", exc_info=True)
             continue
 
+        # 按每个时刻自己的时区规则换算（夏令时切换不再让整库 seg_start 漂移一小时）
         seg_epoch = local_naive_to_utc(seg.start).timestamp()
         if not force:
-            # 按 (event_id, seg_start) 而不是 path 查。同一段在不同轮次可能被
-            # 选到不同摄像头：scanner 会跳过 0 字节的文件，车正在写 front 时
-            # 这一段以 back 入库，下次 front 完整了又以 front 入一行 ——
-            # 那 60 秒的 FSD 时长、里程、急刹就被算了两遍。
+            # 按 (event_id, seg_start) 查，并要求还是同一个文件：同一段在不同轮次
+            # 可能被选到不同摄像头（scanner 跳过 0 字节文件，车正在写 front 时这一段
+            # 以 back 入库，下次 front 完整了就该换成 front 重解）
             row = await store.db.execute_fetchall(
-                "SELECT mtime FROM clip_sei WHERE event_id = ? AND seg_start = ?",
+                "SELECT path, mtime FROM clip_sei WHERE event_id = ? AND seg_start = ?",
                 (ev.id, seg_epoch),
             )
-            if row and abs(row[0]["mtime"] - mtime) < 1e-6:
+            if row and row[0]["path"] == rel and abs(row[0]["mtime"] - mtime) < 1e-6:
                 continue
 
         # NAL 遍历是纯 CPU 的阻塞活，扔给线程池；事件循环还要伺候门户的
@@ -174,64 +221,42 @@ async def index_event(ev: Event, base: Path, force: bool = False) -> int:
 
             encrypted = await asyncio.to_thread(_dec.is_encrypted, full)
         agg, events = _analyse(samples, seg_epoch)
-
-        await store.db.execute(
-            """INSERT INTO clip_sei
-               (path, event_id, camera, seg_start, mtime, indexed_at, duration_s, samples,
-                fsd_s, ap_s, tacc_s, manual_s, dist_km, speed_max, speed_avg, disengage,
-                lat, lon, readable, encrypted)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-               ON CONFLICT(event_id, seg_start) DO UPDATE SET
-                 path=excluded.path, camera=excluded.camera,
-                 mtime=excluded.mtime, indexed_at=excluded.indexed_at,
-                 duration_s=excluded.duration_s, samples=excluded.samples,
-                 fsd_s=excluded.fsd_s, ap_s=excluded.ap_s, tacc_s=excluded.tacc_s,
-                 manual_s=excluded.manual_s, dist_km=excluded.dist_km,
-                 speed_max=excluded.speed_max, speed_avg=excluded.speed_avg,
-                 disengage=excluded.disengage, lat=excluded.lat, lon=excluded.lon,
-                 readable=excluded.readable, encrypted=excluded.encrypted""",
-            (rel, ev.id, cam, seg_epoch, mtime, time.time(),
-             agg["duration_s"], agg["samples"], agg["fsd_s"], agg["ap_s"], agg["tacc_s"],
-             agg["manual_s"], agg["dist_km"], agg["speed_max"], agg["speed_avg"],
-             agg["disengage"], agg["lat"], agg["lon"], int(readable), int(encrypted)),
-        )
-        # 重解时先清掉这一段的旧事件。按 event_id + 时间窗删而不是按 path：
-        # 上一轮可能是用另一路摄像头入的库，按 path 删会把旧记录留下来。
-        await store.db.execute(
-            "DELETE FROM sei_event WHERE event_id = ? AND ts >= ? AND ts < ?",
-            (ev.id, seg_epoch, seg_epoch + 3600),
-        )
-        for e in events:
-            await store.db.execute(
-                """INSERT OR IGNORE INTO sei_event
-                   (path, event_id, kind, ts, t_offset, magnitude, speed_kmh, mode, lat, lon)
-                   VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                (rel, ev.id, e["kind"], e["ts"], e["t_offset"], e["magnitude"],
-                 e["speed_kmh"], e["mode"], e["lat"], e["lon"]),
-            )
+        await _write_segment(rel, ev.id, cam, seg_epoch, mtime, agg, events, readable, encrypted)
         done += 1
-    await store.db.commit()
     return done
 
 
-async def reindex(force: bool = False, limit: int | None = None) -> dict:
-    """把素材库里所有事件过一遍。"""
+_reindex_lock = asyncio.Lock()
+
+
+async def reindex(force: bool = False, limit: int | None = None,
+                  event_ids: list[str] | None = None) -> dict:
+    """把素材库里所有事件（或指定的几个）过一遍。同一时刻只跑一次。"""
     from .scanner import _teslacam_base
 
     base = _teslacam_base()
     if base is None:
         return {"ok": False, "error": "TeslaCam directory not configured or missing"}
 
-    events = scanner.scan()
-    if limit:
-        events = events[:limit]
-    total = 0
-    for ev in events:
-        try:
-            total += await index_event(ev, base, force=force)
-        except Exception as e:  # noqa: BLE001
-            log.warning("SEI index failed for %s: %s", ev.id, e)
-    return {"ok": True, "events": len(events), "segments_indexed": total}
+    async with _reindex_lock:
+        events = await scanner.ascan()
+        if event_ids is not None:
+            wanted = set(event_ids)
+            events = [e for e in events if e.id in wanted]
+        if limit:
+            events = events[:limit]
+        total = 0
+        failed: list[dict] = []
+        for ev in events:
+            try:
+                total += await index_event(ev, base, force=force)
+            except Exception as e:  # noqa: BLE001
+                log.warning("SEI index failed for %s: %s", ev.id, e)
+                failed.append({"event_id": ev.id, "error": str(e)[:200]})
+        out = {"ok": True, "events": len(events), "segments_indexed": total}
+        if failed:
+            out["failed"] = failed[:20]
+        return out
 
 
 # ---------------- 分析查询 ----------------

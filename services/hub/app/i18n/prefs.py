@@ -40,6 +40,7 @@ _DEFAULT = {
     "auto": True,        # 单位跟随检测到的市场；手动改单位后置 False
     "market": "",        # 检测结果，只读展示用
     "locale_set": False, # 用户是否显式选过语言（防止每台设备各猜一次）
+    "currency_set": False,  # 用户是否显式选过币种（选过就不再跟市场走）
 }
 
 
@@ -51,17 +52,31 @@ async def get() -> dict:
 
 
 async def set_prefs(patch: dict) -> dict:
-    cur = await get()
     # currency 以前不在这里：唯一能改它的途径是市场自动检测，用户手改不了。
     # 于是「电价方案里选了 EUR」和「fmt.money 用的显示币种」可以长期不一致，
     # 同一页上两个金额跟着两种符号。
-    for k in ("locale", "length", "temp", "pressure", "currency"):
-        if patch.get(k):
-            cur[k] = str(patch[k])
-    if patch.get("locale"):
-        cur["locale_set"] = True
-    if "auto" in patch:
-        cur["auto"] = bool(patch["auto"])
+    #
+    # 读-改-写持锁：设置页连着改两项时，后一个请求不该基于改动前的快照写回。
+    def apply(saved: dict) -> dict:
+        cur = dict(_DEFAULT)
+        cur.update({k: v for k, v in (saved or {}).items() if k in _DEFAULT})
+        for k in ("locale", "length", "temp", "pressure", "currency"):
+            if patch.get(k):
+                cur[k] = str(patch[k])
+        if patch.get("locale"):
+            cur["locale_set"] = True
+        if patch.get("currency"):
+            # 只改币种时 auto 仍是 True —— 以前下一次启动的市场检测
+            # （apply_market）会把它覆盖回市场默认值（审计 F17）。显式选过就钉住。
+            cur["currency_set"] = True
+        if "auto" in patch:
+            cur["auto"] = bool(patch["auto"])
+        return _clean(cur)
+
+    return await store.mutate_setting("prefs", apply, {})
+
+
+def _clean(cur: dict) -> dict:
     if cur["locale"] not in LOCALES:
         cur["locale"] = "zh"
     if cur["length"] not in ("km", "mi"):
@@ -73,7 +88,6 @@ async def set_prefs(patch: dict) -> dict:
     # ISO 4217 是三位字母；别的一律回落，免得把乱码写进显示层
     code = str(cur.get("currency") or "").upper()
     cur["currency"] = code if (len(code) == 3 and code.isalpha()) else "USD"
-    await store.set_setting("prefs", cur)
     return cur
 
 
@@ -84,12 +98,21 @@ async def apply_market(market: str) -> dict:
     但推断不了语言：在北美的中文车主要的是中文界面 + 英里。
     语言由用户自己选（顶栏一键切换），或首次访问时按浏览器语言。
     """
-    cur = await get()
-    cur["market"] = market
-    if cur.get("auto") and market in MARKET_DEFAULTS:
-        cur.update(MARKET_DEFAULTS[market])
-    await store.set_setting("prefs", cur)
-    return cur
+    def apply(saved: dict) -> dict:
+        cur = dict(_DEFAULT)
+        cur.update({k: v for k, v in (saved or {}).items() if k in _DEFAULT})
+        cur["market"] = market
+        defaults = MARKET_DEFAULTS.get(market)
+        if defaults:
+            if cur.get("auto"):
+                cur.update({k: v for k, v in defaults.items() if k != "currency"})
+            # 币种单独判断：用户显式选过就不动（以前只改币种时 auto 仍为 True，
+            # 下次启动就被市场默认值冲掉了）
+            if not cur.get("currency_set") and cur.get("auto"):
+                cur["currency"] = defaults["currency"]
+        return cur
+
+    return await store.mutate_setting("prefs", apply, {})
 
 
 async def locale() -> str:

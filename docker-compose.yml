@@ -2,7 +2,9 @@
 # TeslaMate 官方镜像原封不动，OhmyTesla Hub 作为伴生服务通过 MQTT + 只读数据库集成。
 services:
   teslamate:
-    image: teslamate/teslamate:latest
+    # 钉版本：hub 直接读 TeslaMate 的库表，上游一次 schema 迁移就可能让统计页
+    # 读错列。升级时把这里和下面 grafana 的 tag 一起改，再跑一遍 ./omt up。
+    image: teslamate/teslamate:4.4.0
     restart: always
     depends_on:
       - database
@@ -14,7 +16,10 @@ services:
       - DATABASE_HOST=database
       - MQTT_HOST=mosquitto
     ports:
-      - "${BIND_ADDR:-0.0.0.0}:${TESLAMATE_PORT:-4000}:4000"
+      # TeslaMate 自己的界面没有密码，还能一键退出登录（删掉 token、停止采集）。
+      # 登录、地理围栏、车辆设置都已经在 OhmyTesla 里了，所以默认只让本机访问；
+      # 确实要从别的设备打开它，在 .env 里设 TESLAMATE_BIND_ADDR=0.0.0.0。
+      - "${TESLAMATE_BIND_ADDR:-127.0.0.1}:${TESLAMATE_PORT:-4000}:4000"
     volumes:
       - ./data/import:/opt/app/import
     cap_drop:
@@ -31,7 +36,7 @@ services:
       - teslamate-db:/var/lib/postgresql
 
   grafana:
-    image: teslamate/grafana:latest
+    image: teslamate/grafana:4.4.0
     restart: always
     depends_on:
       - database
@@ -66,6 +71,13 @@ services:
     image: eclipse-mosquitto:2
     restart: always
     command: mosquitto -c /mosquitto-no-auth.conf
+    # fleet-telemetry 启动时 5 秒内连不上 broker 就直接 panic 退出，
+    # 所以它要等这个健康检查过了再起。
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/broker/uptime", "-C", "1", "-W", "3"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     volumes:
       - mosquitto-conf:/mosquitto/config
       - mosquitto-data:/mosquitto/data
@@ -99,6 +111,7 @@ services:
       - TESLAMATE_URL=http://teslamate:4000
       - GRAFANA_URL=http://grafana:3000
       - TESLAMATE_PUBLIC_PORT=${TESLAMATE_PORT:-4000}
+      - TESLAMATE_BIND_ADDR=${TESLAMATE_BIND_ADDR:-127.0.0.1}
       - GRAFANA_PUBLIC_PORT=${GRAFANA_PORT:-3000}
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-587}
@@ -131,7 +144,6 @@ services:
       # 与 TeslaMate 同一个密钥 —— 让 hub 能自动复用其 Tesla token 下发车辆指令
       - ENCRYPTION_KEY=${TM_ENCRYPTION_KEY}
       - TESLA_API_HOST=${TESLA_API_HOST:-https://owner-api.teslamotors.com}
-      - TESLA_COMMAND_PROXY=${TESLA_COMMAND_PROXY:-}
       - TESLA_ACCESS_TOKEN=${TESLA_ACCESS_TOKEN:-}
       - COST_WRITE_BACK=${COST_WRITE_BACK:-false}
     ports:
@@ -140,42 +152,23 @@ services:
       - ${TESLACAM_DIR:-./data/teslacam}:/teslacam
       - ./data/hub:/data
 
-  # 可选: 官方签名指令代理（tesla-http-proxy）
-  #
-  # 2021 年之后出厂的车（含 Cybertruck）**拒绝未签名指令** —— 不挂这个代理，
-  # 鸣笛、锁车、开空调、设充电上限统统会被 Tesla 回 403，而且路线图里
-  # 「自动化引擎 / 哨兵定时 / 充电计划 / 座椅加热」那一整类功能全都卡在这一步。
-  #
-  # 需要一次性准备：Tesla 开发者账号 + 一对 EC P-256 密钥 + 车辆配对虚拟钥匙。
-  # 步骤见 docs/COMMANDS.md。配好后把 .env 里的 TESLA_COMMAND_PROXY 指向
-  # https://tesla-proxy:4443 即可，hub 侧无需改动。
-  #
-  # 启用: docker compose --profile commands up -d
-  tesla-proxy:
-    image: tesla/vehicle-command:latest
-    profiles: ["commands"]
-    restart: always
-    command: >
-      tesla-http-proxy
-      -tls-key /config/tls-key.pem -cert /config/tls-cert.pem
-      -key-file /config/private-key.pem
-      -port 4443 -host 0.0.0.0 -verbose
-    volumes:
-      - ./config/tesla-proxy:/config:ro
-    # 不向宿主机映射端口。hub 通过 compose 内部 DNS（https://tesla-proxy:4443）
-    # 就能到达，映射出去只会带来两个问题：① 和 fleet-telemetry 的 4443 撞车，
-    # 导致 commands 和 fleet 两个 profile 不能同时启用；② 在本机多开一个
-    # 能解锁车辆的监听口。需要从宿主机调试时临时加 -p 即可。
+  # 车辆指令不再需要单独的签名代理容器：hub 内置了签名（tesla-fleet-api），
+  # 在网页「设置 → 车辆指令」里一步步配好开发者应用和虚拟钥匙即可。
 
   # 可选: 官方 Fleet Telemetry 自托管（哨兵 Aware/Panic 真实事件流）
   # 需要 Tesla 开发者账号 + 公网域名 + mTLS 证书，配置见 docs/FLEET-TELEMETRY.md
   # 启用: docker compose --profile fleet up -d
   fleet-telemetry:
-    image: tesla/fleet-telemetry:latest
+    # latest 落后于上游 HEAD，钉住已发布的版本，升级时手动改
+    image: tesla/fleet-telemetry:v0.9.5
     profiles: ["fleet"]
     restart: always
     depends_on:
-      - mosquitto
+      mosquitto:
+        condition: service_healthy
+    environment:
+      # 公网上扫端口的 TLS 握手失败会刷满日志
+      - SUPPRESS_TLS_HANDSHAKE_ERROR_LOGGING=true
     ports:
       - "4443:4443"
     volumes:

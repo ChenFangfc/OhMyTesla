@@ -1,32 +1,36 @@
 {% extends "shell.html" %}
 {% block title %}{{ t('dashcam.page_title') }}{% endblock %}
 
+{# The library first says what it holds, then anything that stops footage
+   from showing up (a hidden folder, skipped files, encrypted clips), then the
+   clips themselves. Problems are quiet notes, not alarms: none of them is
+   the car's fault. #}
 {% block content %}
-<div class="page" style="padding-bottom:96px">
+<div class="page dc-page">
 
   <div class="page-head">
     <h1 data-i18n="dashcam.title">Dashcam</h1>
     <div class="sub" id="scan-status">&nbsp;</div>
   </div>
 
-  <div class="row" style="margin-bottom:24px;flex-wrap:wrap;gap:10px">
-    <div class="segmented" id="type-pick">
-      <button data-type="" class="active" data-i18n="dashcam.all">All</button>
-      <button data-type="sentry" data-i18n="dashcam.sentry">Sentry Mode</button>
-      <button data-type="saved"  data-i18n="dashcam.saved">Saved</button>
-      <button data-type="recent" data-i18n="dashcam.recent">Recent</button>
-    </div><span class="spacer"></span>
-    <button id="rescan" class="btn ghost" data-i18n="common.rescan">Rescan</button>
-    <a class="btn primary" href="/dashcam/usb"><span class="ico-slot" data-icon="upload" data-size="15"></span><span data-i18n="dashcam.usb">Browse USB drive</span>
-    </a>
+  <div class="dc-bar">
+    <div class="seg2" id="type-pick">
+      <button type="button" data-type="" class="on" data-i18n="dashcam.all">All</button>
+      <button type="button" data-type="sentry" data-i18n="dashcam.sentry">Sentry Mode</button>
+      <button type="button" data-type="saved" data-i18n="dashcam.saved">Saved</button>
+      <button type="button" data-type="recent" data-i18n="dashcam.recent">Recent</button>
+    </div>
+    <span class="spacer"></span>
+    <button id="rescan" class="btn ghost" type="button"><span class="ico-slot" data-icon="refresh" data-size="15"></span><span data-i18n="common.rescan">Rescan</span></button>
+    <a class="btn" href="/dashcam/usb"><span class="ico-slot" data-icon="upload" data-size="15"></span><span data-i18n="dashcam.usb">Browse USB drive</span></a>
   </div>
 
-  <div id="clip-warning" class="card" style="display:none;gap:12px;align-items:flex-start;margin-bottom:24px"></div>
+  <div id="notes" class="dc-notes"></div>
 
   {# 驾驶分析。数据全部来自录像里内嵌的 SEI 遥测，不花任何 API 费用、
      也不需要联网 —— 自驾占比和接管次数在 Owner API 和 TeslaMate 里都没有。
      素材库没解析过时这一整块隐藏，不摆一排空指标假装有内容。 #}
-  <div class="section" id="fsd-section" style="display:none">
+  <div class="section" id="fsd-section" hidden>
     <div class="section-head">
       <h2 data-i18n="fsd.title">Driving analysis</h2>
       <span class="note" id="fsd-note"></span>
@@ -39,10 +43,10 @@
       </summary>
       <div class="body">
         <div class="row" style="gap:10px;margin-bottom:12px">
-          <div class="segmented" id="ev-pick">
-            <button data-kind="" class="active" data-i18n="fsd.e_all">All</button>
-            <button data-kind="hard_brake" data-i18n="fsd.e_brake">Hard braking</button>
-            <button data-kind="disengage" data-i18n="fsd.e_disengage">Disengagements</button>
+          <div class="seg2" id="ev-pick">
+            <button type="button" data-kind="" class="on" data-i18n="fsd.e_all">All</button>
+            <button type="button" data-kind="hard_brake" data-i18n="fsd.e_brake">Hard braking</button>
+            <button type="button" data-kind="disengage" data-i18n="fsd.e_disengage">Disengagements</button>
           </div>
         </div>
         <div class="table-scroll">
@@ -62,251 +66,312 @@
   </div>
 
   {# 没解析过素材时给一个明确的入口，而不是让这一块凭空消失 #}
-  <div id="fsd-cta" class="card" style="display:none;margin-bottom:24px">
-    <div>
+  <div id="fsd-cta" class="dc-cta" hidden>
+    <div class="ic"><span class="ico-slot" data-icon="chart" data-size="22"></span></div>
+    <div class="grow">
       <div class="name" data-i18n="fsd.cta_title">Analyse your footage</div>
-      <div class="body-sm mt" style="max-width:64ch" data-i18n="fsd.cta_body"></div>
+      <div class="body-sm mt" style="max-width:68ch;margin-top:6px" data-i18n="fsd.cta_body"></div>
     </div>
-    <span class="spacer"></span>
-    <button class="btn" id="fsd-index" data-i18n="fsd.cta_btn">Build index</button>
+    <button class="btn" id="fsd-index" type="button" data-i18n="fsd.cta_btn">Build index</button>
   </div>
 
-  <div id="events" class="grid cols-3"><div class="empty" style="grid-column:1/-1" data-i18n="common.loading">Loading…</div></div>
-
+  <div id="events" class="dc-grid"><div class="empty" style="grid-column:1/-1" data-i18n="common.loading">Loading…</div></div>
 </div>
+
+<style>
+  /* amber as text needs more weight on a light background */
+  .dc-page { --amber-ink: var(--amber); }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .dc-page { --amber-ink: #9a5b00; } }
+  :root[data-theme="light"] .dc-page { --amber-ink: #9a5b00; }
+  .dc-page { padding-bottom: 96px; }
+  .dc-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 22px; }
+  .dc-notes { display: flex; flex-direction: column; gap: 10px; margin-bottom: 22px; }
+  .dc-notes:empty { display: none; }
+  .dc-note { display: flex; gap: 14px; align-items: flex-start; padding: 14px 18px; border-radius: var(--radius);
+    background: var(--bg-secondary); border: 1px solid var(--line); }
+  .dc-note > .ic { flex: none; margin-top: 1px; color: var(--text-tertiary); display: flex; }
+  .dc-note.warn { border-color: rgba(255, 179, 64, .32); background: linear-gradient(90deg, var(--amber-soft), transparent 55%), var(--bg-secondary); }
+  .dc-note.warn > .ic { color: var(--amber-ink); }
+  .dc-note .grow { flex: 1; min-width: 0; }
+  .dc-note .tt { font-size: 14.5px; font-weight: 550; }
+  .dc-note .bd { margin-top: 4px; font-size: 13.5px; color: var(--text-secondary); line-height: 1.55; max-width: 76ch; }
+  .dc-note code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: var(--bg-hover); padding: 1px 6px; border-radius: 6px; word-break: break-all; }
+  .dc-note details { margin-top: 8px; }
+  .dc-note details summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); list-style: none; text-decoration: underline;
+    text-underline-offset: 3px; text-decoration-color: var(--line-strong); }
+  .dc-note details summary::-webkit-details-marker { display: none; }
+  .dc-note ul { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--text-tertiary); }
+  .dc-note li { margin: 3px 0; word-break: break-all; }
+  .dc-cta { display: flex; gap: 16px; align-items: center; padding: 20px 22px; border-radius: var(--radius); margin-bottom: 26px;
+    background: var(--bg-secondary); border: 1px solid var(--line); }
+  .dc-cta .ic { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; flex: none; background: var(--bg-hover); color: var(--text-secondary); }
+  .dc-cta .grow { flex: 1; min-width: 0; }
+  .dc-cta .name { font-size: 15px; font-weight: 550; }
+  #fsd-section { margin-top: 0; margin-bottom: 40px; }
+  .dc-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+  .clip { display: block; border-radius: var(--radius); overflow: hidden; background: var(--bg-secondary); border: 1px solid var(--line);
+    transition: background 160ms var(--ease-out), border-color 160ms var(--ease-out), transform 120ms var(--ease-out); }
+  .clip:hover { background: var(--bg-elevated); border-color: var(--line-strong); }
+  .clip .th { position: relative; aspect-ratio: 16 / 9; background: var(--bg-elevated); display: grid; place-items: center; color: var(--text-tertiary); }
+  .clip .th img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .clip .m { padding: 12px 14px 14px; }
+  .clip .r1 { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-secondary); }
+  .clip .r1 .sp { flex: 1; }
+  .clip .r1 .when { font-size: 12px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .clip .r2 { margin-top: 6px; font-size: 13.5px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .clip .r3 { margin-top: 3px; font-size: 12.5px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+  .dc-empty { grid-column: 1 / -1; text-align: center; padding: 56px 24px; }
+  .dc-empty .why { max-width: 58ch; margin: 24px auto 0; line-height: 1.7; text-align: left; }
+  @media (max-width: 640px) {
+    .dc-bar .seg2 { order: 3; flex-basis: 100%; display: flex; }
+    .dc-bar .seg2 button { flex: 1 1 auto; padding: 0 4px; font-size: 12.5px; white-space: nowrap; }
+    .dc-cta { flex-wrap: wrap; }
+    .dc-note { padding: 12px 14px; }
+  }
+</style>
 {% endblock %}
 
 {% block scripts %}
 <script src="/static/js/charts.js"></script>
 <script>
-/* Reason codes carry an icon name plus a catalog key — text is resolved at
-   render time because the catalog may still be loading when this parses. */
-const REASONS = {
-  sentry_aware_object_detection:        ["shield", "dashcam.reason.object_detected"],
-  sentry_panic_alarm:                   ["shield", "dashcam.reason.panic_alarm"],
-  user_interaction_dashcam_icon_tapped: ["film",   "dashcam.reason.saved_icon"],
-  user_interaction_dashcam_panel_save:  ["film",   "dashcam.reason.saved_panel"],
-  user_interaction_honk:                ["horn",   "dashcam.reason.honk"],
-};
-const TYPE_ICON = { sentry: "shield", saved: "film", recent: "drive" };
-let curType = "";
+(function () {
+  const $ = (id) => document.getElementById(id);
+  /* Reason codes carry an icon name plus a catalog key — text is resolved at
+     render time because the catalog may still be loading when this parses. */
+  const REASONS = {
+    sentry_aware_object_detection:        ["shield", "dashcam.reason.object_detected"],
+    sentry_panic_alarm:                   ["shield", "dashcam.reason.panic_alarm"],
+    user_interaction_dashcam_icon_tapped: ["film",   "dashcam.reason.saved_icon"],
+    user_interaction_dashcam_panel_save:  ["film",   "dashcam.reason.saved_panel"],
+    user_interaction_honk:                ["horn",   "dashcam.reason.honk"],
+  };
+  const TYPE_ICON = { sentry: "shield", saved: "film", recent: "drive" };
+  const TYPE_KEYS = { sentry: "dashcam.sentry", saved: "dashcam.saved", recent: "dashcam.driving" };
+  let curType = "", loaded = false, evKind = "";
 
-/* i18n.apply() 在首次载入词表时也会派发 omt:locale，所以这个监听器和下面的
-   i18nReady.then(load) 会在首屏各拉一次事件列表。切语言时只需重画，不必重取。 */
-let dashcamLoaded = false;
-window.addEventListener("omt:locale", () => {
-  document.title = t("dashcam.page_title");
-  if (dashcamLoaded) load();
-});
+  /* Clip times are the car's local time with no zone; show the digits as written. */
+  function naiveMs(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/.exec(iso || "");
+    return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]) : NaN;
+  }
+  const when = (iso) => {
+    const ms = naiveMs(iso);
+    return isNaN(ms) ? "" : new Date(ms).toLocaleString(localeTag(), { timeZone: "UTC", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  };
+  const clockOf = (iso) => {
+    const ms = naiveMs(iso);
+    return isNaN(ms) ? "" : new Date(ms).toLocaleTimeString(localeTag(), { timeZone: "UTC", hour: "2-digit", minute: "2-digit" });
+  };
+  const code = (s) => `<code>${esc(s)}</code>`;
 
-async function load() {
-  dashcamLoaded = true;
-  const div = document.getElementById("events");
-  let evs, st;
-  try {
-    evs = await apiGet("/api/dashcam/events?limit=500" + (curType ? "&type=" + curType : ""));
-    st  = await apiGet("/api/dashcam/status");
-  } catch (err) {
-    div.innerHTML = `<div class="empty" style="grid-column:1/-1">${esc(t("dashcam.error.load", { message: err.message }))}</div>`;
-    return;
+  function note(kind, ic, title, body, extra) {
+    return `<div class="dc-note ${kind}"><span class="ic">${icon(ic, 18)}</span><div class="grow">
+      <div class="tt">${esc(title)}</div>${body ? `<div class="bd">${body}</div>` : ""}${extra || ""}</div></div>`;
   }
 
-  /* 「有条目、没画面」是加密片段的典型表现：目录结构、文件名、时长都正常，
-     里面一帧也解不出来。不明说的话用户只会以为是这个软件坏了。 */
-  const warn = document.getElementById("clip-warning");
-  if (st.unreadable > 0) {
-    warn.style.display = "flex";
-    warn.innerHTML = `<span style="color:var(--warning-orange);flex:none">${icon("bell", 18)}</span>
-      <div><div class="title" style="color:var(--warning-orange)">${esc(st.unreadable === 1 ? t("dashcam.locked_title_one") : t("dashcam.locked_title", { n: st.unreadable }))}</div>
-      <div class="body-sm mt" style="max-width:62ch">${t("dashcam.locked_body")}</div></div>`;
-  } else if (st.needs_transcode > 0) {
-    warn.style.display = "flex";
-    warn.innerHTML = `<div class="body-sm">${esc(t("dashcam.hevc_note", { n: st.needs_transcode }))}</div>`;
-  } else {
-    warn.style.display = "none";
+  function paintNotes(st) {
+    const out = [];
+    const scan = st.scan || {};
+    if (scan.shadowed_root && st.base) {
+      out.push(note("warn", "eye", t("dashcam.note.shadowed_title"),
+        t("dashcam.note.shadowed_body", { hidden: code(scan.shadowed_root), base: code(st.base) })));
+    }
+    if (st.unreadable > 0) {
+      out.push(note("warn", "lock", st.unreadable === 1 ? t("dashcam.locked_title_one") : t("dashcam.locked_title", { n: st.unreadable }),
+        esc(t("dashcam.note.locked_body"))));
+    }
+    if (scan.skipped > 0) {
+      const items = scan.skipped_items || [];
+      out.push(note("", "info", t(scan.skipped === 1 ? "dashcam.note.skipped_title_one" : "dashcam.note.skipped_title", { n: scan.skipped }), esc(t("dashcam.note.skipped_body")),
+        items.length ? `<details><summary>${esc(t("dashcam.note.skipped_show"))}</summary><ul>${items.map((x) =>
+          `<li>${esc(x.path)} — ${esc(x.reason)}</li>`).join("")}</ul></details>` : ""));
+    }
+    if (st.probe_timeouts > 0) {
+      out.push(note("", "clock", t(st.probe_timeouts === 1 ? "dashcam.note.timeouts_title_one" : "dashcam.note.timeouts_title", { n: st.probe_timeouts }),
+        esc(t("dashcam.note.timeouts_body"))));
+    }
+    if (st.needs_transcode > 0 && !st.unreadable) {
+      out.push(note("", "film", t("dashcam.hevc_note", { n: st.needs_transcode }), ""));
+    }
+    $("notes").innerHTML = out.join("");
   }
 
-  // 目录空着是正常的初始状态，不是故障；只有目录真的不见了才算异常
-  document.getElementById("scan-status").textContent =
-    st.found ? t("dashcam.status.summary", { events: st.events, sentry: st.by_type.sentry,
-                                             saved: st.by_type.saved, recent: st.by_type.recent })
-    : st.root_exists ? t("dashcam.status.awaiting")
-    : t("dashcam.status.no_folder");
+  async function load() {
+    loaded = true;
+    const div = $("events");
+    let evs, st;
+    try {
+      [evs, st] = await Promise.all([
+        apiGet("/api/dashcam/events?limit=500" + (curType ? "&type=" + curType : "")),
+        apiGet("/api/dashcam/status"),
+      ]);
+    } catch (err) {
+      div.innerHTML = `<div class="empty" style="grid-column:1/-1">${esc(t("dashcam.error.load", { message: err.message }))}</div>`;
+      return;
+    }
+    paintNotes(st);
 
-  if (!evs.length) {
-    div.innerHTML = `<div class="empty" style="grid-column:1/-1;padding:56px 24px">
-      <div style="font-size:16px;color:var(--text-secondary)">${esc(t("dashcam.empty.title"))}</div>
-      <div class="mt2"><a class="btn primary" href="/dashcam/usb">${esc(t("dashcam.empty.usb_cta"))}</a></div>
-      <div class="body-sm" style="max-width:56ch;margin:24px auto 0;line-height:1.7;text-align:left">
-        ${t("dashcam.empty.usb_why")}<br><br>${t("dashcam.empty.setup")}<br><br>${t("dashcam.empty.encryption")}
-      </div></div>`;
-    return;
+    // An empty folder is the normal first state, not a fault; only a missing folder is
+    $("scan-status").textContent =
+      st.found ? t("dashcam.status.summary", { events: st.events, sentry: st.by_type.sentry, saved: st.by_type.saved, recent: st.by_type.recent })
+      : st.root_exists ? t("dashcam.status.awaiting")
+      : t("dashcam.status.no_folder");
+
+    if (!evs.length) {
+      div.innerHTML = curType && st.events
+        ? `<div class="empty" style="grid-column:1/-1">${esc(t("dashcam.empty.filter"))}</div>`
+        : `<div class="empty dc-empty">
+          <div style="font-size:16px;color:var(--text-secondary)">${esc(t("dashcam.empty.title"))}</div>
+          <div class="mt2"><a class="btn primary" href="/dashcam/usb">${esc(t("dashcam.empty.usb_cta"))}</a></div>
+          <div class="body-sm why">${t("dashcam.empty.usb_why")}<br><br>${t("dashcam.empty.setup")}<br><br>${t("dashcam.empty.encryption")}</div></div>`;
+      return;
+    }
+
+    div.innerHTML = evs.map((e) => {
+      const r = REASONS[e.reason];
+      const span = (naiveMs(e.end) - naiveMs(e.start)) / 1000;
+      const cams = e.cameras.length;
+      const meta = t(cams === 1 ? "dashcam.card.meta_one" : "dashcam.card.meta", { len: isNaN(span) ? "–" : fmt.ts(Math.round(span)), n: cams });
+      const what = [e.city, r ? t(r[1]) : e.reason].filter(Boolean).join(" · ");
+      return `<a class="clip" href="/dashcam/play?id=${encodeURIComponent(e.id)}">
+        <div class="th"><img loading="lazy" alt="" src="/api/dashcam/thumb?id=${encodeURIComponent(e.id)}" data-thumb></div>
+        <div class="m">
+          <div class="r1">${icon(TYPE_ICON[e.type] || "film", 14)}<span>${esc(t(TYPE_KEYS[e.type] || "dashcam.recent"))}</span><span class="sp"></span><span class="when">${esc(when(e.timestamp))}</span></div>
+          <div class="r2">${esc(what || [clockOf(e.start), clockOf(e.end)].join(" – "))}</div>
+          <div class="r3">${esc(meta)}</div>
+        </div></a>`;
+    }).join("");
+    // no thumbnail (RecentClips, or a frame that can't be decoded): the film icon stays
+    div.querySelectorAll("img[data-thumb]").forEach((img) => img.addEventListener("error", () => {
+      const th = img.parentElement;
+      img.remove();
+      th.innerHTML = icon("film", 24);
+    }, { once: true }));
   }
 
-  const typeLabel = { sentry: t("dashcam.sentry"), saved: t("dashcam.saved"), recent: t("dashcam.driving") };
-  div.innerHTML = evs.map((e) => {
-    const r = REASONS[e.reason];
-    return `<a class="card clip" style="padding:0;overflow:hidden;display:block"
-       href="/dashcam/play?id=${encodeURIComponent(e.id)}">
-      <img loading="lazy" src="/api/dashcam/thumb?id=${encodeURIComponent(e.id)}"
-           style="width:100%;aspect-ratio:16/9;object-fit:cover;display:block;background:var(--bg-elevated)"
-           onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'empty',style:'aspect-ratio:16/9;display:grid;place-items:center;margin:0',innerHTML:icon('film',24)}))">
-      <div style="padding:12px 14px 14px">
-        <div class="row" style="gap:7px"><span style="color:var(--text-tertiary);display:flex">${icon(TYPE_ICON[e.type] || "film", 14)}</span><span class="small">${esc(typeLabel[e.type] || e.type)}</span><span class="spacer"></span><span class="meta nowrap">${fmt.dt(e.timestamp)}</span>
-        </div>
-        <div class="meta" style="margin-top:6px">
-          ${esc([e.city, r ? t(r[1]) : e.reason].filter(Boolean).join(" · "))}
-        </div>
-        <div class="meta">${esc(t("dashcam.card.sub", { minutes: e.segment_count, cameras: e.cameras.length }))}</div>
-      </div></a>`;
-  }).join("");
-  paintIcons();
-}
-
-document.querySelectorAll("#type-pick button").forEach((b) => b.addEventListener("click", () => {
-  document.querySelectorAll("#type-pick button").forEach((x) => x.classList.remove("active"));
-  b.classList.add("active");
-  curType = b.dataset.type;
-  load();
-}));
-
-document.getElementById("rescan").addEventListener("click", async (e) => {
-  e.target.disabled = true;
-  await apiGet("/api/dashcam/events?force=true&limit=1").catch(() => {});
-  await load();
-  e.target.disabled = false;
-});
-
-/* ---------------- 驾驶分析（来自录像 SEI） ---------------- */
-
-let evKind = "";
-
-function metric(label, value, unit, sub) {
-  return `<div class="metric">
-    <div class="label">${esc(label)}</div>
-    <div class="metric-value">${value}${unit ? `<span class="unit">${esc(unit)}</span>` : ""}</div>
-    ${sub ? `<div class="delta">${esc(sub)}</div>` : ""}
-  </div>`;
-}
-
-async function loadFsd() {
-  let st, sum;
-  try {
-    [st, sum] = await Promise.all([
-      apiGet("/api/dashcam/index/status"),
-      apiGet("/api/dashcam/fsd/summary?days=180"),
-    ]);
-  } catch (e) { return; }
-
-  // 一段都没解析过 → 只给入口，不摆空指标
-  if (!st.clips_indexed) {
-    document.getElementById("fsd-cta").style.display = "flex";
-    return;
-  }
-  document.getElementById("fsd-cta").style.display = "none";
-
-  if (!sum.has_data) {
-    // 解析过但一条 SEI 都没有：停车哨兵片段和 2025.44.25 之前的固件本来就没有。
-    // 这不是错误，要说清楚，否则用户会以为功能坏了。
-    document.getElementById("fsd-section").style.display = "block";
-    // 读不出来 和 能读但没 SEI，排查方向完全不同：前者查 U 盘/加密，
-    // 后者查固件版本。谁占多数就先说谁。
-    // 三种情况的排查方向完全不同：加密（车机里能关）、损坏（只能重录）、
-    // 没有 SEI（固件太老或停车片段）。谁占多数就先说谁。
-    const msg = st.clips_encrypted > 0
-        && st.clips_encrypted >= st.clips_unreadable
-        && st.clips_encrypted >= st.clips_without_sei
-      ? t("fsd.encrypted", { n: st.clips_encrypted })
-      : st.clips_unreadable > st.clips_without_sei
-        ? t("fsd.unreadable", { n: st.clips_unreadable })
-        : t("fsd.no_sei", { n: st.clips_without_sei || st.clips_indexed });
-    document.getElementById("fsd-metrics").innerHTML =
-      `<div class="empty small" style="padding:24px 0;max-width:70ch;margin:0 auto">${esc(msg)}</div>`;
-    document.getElementById("fsd-trend").style.display = "none";
-    return;
-  }
-
-  document.getElementById("fsd-section").style.display = "block";
-  const hrs = (s) => (s / 3600).toFixed(1);
-  document.getElementById("fsd-metrics").innerHTML =
-    metric(t("fsd.m_auto"), sum.share.autonomous ?? "–", "%",
-           t("fsd.m_auto_sub", { h: hrs(sum.seconds.fsd + sum.seconds.ap) })) +
-    metric(t("fsd.m_fsd"), sum.share.fsd ?? "–", "%", `FSD ${hrs(sum.seconds.fsd)}h`) +
-    metric(t("fsd.m_disengage"), sum.disengagements, "",
-           sum.minutes_per_disengagement
-             ? t("fsd.m_dis_sub", { m: sum.minutes_per_disengagement }) : "") +
-    metric(t("fsd.m_dist"), fmt.num(U.dist(sum.dist_km, 0), 0), U.distLabel());
-
-  document.getElementById("fsd-note").textContent = t("fsd.note", {
-    clips: st.clips_indexed, secs: Math.round(st.seconds / 60), nosei: st.clips_without_sei });
-
-  const tr = await apiGet("/api/dashcam/fsd/trend?days=180&bucket_days=7").catch(() => []);
-  const pts = (tr || []).filter((p) => p.autonomous_pct != null);
-  const trendEl = document.getElementById("fsd-trend");
-  if (pts.length >= 2) {
-    trendEl.style.display = "";
-    omtChart.line(trendEl, {
-      series: [{ name: t("fsd.m_auto"), color: "--series-1",
-                 data: pts.map((p) => [p.start * 1000, p.autonomous_pct]) }],
-      xFmt: (v) => fmt.date(new Date(v).toISOString().slice(0, 10)),
-      yFmt: (v) => Math.round(v) + "%",
-      zeroBase: true,
-    });
-  } else {
-    trendEl.style.display = "none";
-  }
-}
-
-async function loadFsdEvents() {
-  const q = evKind ? `&kind=${evKind}` : "";
-  const evs = await apiGet(`/api/dashcam/driving-events?days=180&limit=200${q}`);
-  const tb = document.querySelector("#t-fsdev tbody");
-  document.getElementById("v-fsdev").textContent = t("fsd.n_events", { n: evs.length });
-  tb.innerHTML = evs.length ? evs.map((e) => `<tr>
-    <td>${esc(fmt.dt(new Date(e.ts * 1000).toISOString()))}</td>
-    <td>${esc(t("fsd.k_" + e.kind))}</td>
-    <td class="num">${e.kind === "hard_brake" ? esc(e.magnitude + " m/s²") : "–"}</td>
-    <td class="num">${e.speed_kmh != null ? esc(fmt.num(U.speed(e.speed_kmh), 0) + " " + U.speedLabel()) : "–"}</td>
-    <td>${esc(e.mode || "–")}</td>
-    <td><a class="btn ghost sm" href="/dashcam/play?id=${encodeURIComponent(e.event_id)}&seek=${e.seek}"
-           data-i18n="fsd.watch">Watch</a></td>
-  </tr>`).join("") : `<tr><td colspan="6" class="empty small">${esc(t("insights.empty"))}</td></tr>`;
-  i18n.apply();
-}
-
-document.getElementById("fsd-index").addEventListener("click", async (e) => {
-  e.target.disabled = true;
-  e.target.textContent = t("fsd.indexing");
-  try {
-    const r = await apiPost("/api/dashcam/index/rebuild", undefined);
-    alert(t("fsd.indexed", { n: r.segments_indexed ?? 0 }));
-    await loadFsd();
-  } catch (err) { alert(err.message); }
-  e.target.disabled = false;
-  e.target.textContent = t("fsd.cta_btn");
-});
-
-document.getElementById("ev-pick").addEventListener("click", (e) => {
-  const b = e.target.closest("button"); if (!b) return;
-  document.querySelectorAll("#ev-pick button").forEach((x) => x.classList.remove("active"));
-  b.classList.add("active");
-  evKind = b.dataset.kind;
-  loadFsdEvents().catch(() => {});
-});
-
-// 事件列表按需加载：展开之前不拉
-(() => {
-  const d = document.getElementById("d-events");
-  let once = false;
-  d.addEventListener("toggle", () => {
-    if (d.open && !once) { once = true; loadFsdEvents().catch(() => {}); }
+  /* i18n.apply() dispatches omt:locale when the catalog first lands too, so
+     the first paint comes from i18nReady below; later ones only redraw. */
+  window.addEventListener("omt:locale", () => {
+    document.title = t("dashcam.page_title");
+    if (loaded) { load(); loadFsd(); }
   });
-})();
 
-i18nReady.catch(() => {}).then(() => { load(); loadFsd(); });
+  $("type-pick").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+    $("type-pick").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+    curType = b.dataset.type;
+    load();
+  }));
+
+  $("rescan").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    await apiGet("/api/dashcam/events?force=true&limit=1").catch(() => {});
+    await load();
+    btn.disabled = false;
+  });
+
+  /* ---------------- driving analysis (from the clips' SEI) ---------------- */
+  function metric(label, value, unit, sub) {
+    return `<div class="metric">
+      <div class="label">${esc(label)}</div>
+      <div class="metric-value">${value}${unit ? `<span class="unit">${esc(unit)}</span>` : ""}</div>
+      ${sub ? `<div class="delta">${esc(sub)}</div>` : ""}
+    </div>`;
+  }
+
+  async function loadFsd() {
+    let st, sum;
+    try {
+      [st, sum] = await Promise.all([apiGet("/api/dashcam/index/status"), apiGet("/api/dashcam/fsd/summary?days=180")]);
+    } catch (e) { return; }
+
+    // nothing indexed yet: offer the entry point, not a row of empty metrics
+    if (!st.clips_indexed) { $("fsd-cta").hidden = false; $("fsd-section").hidden = true; return; }
+    $("fsd-cta").hidden = true;
+    $("fsd-section").hidden = false;
+
+    if (!sum.has_data) {
+      // Indexed but no SEI: parked Sentry clips never have it, neither does
+      // firmware before 2025.44.25. Encrypted, unreadable and no-SEI point to
+      // different fixes, so lead with whichever is most common.
+      const msg = st.clips_encrypted > 0 && st.clips_encrypted >= st.clips_unreadable && st.clips_encrypted >= st.clips_without_sei
+        ? t("fsd.encrypted", { n: st.clips_encrypted })
+        : st.clips_unreadable > st.clips_without_sei
+          ? t("fsd.unreadable", { n: st.clips_unreadable })
+          : t("fsd.no_sei", { n: st.clips_without_sei || st.clips_indexed });
+      $("fsd-metrics").innerHTML = `<div class="empty small" style="padding:8px 0;max-width:72ch;text-align:left">${esc(msg)}</div>`;
+      $("fsd-trend").hidden = true;
+      $("d-events").hidden = true;
+      return;
+    }
+    $("d-events").hidden = false;
+    const hrs = (s) => (s / 3600).toFixed(1);
+    $("fsd-metrics").innerHTML =
+      metric(t("fsd.m_auto"), sum.share.autonomous ?? "–", "%", t("fsd.m_auto_sub", { h: hrs(sum.seconds.fsd + sum.seconds.ap) })) +
+      metric(t("fsd.m_fsd"), sum.share.fsd ?? "–", "%", `FSD ${hrs(sum.seconds.fsd)}h`) +
+      metric(t("fsd.m_disengage"), sum.disengagements, "", sum.minutes_per_disengagement ? t("fsd.m_dis_sub", { m: sum.minutes_per_disengagement }) : "") +
+      metric(t("fsd.m_dist"), fmt.num(U.dist(sum.dist_km, 0), 0), U.distLabel());
+    $("fsd-note").textContent = t("fsd.note", { clips: st.clips_indexed, secs: Math.round(st.seconds / 60), nosei: st.clips_without_sei });
+
+    const tr = await apiGet("/api/dashcam/fsd/trend?days=180&bucket_days=7").catch(() => []);
+    const pts = (tr || []).filter((p) => p.autonomous_pct != null);
+    const trendEl = $("fsd-trend");
+    trendEl.hidden = pts.length < 2;
+    if (pts.length >= 2) {
+      omtChart.line(trendEl, {
+        series: [{ name: t("fsd.m_auto"), color: "--series-1", data: pts.map((p) => [p.start * 1000, p.autonomous_pct]) }],
+        xFmt: (v) => fmt.date(new Date(v).toISOString().slice(0, 10)),
+        yFmt: (v) => Math.round(v) + "%",
+        zeroBase: true,
+      });
+    }
+  }
+
+  async function loadFsdEvents() {
+    const q = evKind ? `&kind=${evKind}` : "";
+    const evs = await apiGet(`/api/dashcam/driving-events?days=180&limit=200${q}`);
+    const tb = document.querySelector("#t-fsdev tbody");
+    $("v-fsdev").textContent = t("fsd.n_events", { n: evs.length });
+    // seek is seconds into that one clip, so the player is told which clip
+    tb.innerHTML = evs.length ? evs.map((e) => `<tr>
+      <td>${esc(fmt.dt(new Date(e.ts * 1000).toISOString()))}</td>
+      <td>${esc(t("fsd.k_" + e.kind))}</td>
+      <td class="num">${e.kind === "hard_brake" ? esc(e.magnitude + " m/s²") : "–"}</td>
+      <td class="num">${e.speed_kmh != null ? esc(fmt.num(U.speed(e.speed_kmh), 0) + " " + U.speedLabel()) : "–"}</td>
+      <td>${esc(e.mode || "–")}</td>
+      <td><a class="btn ghost sm" href="/dashcam/play?id=${encodeURIComponent(e.event_id)}&clip=${encodeURIComponent(e.path)}&seek=${+e.seek || 0}">${esc(t("fsd.watch"))}</a></td>
+    </tr>`).join("") : `<tr><td colspan="6" class="empty small">${esc(t("insights.empty"))}</td></tr>`;
+  }
+
+  $("fsd-index").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    btn.textContent = t("fsd.indexing");
+    try {
+      const r = await apiPost("/api/dashcam/index/rebuild", undefined);
+      toast(t("fsd.indexed", { n: r.segments_indexed ?? 0 }), "ok");
+      await loadFsd();
+    } catch (err) { toast(err.message, "err"); }
+    btn.disabled = false;
+    btn.textContent = t("fsd.cta_btn");
+  });
+
+  $("ev-pick").addEventListener("click", (e) => {
+    const b = e.target.closest("button");
+    if (!b) return;
+    $("ev-pick").querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b));
+    evKind = b.dataset.kind;
+    loadFsdEvents().catch(() => {});
+  });
+
+  // the events table loads when it is first opened
+  $("d-events").addEventListener("toggle", function once() {
+    if (!$("d-events").open) return;
+    $("d-events").removeEventListener("toggle", once);
+    loadFsdEvents().catch(() => {});
+  });
+
+  i18nReady.catch(() => {}).then(() => { load(); loadFsd(); });
+})();
 </script>
-<style>
-  .clip { transition: border-color var(--t-hover) var(--ease), transform var(--t-hover) var(--ease); }
-  .clip:hover { border-color: var(--border-medium); }
-</style>
 {% endblock %}
