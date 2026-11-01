@@ -601,7 +601,10 @@ function schedule() {
 
 async function loadOverview() {
   if (document.hidden) return;
-  try { overview = await apiGet(`/api/overview?car_id=${carId}`); } catch (e) { /* keep the last good one */ }
+  // tz_offset_min is minutes EAST of UTC; getTimezoneOffset() counts west. Without it
+  // "today" was the UTC day, which reset to 0 every evening in the Americas.
+  const tz = -new Date().getTimezoneOffset();
+  try { overview = await apiGet(`/api/overview?car_id=${carId}&tz_offset_min=${tz}`); } catch (e) { /* keep the last good one */ }
   schedule();
 }
 
