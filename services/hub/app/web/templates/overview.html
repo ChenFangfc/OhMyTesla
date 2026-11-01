@@ -1,49 +1,47 @@
 {% extends "shell.html" %}
 {% block title %}{{ t('overview.page_title') }}{% endblock %}
 
-{# You land on your car. The 3D view fills the top of the page, the readouts
-   and quick controls float on it, and the cards below answer "what's it
-   doing / where is it / is it safe" in one glance each. #}
-{% block hero %}
-<section class="hero3d" id="hero">
-  <div class="stage" id="stage"></div>
-  <div class="v3d-labels" id="labels"></div>
-  <div class="hero-top">
-    <div class="hero-title">
-      <div class="eyebrow" id="h-eyebrow">&nbsp;</div>
-      <h1 id="h-name">&nbsp;</h1>
-      <div class="hero-status" id="h-status"></div>
-    </div>
-    <div class="view-switch" id="views" role="group" aria-label="{{ t('home.views', 'Views') }}">
-      <button class="on" data-v="hero" data-i18n="home.view.hero">Hero</button>
-      <button data-v="side" data-i18n="home.view.side">Side</button>
-      <button data-v="rear" data-i18n="home.view.rear">Rear</button>
-      <button data-v="top" data-i18n="home.view.top">Top</button>
-      <button data-v="tires" data-i18n="home.view.tires">Tires</button>
-    </div>
-  </div>
-  <div class="hero-readout">
-    <div class="soc" id="h-soc">–</div>
-    <div class="socbar"><i></i><b></b></div>
-    <div class="range" id="h-range">&nbsp;</div>
-  </div>
-  <div class="quickbar" id="quick" role="toolbar" aria-label="{{ t('home.quick', 'Quick controls') }}"></div>
-</section>
-{% endblock %}
-
+{# 总览 answers one question: is the truck all right, right now?
+   The truck and one hero figure (battery and range) answer it first; the
+   quick controls carry their own state; one slot says the single most
+   important thing happening now; everything else sits in one quiet plate. #}
 {% block content %}
-<div class="page">
-  <div class="setup-banner" id="setup" hidden>
-    <span class="ico-slot" data-icon="key" data-size="22"></span>
-    <div class="txt"></div>
-    <a class="btn accent" href="/settings#commands" data-i18n="home.setup.cta">Set up</a>
-  </div>
-  <div class="cards" id="cards"></div>
+<div class="page ov" id="ov">
+  <header class="ov-head">
+    <h1 class="ov-name" id="ov-name">&nbsp;</h1>
+    <p class="ov-sentence" id="ov-sentence">&nbsp;</p>
+    <p class="ov-fresh" id="ov-fresh"></p>
+  </header>
+
+  <section class="ov-hero" aria-labelledby="ov-name">
+    <div class="ov-fig">
+      <div class="fig" id="fig"><span class="sr-only" data-i18n="common.battery">Battery</span><span class="fig-n" id="fig-soc">–</span><span class="fig-u">%</span></div>
+      <div class="fig-range" id="fig-range">&nbsp;</div>
+      <div class="soc-track" id="soc-track" aria-hidden="true"><i class="fill"></i><b class="limit" hidden></b></div>
+      <div class="fig-meta" id="fig-meta">&nbsp;</div>
+      <div class="now rail" id="now" hidden></div>
+    </div>
+    <div class="ov-stage" id="ov-stage">
+      <div class="stage" id="stage"></div>
+      <div class="hud-layer" id="hud" aria-hidden="true"></div>
+      <button class="v3d-btn" id="views" type="button" aria-haspopup="menu" aria-expanded="false" hidden>
+        <span class="ico-slot" data-icon="cube" data-size="16"></span><span data-i18n="home.views">Views</span>
+      </button>
+    </div>
+  </section>
+
+  <section class="qcs" aria-label="{{ t('home.quick', 'Quick controls') }}">
+    <div class="qc-row" id="quick" role="group"></div>
+    <div class="qc-foot">
+      <span class="inline-status" id="quick-status" role="status" aria-live="polite"></span>
+      <a class="more" href="/controls"><span data-i18n="home.all_controls">All controls</span><span class="ico-slot" data-icon="arrow" data-size="14"></span></a>
+    </div>
+  </section>
+
+  <section class="plate" id="plate" aria-label="{{ t('home.details', 'Details') }}"></section>
 </div>
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/geo.js"></script>
-<script src="/static/js/map.js"></script>
 <script type="module" src="/static/js/pages/home.js"></script>
 {% endblock %}

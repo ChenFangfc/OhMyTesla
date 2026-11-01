@@ -18,28 +18,35 @@
 </details>
 
 <style>
+  /* Numbered setup steps: the number is meaningful here (the order matters),
+     set as a square marker, not a pill; a finished step shows a drawn check. */
   .steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
-  .steps > li { position: relative; padding: 0 0 22px 46px; counter-increment: step; }
-  .steps > li::before { content: counter(step); position: absolute; left: 0; top: 0; width: 30px; height: 30px; border-radius: 50%;
-    display: grid; place-items: center; font-size: 13px; font-weight: 600; background: var(--bg-hover); color: var(--text-secondary); }
-  .steps > li.done::before { content: "✓"; background: var(--green-soft); color: var(--green); }
-  .steps > li::after { content: ""; position: absolute; left: 14.5px; top: 34px; bottom: 4px; width: 1px; background: var(--line); }
+  .steps > li { position: relative; padding: 0 0 var(--s-6) 40px; counter-increment: step; }
+  .steps > li::before { content: counter(step); position: absolute; left: 0; top: 2px; width: 24px; height: 24px; border-radius: var(--r-2);
+    display: grid; place-items: center; font-size: var(--t-13); font-weight: var(--w-semi); background: var(--surface-2); color: var(--ink-2);
+    border: 1px solid var(--line-2); }
+  #commands { --ok-check: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2379cd91' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='m5 13 4 4L19 7'/></svg>"); }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) #commands { --ok-check: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231a763f' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='m5 13 4 4L19 7'/></svg>"); } }
+  :root[data-theme="light"] #commands { --ok-check: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231a763f' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='m5 13 4 4L19 7'/></svg>"); }
+  .steps > li.done::before { content: ""; background: var(--ok-tint) var(--ok-check) no-repeat center / 14px; border-color: var(--ok-line); }
+  .steps > li::after { content: ""; position: absolute; left: 11.5px; top: 32px; bottom: 6px; width: 1px; background: var(--line); }
   .steps > li:last-child::after { display: none; }
-  .steps h4 { font-size: 15px; font-weight: 550; margin: 4px 0 6px; }
-  .steps .hint { font-size: 13px; color: var(--text-tertiary); line-height: 1.55; max-width: 64ch; }
-  .steps code, .ch code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: var(--bg-hover); padding: 2px 6px; border-radius: 6px; word-break: break-all; }
-  .form-grid { display: grid; grid-template-columns: 150px 1fr; gap: 10px 14px; align-items: center; max-width: 620px; margin-top: 10px; }
-  .form-grid label { font-size: 13px; color: var(--text-secondary); }
-  @media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; } }
-  .okmsg { color: var(--green); font-size: 13px; } .errmsg { color: var(--red); font-size: 13px; }
-  .qr { display: inline-block; padding: 10px; background: #fff; border-radius: 12px; line-height: 0; }
+  .steps h4 { font-size: var(--t-15); font-weight: var(--w-semi); margin: 4px 0 6px; }
+  .steps .hint { font-size: var(--t-13); color: var(--ink-3); line-height: var(--lead-prose); max-width: 64ch; }
+  .steps code, .ch code { font-family: var(--font-mono); font-size: var(--t-12); background: var(--surface-2); padding: 1px 5px; border-radius: var(--r-1); word-break: break-all; }
+  .form-grid { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px var(--s-4); align-items: center; max-width: 620px; margin-top: 10px; }
+  .form-grid label { font-size: var(--t-13); color: var(--ink-2); }
+  @media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; gap: 6px; } .form-grid label { margin-top: 6px; } }
+  .okmsg { color: var(--ok-text); font-size: var(--t-13); } .errmsg { color: var(--er-text); font-size: var(--t-13); }
+  /* A QR code needs a light quiet zone in either theme to scan. */
+  .qr { display: inline-block; padding: 10px; background: #fbfcfd; border-radius: var(--r-2); line-height: 0; }
   .qr svg, .qr img { width: 148px; height: 148px; }
-  .ch { border-top: 1px solid var(--line); padding: 14px 0; }
+  .ch { border-top: 1px solid var(--line); padding: var(--s-4) 0; }
   .ch:first-child { border-top: 0; padding-top: 0; }
-  .ch-head { display: flex; align-items: center; gap: 10px; }
-  .ch-head .nm { font-weight: 550; }
-  .ch-head .st { font-size: 12.5px; color: var(--text-tertiary); }
-  .ch-head .st.ok { color: var(--green); } .ch-head .st.warn { color: var(--amber); }
+  .ch-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .ch-head .nm { font-weight: var(--w-semi); }
+  .ch-head .st { font-size: var(--t-13); color: var(--ink-3); }
+  .ch-head .st.ok { color: var(--ok-text); } .ch-head .st.warn { color: var(--wn-text); }
   .ch-head .sp { flex: 1; }
-  .ch-form { margin-top: 12px; }
+  .ch-form { margin-top: var(--s-3); }
 </style>

@@ -15,9 +15,13 @@ const cmdk = (() => {
 
   const NAV = [
     { key: "nav.overview", href: "/",             words: "overview home car vehicle 首页 总览" },
-    { key: "nav.energy",   href: "/energy",     words: "energy consumption efficiency kwh 能耗 效率 电量" },
-    { key: "nav.trips",    href: "/trips",       words: "trips drives routes 行程 路线" },
-    { key: "nav.timeline", href: "/timeline",    words: "timeline history calendar places visited activity 时间线 历史 日历 足迹 地点 停放" },
+    { key: "nav.controls", href: "/controls",     words: "controls commands climate charge 控制 车辆控制 空调 充电" },
+    { key: "data.nav.overview",  href: "/data",           words: "data stats statistics analytics overview records 数据 统计 概览 纪录" },
+    { key: "data.nav.driving",   href: "/data/driving",   words: "driving trips drives routes efficiency speed 行车 行程 路线 能耗 车速" },
+    { key: "data.nav.charging",  href: "/data/charging",  words: "charging cost kwh tariff supercharger 充电 电费 超充" },
+    { key: "data.nav.battery",   href: "/data/battery",   words: "battery health degradation drain range 电池 健康 衰减 掉电 续航" },
+    { key: "data.nav.footprint", href: "/data/footprint", words: "footprint map places visited cities states 足迹 地图 城市 去过" },
+    { key: "data.nav.timeline",  href: "/data/timeline",  words: "timeline history calendar activity 时间线 历史 日历" },
     { key: "nav.dashcam",  href: "/dashcam",      words: "dashcam clips footage video 录像 行车记录仪" },
     { key: "cmdk.nav_usb", href: "/dashcam/usb",  words: "usb drive import stick u盘 导入" },
     { key: "nav.security", href: "/security",       words: "security sentry alerts notifications 哨兵 告警 安全" },
@@ -109,7 +113,7 @@ const cmdk = (() => {
       key: "cmdk.q_where", words: "where is my car located parked location 车在哪 位置 停在",
       run: () => {
         if (!ctx.place && ctx.latitude == null) return msg(t("cmdk.a_no_data"));
-        const rows = [[t("common.location"), ctx.place || (+ctx.latitude).toFixed(4) + ", " + (+ctx.longitude).toFixed(4)]];
+        const rows = [[t("common.location"), ctx.place || fmt.fixed(+ctx.latitude, 4) + ", " + fmt.fixed(+ctx.longitude, 4)]];
         if (ctx.stale_seconds) rows.push([t("cmdk.as_of"), fmt.ago(ctx.stale_seconds)]);
         return answer(t("cmdk.q_where"), rows);
       },
@@ -121,7 +125,8 @@ const cmdk = (() => {
   function answer(title, rows) {
     const d = document.createElement("div");
     d.className = "cmdk-answer";
-    d.innerHTML = `<div class="eyebrow" style="margin-bottom:12px">${esc(title)}</div>` +
+    d.setAttribute("role", "status");
+    d.innerHTML = `<div class="cmdk-q">${esc(title)}</div>` +
       rows.map(([k, v]) =>
         `<div class="stat-line" style="padding:9px 0">
            <span class="label">${esc(k)}</span><span class="spacer"></span>
@@ -132,6 +137,7 @@ const cmdk = (() => {
   function msg(text) {
     const d = document.createElement("div");
     d.className = "cmdk-answer";
+    d.setAttribute("role", "status");
     d.innerHTML = `<div class="body-sm">${esc(text)}</div>`;
     return d;
   }
@@ -199,15 +205,16 @@ const cmdk = (() => {
     items.forEach((it, i) => {
       if (it.group !== group) {
         group = it.group;
-        html += `<div class="cmdk-group eyebrow">${esc(t(group))}</div>`;
+        html += `<div class="cmdk-group" role="presentation">${esc(t(group))}</div>`;
       }
-      html += `<div class="cmdk-item${it.cmd?.risky ? " risky" : ""}" role="option"
+      html += `<div class="cmdk-item${it.cmd?.risky ? " risky" : ""}" role="option" id="cmdk-i-${i}"
                     aria-selected="${i === 0}" data-i="${i}">
                  <span class="ico">${icon(it.ico, 16)}</span><span>${esc(it.label)}</span>
                  ${it.cmd?.risky ? `<span class="hint">${esc(t("cmdk.confirm_hint"))}</span>` : ""}
                </div>`;
     });
     list.innerHTML = html;
+    input.setAttribute("aria-activedescendant", "cmdk-i-0");
     list.querySelectorAll(".cmdk-item").forEach((n) => {
       n.addEventListener("mouseenter", () => move(+n.dataset.i));
       n.addEventListener("click", () => choose());
@@ -219,6 +226,7 @@ const cmdk = (() => {
     list.querySelectorAll(".cmdk-item").forEach((n, k) =>
       n.setAttribute("aria-selected", k === sel));
     list.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
+    input.setAttribute("aria-activedescendant", "cmdk-i-" + sel);
   }
 
   async function choose() {
@@ -243,12 +251,12 @@ const cmdk = (() => {
       list.innerHTML = "";
       const d = document.createElement("div");
       d.className = "cmdk-answer";
-      d.innerHTML = `<div class="title" style="margin-bottom:6px">${esc(t(c.key))}?</div>
+      d.innerHTML = `<div class="title" style="margin-bottom:4px">${esc(t("cmd.confirm.title", { what: t(c.key) }))}</div>
         <div class="body-sm">${esc(ctx.name || t("overview.unnamed_vehicle", { id: ctx.car_id || "" }))}${
           ctx.place ? " · " + esc(ctx.place) : ""}</div>
         <div class="row gap-2" style="margin-top:16px">
-          <button class="btn" id="ck-no">${esc(t("common.cancel"))}</button>
-          <button class="btn primary" id="ck-yes">${esc(t("common.confirm"))}</button>
+          <button type="button" class="btn" id="ck-no">${esc(t("common.cancel"))}</button>
+          <button type="button" class="btn accent" id="ck-yes">${esc(t(c.key))}</button>
         </div>`;
       list.appendChild(d);
       items = [];
@@ -263,7 +271,7 @@ const cmdk = (() => {
       list.appendChild(msg(t("cmdk.needs_value", { unit: c.unit })));
       return;
     }
-    list.innerHTML = `<div class="cmdk-empty">${esc(t("cmdk.sending"))}</div>`;
+    list.innerHTML = `<div class="cmdk-empty" role="status">${esc(i18n.has("cmd.ing." + c.id) ? t("cmd.ing." + c.id) : t("cmdk.sending"))}</div>`;
     try {
       // 只有真的走过确认框才带 confirm。以前无条件传 true，服务端那道
       // 428「危险操作需二次确认」的闸门就永远触发不了 —— 等于把解锁车门、
@@ -294,9 +302,10 @@ const cmdk = (() => {
     if (el) return;
     el = document.createElement("div");
     el.className = "cmdk-scrim";
-    el.innerHTML = `<div class="cmdk" role="dialog" aria-modal="true">
-        <input type="text" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true">
-        <div class="cmdk-list" role="listbox"></div>
+    el.innerHTML = `<div class="cmdk" role="dialog" aria-modal="true" aria-label="${esc(t("cmdk.title"))}">
+        <input type="text" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true"
+               aria-controls="cmdk-list" aria-autocomplete="list" aria-label="${esc(t("cmdk.title"))}">
+        <div class="cmdk-list" id="cmdk-list" role="listbox"></div>
       </div>`;
     document.body.appendChild(el);
     input = el.querySelector("input");

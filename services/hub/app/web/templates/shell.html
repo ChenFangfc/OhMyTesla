@@ -8,68 +8,73 @@
   <link rel="stylesheet" href="/static/css/app.css">
   <link rel="icon" href="/static/icon.svg">
   <link rel="manifest" href="/manifest.json" crossorigin="use-credentials">
-  <meta name="theme-color" content="#0a0b0d">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0d0e11" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f1f3f5" media="(prefers-color-scheme: light)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <script type="importmap">{"imports":{"three":"/static/vendor/three/three.module.min.js","three/addons/":"/static/vendor/three/addons/"}}</script>
   {% block head %}{% endblock %}
 </head>
-<body class="app">
+{#
+  Five destinations, the same on every screen size: a 56 px bar on desktop,
+  a compact bar plus a five-tab bar on phones. Settings sits behind the gear.
+  The 数据 hub owns several pages; any of them lights the 数据 item.
+#}
+{% set nav_group = {'home': 'home', 'controls': 'controls', 'security': 'security', 'data': 'data',
+                    'trips': 'data', 'energy': 'data', 'timeline': 'data', 'dashcam': 'dashcam'} %}
+{% set current = nav_group.get(active, active) %}
+{% set NAV = [('home', '/', 'car', 'nav.overview', 'Overview'),
+              ('controls', '/controls', 'sliders', 'nav.controls', 'Controls'),
+              ('security', '/security', 'shield', 'nav.security', 'Security'),
+              ('data', '/data', 'chart', 'nav.data', 'Data'),
+              ('dashcam', '/dashcam', 'film', 'nav.dashcam_short', 'Dashcam')] %}
+<body class="app" data-active="{{ active }}">
+<a class="skip" href="#main" data-i18n="shell.skip">{{ t('shell.skip', 'Skip to content') }}</a>
 
-{# Desktop rail. Four things: who we are, which car, where to go, and whether
-   the data is flowing. Everything else belongs to the page. #}
-<aside class="app-rail">
-  <a href="/" class="app-brand"><img src="/static/icon.svg" alt=""><span class="word">Ohmy<span>Tesla</span></span></a>
-  <button class="carswitch" data-carswitch aria-label="{{ t('cars.choose', 'Choose vehicle') }}">
-    <span class="status-dot"></span>
-    <span class="cs-text"><div class="cs-name">…</div><div class="cs-sub"></div></span>
-    <span class="ico-slot" data-icon="chevdown" data-size="16"></span>
-  </button>
-  <nav class="rail-nav">
-    {% set items = [('home','/','home','nav.overview'), ('controls','/controls','sliders','nav.controls'),
-                    ('trips','/trips','route','nav.trips'), ('energy','/energy','bolt','nav.energy'),
-                    ('timeline','/timeline','timeline','nav.timeline'), ('dashcam','/dashcam','film','nav.dashcam'),
-                    ('security','/security','shield','nav.security')] %}
-    {% for key, href, ic, label in items %}
-    <a href="{{ href }}" class="rail-link {{ 'active' if active == key else '' }}">
-      <span class="ico-slot" data-icon="{{ ic }}" data-size="19"></span><span data-i18n="{{ label }}">{{ t(label, key|capitalize) }}</span>
-      {% if key == 'security' %}<span class="badge" id="sec-badge" hidden></span>{% endif %}
+<header class="bar">
+  <div class="bar-in">
+    <a href="/" class="brand" aria-label="OhmyTesla">
+      <img src="/static/icon.svg" alt="" width="22" height="22"><span class="word">Ohmy<span>Tesla</span></span>
     </a>
-    {% endfor %}
-  </nav>
-  <div class="rail-foot">
-    <button id="cmdk-open" class="rail-link" style="border:0;background:none;font:inherit;cursor:pointer;width:100%">
-      <span class="ico-slot" data-icon="search" data-size="19"></span><span data-i18n="cmdk.title">Search</span><kbd style="margin-left:auto;font-size:11px;color:var(--text-tertiary)">⌘K</kbd>
-    </button>
-    <a href="/settings" class="rail-link {{ 'active' if active == 'settings' else '' }}">
-      <span class="ico-slot" data-icon="gear" data-size="19"></span><span data-i18n="nav.settings">Settings</span>
-    </a>
-    <div class="rail-conn" id="conn"><span class="dot"></span><span class="txt"></span></div>
+    <nav class="nav" aria-label="{{ t('shell.nav', 'Primary') }}">
+      {% for key, href, ic, label, dflt in NAV %}
+      <a href="{{ href }}" class="nav-a"{% if current == key %} aria-current="page"{% endif %}><span data-i18n="{{ label }}">{{ t(label, dflt) }}</span>{% if key == 'security' %}<span class="badge" data-sec-badge hidden></span>{% endif %}</a>
+      {% endfor %}
+    </nav>
+    <div class="bar-end">
+      <button class="carswitch" type="button" data-carswitch aria-haspopup="menu" aria-expanded="false">
+        <span class="status-dot"></span>
+        <span class="cs-text"><span class="cs-name">&nbsp;</span><span class="cs-sub"></span></span>
+        <span class="ico-slot cs-chev" data-icon="chevdown" data-size="14"></span>
+      </button>
+      <button class="bar-btn" type="button" id="cmdk-open" aria-keyshortcuts="Meta+K Control+K"
+              aria-label="{{ t('cmdk.title', 'Search') }}" data-i18n-title="cmdk.title">
+        <span class="ico-slot" data-icon="search" data-size="18"></span><kbd class="bar-kbd">⌘K</kbd>
+      </button>
+      <a class="bar-btn" href="/settings" aria-label="{{ t('nav.settings', 'Settings') }}" data-i18n-title="nav.settings"{% if active == 'settings' %} aria-current="page"{% endif %}>
+        <span class="ico-slot" data-icon="gear" data-size="18"></span>
+      </a>
+    </div>
   </div>
-</aside>
-
-{# Phone chrome: car on top, five destinations at the bottom. #}
-<header class="app-topbar">
-  <button class="carswitch" data-carswitch>
-    <span class="status-dot"></span>
-    <span class="cs-text"><div class="cs-name">…</div><div class="cs-sub"></div></span>
-    <span class="ico-slot" data-icon="chevdown" data-size="16"></span>
-  </button>
-  <a href="/settings" class="chip-btn" aria-label="Settings"><span class="ico-slot" data-icon="gear" data-size="18"></span></a>
 </header>
 
-<main class="app-main">
-  <div id="stale-banner" class="banner" style="display:none"></div>
+{# The one region for things the system says without being asked: Sentry
+   alarms, a stopped data pipeline, short confirmations from older pages. #}
+<div class="alerts" id="alerts" aria-live="polite" aria-label="{{ t('shell.alerts', 'Alerts') }}"></div>
+
+<main class="app-main" id="main" tabindex="-1">
   {% block hero %}{% endblock %}
   {% block content %}{% endblock %}
 </main>
 
-<nav class="app-tabbar">
-  {% for key, href, ic, label in [('home','/','home','nav.overview'), ('controls','/controls','sliders','nav.controls'),
-                                  ('security','/security','shield','nav.security'), ('dashcam','/dashcam','film','nav.dashcam')] %}
-  <a href="{{ href }}" class="tab {{ 'active' if active == key else '' }}"><span class="ico-slot" data-icon="{{ ic }}" data-size="22"></span><span data-i18n="{{ label }}">{{ t(label, key|capitalize) }}</span></a>
+<nav class="tabbar" aria-label="{{ t('shell.nav', 'Primary') }}">
+  {% for key, href, ic, label, dflt in NAV %}
+  <a href="{{ href }}" class="tabbar-a"{% if current == key %} aria-current="page"{% endif %}>
+    <span class="tb-ic"><span class="ico-slot" data-icon="{{ ic }}" data-size="22"></span>{% if key == 'security' %}<span class="badge" data-sec-badge hidden></span>{% endif %}</span>
+    <span class="tb-l" data-i18n="{{ label }}">{{ t(label, dflt) }}</span>
+  </a>
   {% endfor %}
-  <button class="tab {{ 'active' if active in ('trips','energy','timeline','settings') else '' }}" id="tab-more"><span class="ico-slot" data-icon="menu" data-size="22"></span><span data-i18n="nav.more">More</span></button>
 </nav>
 
 <script src="/static/js/i18n.js"></script>
@@ -88,57 +93,20 @@
   }
   paintIcons();
 
-  /* The dangerous failure for an alerting product is silence: pages render,
-     health checks pass, and the pipeline is dead. Say so at the top. */
-  function checkDataHealth() {
-    apiGet("/api/health/detail").then((h) => {
-      const el = document.getElementById("stale-banner");
-      const d = h.data || {};
-      if (d.stale) {
-        el.textContent = t("banner.stale", { n: Math.round((d.seconds_since_data || 0) / 60) });
-        el.style.display = "flex";
-      } else {
-        el.style.display = "none";
-      }
-    }).catch(() => {});
-  }
-
+  /* Kept for pages written against the v2 shell. */
   const KNOWN_STATES = ["parked", "asleep", "offline", "online", "driving", "charging"];
   const stateLabel = (s) => t(KNOWN_STATES.includes(s) ? "state." + s : "state.unknown");
-
-  function paintConnection(d) {
-    const el = document.getElementById("conn");
-    if (!el) return;
-    const cls = !d || !d.connected ? "down"
-      : d.state === "driving" || d.state === "charging" ? "syncing"
-      : d.state === "online" ? "live" : "idle";
-    el.className = "rail-conn conn " + cls;
-    el.querySelector(".txt").textContent = d && d.connected ? t("conn.collecting") : t("conn.down");
-  }
-
   async function refreshConnection() {
     try {
       const d = await apiGet("/api/overview" + (Car.current ? `?car_id=${Car.current}` : ""));
-      paintConnection(d);
       if (window.onOverviewData) window.onOverviewData(d);
-    } catch (e) { /* leave the last known chip */ }
-  }
-
-  async function refreshSecurityBadge() {
-    try {
-      const s = await apiGet("/api/alerts/sentry/active");
-      const b = document.getElementById("sec-badge");
-      const n = Object.keys(s.active || {}).length;
-      if (b) { b.hidden = !n; b.textContent = n; }
-    } catch (e) { /* optional */ }
+      return d;
+    } catch (e) { return null; }
   }
 
   i18nReady.catch(() => {}).then(() => {
     cmdk.init();
     initShell();
-    checkDataHealth(); setInterval(checkDataHealth, 60000);
-    refreshSecurityBadge(); setInterval(refreshSecurityBadge, 30000);
-    if (!window.ownsOverviewFetch) { refreshConnection(); setInterval(refreshConnection, 30000); }
   });
 </script>
 {% block scripts %}{% endblock %}

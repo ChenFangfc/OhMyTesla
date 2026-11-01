@@ -11,9 +11,14 @@
  * wheel_fl/... whose origin is the hinge. A model without those nodes still
  * renders — it just doesn't open.
  *
+ * True proportions: the model is scaled UNIFORMLY to its real length, never
+ * per axis, and the drawing buffer follows the element's own box through a
+ * ResizeObserver — a canvas stretched by CSS to a box of another aspect is
+ * how a 2.43 m-wide truck ends up looking thin.
+ *
  * Rendering is on demand: a frame is drawn only while something moves or the
- * user is dragging. A static scene costs nothing, which matters on a phone
- * left open on the dashboard.
+ * user is dragging, and never while the canvas is off-screen or the tab is
+ * hidden. A static scene costs nothing, which matters on a phone left open.
  */
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
@@ -35,18 +40,37 @@ const POSE = {
 };
 const WHEELS = ["wheel_fl", "wheel_fr", "wheel_rl", "wheel_rr"];
 
-// Camera presets: [azimuth°, elevation°, distance in vehicle lengths].
+// Camera presets: [azimuth°, elevation°]. Distance is fitted to the frame.
 const VIEWS = {
-  hero: [38, 14, 1.42],
-  side: [90, 6, 1.32],
-  front: [0, 10, 1.25],
-  rear: [180, 16, 1.3],
-  top: [60, 62, 1.35],
-  charge: [118, 10, 0.95],
-  bed: [165, 34, 1.15],
+  hero: [38, 13],
+  side: [90, 4],
+  front: [0, 8],
+  rear: [180, 14],
+  top: [60, 60],
+  charge: [118, 10],
+  bed: [165, 34],
 };
 
-const ease = (t) => 1 - Math.pow(1 - t, 3);   // ease-out: motion starts immediately
+/* Where a status label sits on the body, as fractions of the bounding box
+   (x: −.5 right … +.5 left, y: 0 floor … 1 roof, z: −.5 rear … +.5 front),
+   with the outward normal that decides whether the camera can see it. Part
+   nodes, when the model has them, refine the anchor to the part's own box. */
+const ANCHORS = {
+  frunk:       { at: [0.0, 0.66, 0.40],  n: [0, 0.6, 1] },
+  tonneau:     { at: [0.0, 0.70, -0.30], n: [0, 1, -0.2] },
+  charge_port: { at: [0.47, 0.50, -0.36], n: [1, 0, 0] },
+  doors:       { at: [0.48, 0.52, 0.10],  n: [1, 0, 0] },
+  wheel_fl:    { at: [0.42, 0.10, 0.33],  n: [1, 0.2, 0] },
+  wheel_fr:    { at: [-0.42, 0.10, 0.33], n: [-1, 0.2, 0] },
+  wheel_rl:    { at: [0.42, 0.10, -0.33], n: [1, 0.2, 0] },
+  wheel_rr:    { at: [-0.42, 0.10, -0.33], n: [-1, 0.2, 0] },
+};
+
+/* easeOutQuint — the closest polynomial to the system's enter curve
+   cubic-bezier(.23, 1, .32, 1): motion starts at once and lands softly. */
+const ease = (t) => 1 - Math.pow(1 - t, 5);
+const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+const PULSE_MS = 3 * 2 * Math.PI * 520;   // three breaths, then the glow holds
 
 export function webglAvailable() {
   try {
@@ -58,16 +82,16 @@ export function webglAvailable() {
 export class VehicleView {
   constructor(container, opts = {}) {
     this.el = container;
-    this.opts = { interactive: true, autoRotate: false, onPick: null, ...opts };
+    this.opts = { interactive: true, autoRotate: false, onPick: null, onFrame: null, onLost: null, ...opts };
     this.parts = {};          // canonical name -> Object3D (hinge node)
     this.anim = {};           // name -> {from, to, t0, dur}
     this.state = {};
     this.lightMats = [];
     this.paintMats = [];
-    this._dirty = true;
     this._raf = 0;
     this._spin = 0;
-    this._pulse = null;
+    this._onScreen = true;
+    this._view = "hero";
   }
 
   async load(desc) {
@@ -77,13 +101,16 @@ export class VehicleView {
     this._installModel(gltf.scene, desc);
     this._frame(desc.view || "hero", true);
     this._observe();
-    this.render();
+    this.invalidate();
     return this;
   }
 
   _setupRenderer() {
     const r = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
-    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    // A 3× phone panel would render 9× the pixels of a 1× screen for no
+    // visible gain at this size: cap the density (1.5 on touch screens).
+    const cap = matchMedia("(pointer: coarse)").matches ? 1.5 : 2;
+    r.setPixelRatio(Math.min(window.devicePixelRatio || 1, cap));
     r.outputColorSpace = THREE.SRGBColorSpace;
     r.toneMapping = THREE.NeutralToneMapping;
     r.toneMappingExposure = 1.15;
@@ -91,10 +118,15 @@ export class VehicleView {
     this.renderer = r;
     this.el.appendChild(r.domElement);
     r.domElement.classList.add("v3d-canvas");
+    r.domElement.addEventListener("webglcontextlost", (e) => {
+      e.preventDefault();
+      this._lost = true;
+      cancelAnimationFrame(this._raf); this._raf = 0;
+      if (this.opts.onLost) this.opts.onLost();
+    });
 
     this.scene = new THREE.Scene();
     this.scene.environment = this._studioEnvironment(r);
-
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.05, 200);
 
     if (this.opts.interactive) {
@@ -107,24 +139,26 @@ export class VehicleView {
       c.minPolarAngle = 0.25;
       c.maxPolarAngle = Math.PI / 2 - 0.04;   // never look up through the floor
       c.addEventListener("change", () => this.invalidate());
-      c.addEventListener("start", () => { this._userDragging = true; this.el.classList.add("dragging"); });
+      // The user wins: a drag cancels any camera move in flight instead of
+      // fighting it frame by frame.
+      c.addEventListener("start", () => { this._camTween = null; this._userDragging = true; this.el.classList.add("dragging"); });
       c.addEventListener("end", () => { this._userDragging = false; this.el.classList.remove("dragging"); });
       this.controls = c;
       this._bindPicking();
     }
-    this._resize = () => this.resize();
-    window.addEventListener("resize", this._resize);
+    // The drawing buffer follows the element's own box, not the window: the
+    // hero changes height without any window resize (fonts, layout, the
+    // phone's URL bar), and a CSS-stretched buffer distorts the truck.
+    this._ro = new ResizeObserver(() => this.resize());
+    this._ro.observe(this.el);
     this.resize();
   }
 
   /* A dark room with three soft-box strips. Brushed stainless reads as the
-   * room it reflects: the default "room" environment is a grey box, which
-   * flattens the truck's planes into one tone. Softboxes give each facet its
-   * own edge highlight, the way a studio shoot does. */
+   * room it reflects: softboxes give each facet its own edge highlight, the
+   * way a studio shoot does. */
   _studioEnvironment(renderer) {
     const env = new THREE.Scene();
-    // Gradient dome: bright ceiling, mid-grey horizon, dark floor. Mirror-like
-    // steel shows mostly the horizon band, so that band sets its tone.
     const dome = new THREE.Mesh(
       new THREE.SphereGeometry(20, 48, 24),
       new THREE.ShaderMaterial({
@@ -151,7 +185,6 @@ export class VehicleView {
       env.add(m);
       return m;
     };
-    // Soft boxes: one overhead, two long strips at the sides, warm/cool kickers.
     const top = box(9, 3.2, 0, 7, 0, 0, 4.2);
     top.rotation.x = Math.PI / 2;
     box(2.2, 6, -8, 3, 1, Math.PI / 2, 3.0);
@@ -196,8 +229,7 @@ export class VehicleView {
         }
         if (mat.isMeshStandardMaterial && !isIn(n, m.paint)) mat.envMapIntensity = 1;
       }
-      // Stray geometry some exports carry (e.g. three loose polyhedra floating
-      // above the roof of the CC-BY Cybertruck).
+      // Stray geometry some exports carry (opt-in per manifest).
       if (desc.dropTinyMeshes && o.geometry?.attributes?.position?.count <= desc.dropTinyMeshes) removals.push(o);
     });
     removals.forEach((o) => o.parent && o.parent.remove(o));
@@ -208,12 +240,14 @@ export class VehicleView {
     if (!this.parts.tonneau && m.tonneau) this._synthesizeTonneau(root, m.tonneau);
 
     if (desc.rotateY) root.rotation.y = desc.rotateY;
-    // Normalise to real length and stand the wheels on y = 0.
+    // Normalise to the real length with ONE uniform factor, so width and
+    // height keep the model's own proportions; stand the wheels on y = 0.
     const box = new THREE.Box3().setFromObject(root);
     const size = box.getSize(new THREE.Vector3());
     const length = Math.max(size.x, size.z);
     const k = (desc.length_m || length) / length;
     root.scale.multiplyScalar(k);
+    // Explicit, documented exception for a model known to be too narrow.
     if (desc.widthScale) root.scale.x *= desc.widthScale;
     box.setFromObject(root);
     const c = box.getCenter(new THREE.Vector3());
@@ -227,7 +261,10 @@ export class VehicleView {
     }
     this.model = root;
     this.scene.add(root);
-    this.size = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3());
+    root.updateMatrixWorld(true);
+    this.bbox = new THREE.Box3().setFromObject(root);
+    this.size = this.bbox.getSize(new THREE.Vector3());
+    this._buildAnchors();
     this._addGround();
     this._addGlows();
   }
@@ -242,9 +279,8 @@ export class VehicleView {
     if (!meshes.length) return;
     root.updateMatrixWorld(true);
     // The hinge comes from the vertices the cover actually draws. Primitives of
-    // one glTF file can share a vertex buffer (the bundled model does), and then
-    // a mesh's bounding box is the whole truck: the cover would hinge at the
-    // front bumper and fold toward the hood.
+    // one glTF file can share a vertex buffer, and then a mesh's bounding box
+    // is the whole truck: the cover would hinge at the front bumper.
     const box = new THREE.Box3(), v = new THREE.Vector3();
     for (const o of meshes) {
       const pos = o.geometry.attributes.position, idx = o.geometry.index;
@@ -253,7 +289,6 @@ export class VehicleView {
     }
     const pivot = new THREE.Group();
     pivot.name = "tonneau";
-    // front edge of the cover = its max z (front is +Z), at the top
     pivot.position.set((box.min.x + box.max.x) / 2, box.max.y, box.max.z);
     root.add(pivot);
     pivot.updateMatrixWorld(true);
@@ -261,9 +296,33 @@ export class VehicleView {
     this.parts.tonneau = pivot;
   }
 
+  /* Label anchors in world space, computed once at rest pose. */
+  _buildAnchors() {
+    const b = this.bbox, s = this.size;
+    this.anchors = {};
+    for (const [name, a] of Object.entries(ANCHORS)) {
+      const p = new THREE.Vector3(
+        (b.min.x + b.max.x) / 2 + a.at[0] * s.x,
+        b.min.y + a.at[1] * s.y,
+        (b.min.z + b.max.z) / 2 + a.at[2] * s.z);
+      // A real part node refines the point to the part's own box (its top
+      // centre for lids, its outer face for side parts).
+      const node = this.parts[name];
+      if (node && name !== "tonneau") {
+        const pb = new THREE.Box3().setFromObject(node);
+        if (!pb.isEmpty()) {
+          const pc = pb.getCenter(new THREE.Vector3());
+          if (name.startsWith("wheel")) p.set(pc.x + Math.sign(pc.x) * (pb.max.x - pb.min.x) / 2, pc.y, pc.z);
+          else if (name === "frunk") p.set(pc.x, pb.max.y, pc.z);
+          else p.copy(pc);
+        }
+      }
+      this.anchors[name] = { p, n: new THREE.Vector3(...a.n).normalize() };
+    }
+  }
+
   /* Contact shadow: the floor darkens where the truck nearly touches it.
-   * Rendered once from below into a small target and blurred — the cheap,
-   * convincing version of ambient occlusion for one object on one plane. */
+   * Rendered once from below into a small target and blurred. */
   _addGround() {
     const w = this.size.x * 1.9, d = this.size.z * 1.45;
     const rt = new THREE.WebGLRenderTarget(512, 512);
@@ -289,7 +348,6 @@ export class VehicleView {
     this.scene.overrideMaterial = null;
     this.scene.background = bg;
     this.scene.environment = env;
-    // two blur passes
     const blurred = this._blur(rt, 4.0);
     this._blur(blurred, 1.5, blurred);
     this.renderer.setRenderTarget(null);
@@ -342,7 +400,8 @@ export class VehicleView {
     return out;
   }
 
-  /* State as light on the floor — charging green, sentry red, climate blue. */
+  /* State as light on the floor. The charge-port pool is green because the
+     real port LED is; everything else stays quiet. */
   _addGlows() {
     const tex = (() => {
       const c = document.createElement("canvas");
@@ -363,55 +422,83 @@ export class VehicleView {
         new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending, color: 0xffffff }),
       );
       m.position.y = 0.004;
-      m.renderOrder = 0;
       this.scene.add(m);
       return m;
     };
     this.glowFloor = make(this.size.x * 2.6, this.size.z * 1.5);
-    // a tight pool under the charge port (left rear)
     this.glowPort = make(1.4, 1.4);
     this.glowPort.position.set(this.size.x * 0.62, 0.005, -this.size.z * 0.33);
   }
 
   resize() {
+    if (!this.renderer) return;
     const w = this.el.clientWidth || 1, h = this.el.clientHeight || 1;
+    if (w === this._w && h === this._h) return;
+    this._w = w; this._h = h;
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     // Screen-space shift (fraction of width, + = car moves right) so overlays
-    // on one side — the battery readout — don't sit on top of the car.
+    // on one side don't sit on top of the car.
     const val = (o) => (typeof o === "function" ? o(w, h) : (o || 0));
     const sx = val(this.opts.shiftX), sy = val(this.opts.shiftY);
     if (sx || sy) this.camera.setViewOffset(w, h, -sx * w, sy * h, w, h);
     else this.camera.clearViewOffset();
     this.camera.updateProjectionMatrix();
+    if (this.size && !this._userMoved) this._frame(this._view, true);
     this.invalidate();
   }
 
+  /* Fit the whole truck in the frame from a given direction: search the
+     camera distance at which every corner of the bounding box projects
+     inside the margins. Works for any aspect, any view and the view offset. */
+  _fitDistance(dir, target) {
+    const b = this.bbox, corners = [];
+    for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) corners.push(new THREE.Vector3(x, y, z));
+    const cam = this.camera.clone();
+    const mx = this.opts.margin ?? 0.08;
+    const fits = (d) => {
+      cam.position.copy(target).addScaledVector(dir, d);
+      cam.lookAt(target);
+      cam.updateMatrixWorld(true);
+      const v = new THREE.Vector3();
+      for (const p of corners) {
+        v.copy(p).project(cam);
+        if (Math.abs(v.x) > 1 - mx || Math.abs(v.y) > 1 - mx * 1.4 || v.z > 1) return false;
+      }
+      return true;
+    };
+    let lo = 1, hi = 60;
+    for (let i = 0; i < 22; i++) { const mid = (lo + hi) / 2; if (fits(mid)) hi = mid; else lo = mid; }
+    return hi;
+  }
+
   _frame(view, instant) {
-    const [az, el, dist] = VIEWS[view] || VIEWS.hero;
-    const L = this.size ? this.size.z : 5.7;
-    const target = new THREE.Vector3(0, (this.size ? this.size.y : 1.8) * 0.42, 0);
-    // Portrait screens are width-limited: pull back until the length fits.
-    const r = L * dist * (this.camera.aspect < 1 ? Math.min(3.2, 1.42 / Math.max(0.42, this.camera.aspect)) : 1);
+    this._view = view;
+    const [az, el] = VIEWS[view] || VIEWS.hero;
+    const target = new THREE.Vector3(0, this.size.y * 0.42, 0);
     const a = THREE.MathUtils.degToRad(az), e = THREE.MathUtils.degToRad(el);
-    const pos = new THREE.Vector3(
-      r * Math.cos(e) * Math.sin(a), target.y + r * Math.sin(e), r * Math.cos(e) * Math.cos(a));
+    const dir = new THREE.Vector3(Math.cos(e) * Math.sin(a), Math.sin(e), Math.cos(e) * Math.cos(a)).normalize();
+    const d = this._fitDistance(dir, target);
+    const pos = target.clone().addScaledVector(dir, d);
     if (this.controls) {
+      const L = Math.max(this.size.x, this.size.z);
       this.controls.minDistance = L * 0.65;
-      this.controls.maxDistance = L * 2.6;
+      this.controls.maxDistance = Math.max(d * 1.6, L * 2.6);
     }
-    if (instant) {
+    if (instant || reduced()) {
+      this._camTween = null;
       this.camera.position.copy(pos);
       this.controls?.target.copy(target);
       this.camera.lookAt(target);
       this.controls?.update();
     } else {
-      this._camTween = { from: this.camera.position.clone(), to: pos, tFrom: (this.controls?.target || target).clone(), tTo: target, t0: performance.now(), dur: 900 };
+      this._camTween = { from: this.camera.position.clone(), to: pos, tFrom: (this.controls?.target || target).clone(), tTo: target, t0: performance.now(), dur: 650 };
     }
     this.invalidate();
   }
 
-  view(name) { this._frame(name, false); }
+  /* A camera move the user asked for (the view menu). */
+  view(name) { this._userMoved = false; this._frame(name, false); }
 
   /* Live state in, motion out. Unknown keys are ignored; missing keys keep
    * their last value, so callers can send partial updates. */
@@ -424,12 +511,19 @@ export class VehicleView {
       frunk: !!st.frunk, tailgate: !!st.tailgate, charge_port: !!st.charge_port,
       tonneau: st.tonneau == null ? 0 : st.tonneau,       // 0 closed .. 1 open
     };
+    const first = !this._painted;
     for (const [name, v] of Object.entries(want)) {
       if (!this.parts[name]) continue;
       const target = typeof v === "number" ? v : v ? 1 : 0;
       const cur = this.parts[name].userData.open ?? 0;
-      if (Math.abs(cur - target) > 1e-3) this._tween(name, cur, target, name === "tonneau" ? 1600 : 900);
+      if (Math.abs(cur - target) <= 1e-3) continue;
+      // The first paint shows the car as it is; only real changes move.
+      if (first || reduced()) this._applyPart(name, target);
+      else this._tween(name, cur, target, name === "tonneau" ? 1600 : 900);
     }
+    this._painted = true;
+    const pulsing = (x) => x.charging || x.sentry === "aware" || x.sentry === "panic";
+    if (pulsing(st) && !pulsing(prev)) this._pulseFrom = performance.now();
     this._paintLights();
     this._paintGlows();
     if (st.paint && st.paint !== prev.paint) this.setPaint(st.paint);
@@ -483,9 +577,9 @@ export class VehicleView {
     const sentryHot = st.sentry === "aware" || st.sentry === "panic";
     let color = null, base = 0;
     if (sentryHot) { color = 0xff2b2b; base = st.sentry === "panic" ? 0.9 : 0.6; }
-    else if (st.charging) { color = 0x30d158; base = 0.4; }
-    else if (st.sentry === "armed") { color = 0xff3b30; base = 0.18; }
-    else if (st.climate) { color = 0x3e6ae1; base = 0.32; }
+    else if (st.charging) { color = 0x30d158; base = 0.32; }
+    else if (st.sentry === "armed") { color = 0x3669d9; base = 0.16; }
+    else if (st.climate) { color = 0x3669d9; base = 0.22; }
     if (this.glowFloor) {
       if (color != null) this.glowFloor.material.color.set(color);
       this.glowFloor.userData.base = color == null ? 0 : base;
@@ -498,9 +592,10 @@ export class VehicleView {
     }
   }
 
+  get _visible() { return this._onScreen && !document.hidden && !this._lost; }
+
   invalidate() {
-    this._dirty = true;
-    if (!this._raf && this._visible !== false) this._raf = requestAnimationFrame((t) => this._tick(t));
+    if (!this._raf && this._visible && this.renderer) this._raf = requestAnimationFrame((t) => this._tick(t));
   }
 
   _tick(now) {
@@ -522,20 +617,23 @@ export class VehicleView {
     }
 
     const speed = this.state.speed_mps || 0;
-    if (speed > 0.1) {
-      const dt = this._lastNow ? (now - this._lastNow) / 1000 : 0;
+    if (speed > 0.1 && !reduced()) {
+      const dt = this._lastNow ? Math.min(0.05, (now - this._lastNow) / 1000) : 0;
       this._spin += (speed / 0.44) * dt;    // ω = v / r, r ≈ 0.44 m
       for (const w of WHEELS) if (this.parts[w]) this.parts[w].rotation.x = this._spin;
       busy = true;
     }
 
-    // glows breathe while something is ongoing
+    // Glows breathe three times when something starts, then hold steady:
+    // an endless pulse would keep the GPU at full frame rate for a whole
+    // charging session to say nothing new.
+    const breathing = this._pulseFrom != null && now - this._pulseFrom < PULSE_MS && !reduced();
     for (const g of [this.glowFloor, this.glowPort]) {
       if (!g) continue;
       const base = g.userData.base || 0;
       let op = base;
-      if (g.userData.pulse && base > 0 && !matchMedia("(prefers-reduced-motion: reduce)").matches) {
-        op = base * (0.62 + 0.38 * Math.sin(now / 520));
+      if (g.userData.pulse && base > 0 && breathing) {
+        op = base * (0.62 + 0.38 * Math.cos((now - this._pulseFrom) / 520));
         busy = true;
       }
       const cur = g.material.opacity;
@@ -545,17 +643,21 @@ export class VehicleView {
 
     if (this._flashUntil && now < this._flashUntil + 50) { this._paintLights(); busy = true; }
 
-    if (this.opts.autoRotate && !this._userDragging && this.controls) {
+    if (this.opts.autoRotate && !this._userDragging && this.controls && !reduced()) {
       this.controls.autoRotate = true;
       this.controls.autoRotateSpeed = 0.35;
       busy = true;
     }
-    if (this.controls) busy = this.controls.update() || busy || this._userDragging;
+    if (this.controls) {
+      const moved = this.controls.update();
+      if (moved && this._userDragging) this._userMoved = true;
+      busy = moved || busy || this._userDragging;
+    }
 
     this._lastNow = now;
     this.renderer.render(this.scene, this.camera);
-    this._dirty = false;
-    if (busy) this.invalidate();
+    if (this.opts.onFrame) this.opts.onFrame(this);
+    if (busy) this.invalidate(); else this._lastNow = 0;
   }
 
   render() { this.invalidate(); }
@@ -587,35 +689,55 @@ export class VehicleView {
 
   _observe() {
     this._io = new IntersectionObserver((entries) => {
-      this._visible = entries[0].isIntersecting;
+      this._onScreen = entries[0].isIntersecting;
       if (this._visible) this.invalidate();
+      else { cancelAnimationFrame(this._raf); this._raf = 0; }
     });
     this._io.observe(this.el);
-    this._onVis = () => { this._visible = !document.hidden; if (this._visible) this.invalidate(); };
+    this._onVis = () => {
+      if (this._visible) this.invalidate();
+      else { cancelAnimationFrame(this._raf); this._raf = 0; }
+    };
     document.addEventListener("visibilitychange", this._onVis);
   }
 
-  /* Project a part's hinge to screen space — for floating labels (tyre
-   * pressures at each wheel, "open" chips over the frunk). */
+  /* Where a status anchor lands on screen, and whether the camera can see
+   * that face of the truck (1 = facing us, 0 = edge-on or behind). */
+  anchor(name) {
+    const a = this.anchors && this.anchors[name];
+    if (!a) return null;
+    const v = a.p.clone().project(this.camera);
+    const w = this._w || 1, h = this._h || 1;
+    const toCam = this.camera.position.clone().sub(a.p).normalize();
+    const facing = Math.max(0, Math.min(1, (a.n.dot(toCam) + 0.15) / 0.45));
+    return { x: (v.x + 1) / 2 * w, y: (1 - v.y) / 2 * h, facing, behind: v.z > 1 };
+  }
+
+  /* Project a part's hinge to screen space (kept for older callers). */
   screenPoint(name, offset = [0, 0, 0]) {
     const node = this.parts[name];
-    if (!node) return null;
+    if (!node) return this.anchor(name);
     const v = new THREE.Vector3(...offset);
     node.localToWorld(v);
     v.project(this.camera);
-    const r = this.renderer.domElement.getBoundingClientRect();
-    return { x: (v.x + 1) / 2 * r.width, y: (1 - v.y) / 2 * r.height, behind: v.z > 1 };
+    return { x: (v.x + 1) / 2 * (this._w || 1), y: (1 - v.y) / 2 * (this._h || 1), behind: v.z > 1 };
+  }
+
+  /* Overall size in metres (length along Z, width X, height Y). */
+  dimensions() {
+    const mm = (v) => Math.round(v * 1000) / 1000;
+    return this.size ? { length: mm(this.size.z), width: mm(this.size.x), height: mm(this.size.y) } : null;
   }
 
   has(part) { return !!this.parts[part]; }
 
   dispose() {
     cancelAnimationFrame(this._raf);
-    window.removeEventListener("resize", this._resize);
+    this._ro?.disconnect();
     document.removeEventListener("visibilitychange", this._onVis);
     this._io?.disconnect();
     this.controls?.dispose();
-    this.renderer.dispose();
-    this.renderer.domElement.remove();
+    this.renderer?.dispose();
+    this.renderer?.domElement.remove();
   }
 }

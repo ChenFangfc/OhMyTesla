@@ -37,13 +37,23 @@
     return s;
   }
 
+  /* 不用 toFixed 取整：它对 1.005 这类值有二进制误差，返回的又是字符串。
+     这里按十进制位数四舍五入，返回数字；显示时再交给 Intl（fmt.num）。 */
+  function round(v, d) {
+    const n = Number(v);
+    if (!isFinite(n)) return null;
+    const k = Math.pow(10, d);
+    return Math.round((n + Number.EPSILON * Math.sign(n)) * k) / k;
+  }
+  const show = (v, d) => (typeof fmt !== "undefined" ? fmt.num(v, d) : String(v));
+
   /* ---------- 单位换算：入参永远是公制 ---------- */
   const U = {
     // 距离：km → km|mi
     dist(km, digits) {
-      if (km == null) return null;
+      if (km == null || km === "") return null;
       const d = digits == null ? 1 : digits;
-      return +(state.length === "mi" ? km * 0.621371 : km).toFixed(d);
+      return round(state.length === "mi" ? km * 0.621371 : km, d);
     },
     distLabel() { return state.length === "mi" ? "mi" : "km"; },
 
@@ -53,35 +63,37 @@
 
     // 温度：°C → °C|°F
     temp(c, digits) {
-      if (c == null) return null;
+      if (c == null || c === "") return null;
       const d = digits == null ? 1 : digits;
-      return +(state.temp === "F" ? c * 9 / 5 + 32 : c).toFixed(d);
+      return round(state.temp === "F" ? c * 9 / 5 + 32 : c, d);
     },
     tempLabel() { return state.temp === "F" ? "°F" : "°C"; },
 
     // 胎压：bar → bar|psi|kPa
     press(bar, digits) {
-      if (bar == null) return null;
-      if (state.pressure === "psi") return +(bar * 14.5038).toFixed(digits == null ? 1 : digits);
+      if (bar == null || bar === "") return null;
+      if (state.pressure === "psi") return round(bar * 14.5038, digits == null ? 1 : digits);
       if (state.pressure === "kpa") return Math.round(bar * 100);
-      return +bar.toFixed(digits == null ? 2 : digits);
+      return round(bar, digits == null ? 2 : digits);
     },
     pressLabel() {
       return state.pressure === "psi" ? "psi" : (state.pressure === "kpa" ? "kPa" : "bar");
     },
+    /* 胎压显示的固定小数位：bar 两位、psi 一位、kPa 整数 */
+    pressDigits() { return state.pressure === "psi" ? 1 : state.pressure === "kpa" ? 0 : 2; },
 
     // 能耗：Wh/km → Wh/km|Wh/mi
     cons(whkm, digits) {
-      if (whkm == null) return null;
+      if (whkm == null || whkm === "") return null;
       const d = digits == null ? 0 : digits;
-      return +(state.length === "mi" ? whkm / 0.621371 : whkm).toFixed(d);
+      return round(state.length === "mi" ? whkm / 0.621371 : whkm, d);
     },
     consLabel() { return state.length === "mi" ? "Wh/mi" : "Wh/km"; },
 
-    // 带单位的完整字符串
-    distStr(km, digits) { const v = U.dist(km, digits); return v == null ? "–" : v + " " + U.distLabel(); },
-    tempStr(c, digits) { const v = U.temp(c, digits); return v == null ? "–" : v + U.tempLabel(); },
-    speedStr(kmh) { const v = U.speed(kmh); return v == null ? "–" : v + " " + U.speedLabel(); },
+    // 带单位的完整字符串（数字分组跟着语言走："44,731 mi"）
+    distStr(km, digits) { const v = U.dist(km, digits); return v == null ? "–" : show(v, digits == null ? 1 : digits) + " " + U.distLabel(); },
+    tempStr(c, digits) { const v = U.temp(c, digits); return v == null ? "–" : show(v, digits == null ? 1 : digits) + U.tempLabel(); },
+    speedStr(kmh) { const v = U.speed(kmh); return v == null ? "–" : show(v, 0) + " " + U.speedLabel(); },
   };
 
   /* ---------- 应用到页面 ---------- */
@@ -154,7 +166,12 @@
     return p;
   }
 
-  window.i18n = { t, U, state, apply, load, save, DICT };
+  /* 有没有这个键（不记缺失、不告警）：给"有专门文案就用，没有就用通用模板"的地方。 */
+  function has(key) {
+    return (DICT[state.locale] || {})[key] !== undefined || DICT.en[key] !== undefined;
+  }
+
+  window.i18n = { t, U, state, apply, load, save, has, DICT };
   window.t = t;
   window.U = U;
 })();

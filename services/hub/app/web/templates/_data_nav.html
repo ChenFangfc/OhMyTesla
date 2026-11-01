@@ -1,0 +1,26 @@
+{# The hub's index: six chapters (real links, peers swap instantly) and the one
+   period control for the whole hub. Sticks under the shell's chrome; on a
+   phone the chapters scroll sideways and the period opens a sheet.
+   `period_qs` carries the period from the URL so every chapter link keeps it. #}
+<nav class="dh-nav" aria-label="{{ t('data.nav.label') }}">
+  <div class="dh-nav-in">
+    <div class="dh-chs">
+      <a class="dh-ch" href="/data{{ period_qs }}"{% if chapter == 'overview' %} aria-current="page"{% endif %}><span data-i18n="data.nav.overview">{{ t('data.nav.overview') }}</span></a>
+      <a class="dh-ch" href="/data/driving{{ period_qs }}"{% if chapter == 'driving' %} aria-current="page"{% endif %}><span data-i18n="data.nav.driving">{{ t('data.nav.driving') }}</span></a>
+      <a class="dh-ch" href="/data/charging{{ period_qs }}"{% if chapter == 'charging' %} aria-current="page"{% endif %}><span data-i18n="data.nav.charging">{{ t('data.nav.charging') }}</span></a>
+      <a class="dh-ch" href="/data/battery{{ period_qs }}"{% if chapter == 'battery' %} aria-current="page"{% endif %}><span data-i18n="data.nav.battery">{{ t('data.nav.battery') }}</span></a>
+      <a class="dh-ch" href="/data/footprint{{ period_qs }}"{% if chapter == 'footprint' %} aria-current="page"{% endif %}><span data-i18n="data.nav.footprint">{{ t('data.nav.footprint') }}</span></a>
+      <a class="dh-ch" href="/data/timeline{{ period_qs }}"{% if chapter == 'timeline' %} aria-current="page"{% endif %}><span data-i18n="data.nav.timeline">{{ t('data.nav.timeline') }}</span></a>
+      <i class="dh-ind" aria-hidden="true"></i>
+    </div>
+    {% set cur = days or '90' %}
+    <div class="dh-per" role="group" aria-label="{{ t('data.period.label') }}">
+      <button type="button" data-days="7" aria-pressed="{{ 'true' if cur == '7' else 'false' }}" data-i18n-title="data.period.long_7" title="{{ t('data.period.long_7') }}"><span data-i18n="data.period.short_7">{{ t('data.period.short_7') }}</span></button>
+      <button type="button" data-days="30" aria-pressed="{{ 'true' if cur == '30' else 'false' }}" data-i18n-title="data.period.long_30" title="{{ t('data.period.long_30') }}"><span data-i18n="data.period.short_30">{{ t('data.period.short_30') }}</span></button>
+      <button type="button" data-days="90" aria-pressed="{{ 'true' if cur == '90' else 'false' }}" data-i18n-title="data.period.long_90" title="{{ t('data.period.long_90') }}"><span data-i18n="data.period.short_90">{{ t('data.period.short_90') }}</span></button>
+      <button type="button" data-days="365" aria-pressed="{{ 'true' if cur == '365' else 'false' }}" data-i18n-title="data.period.long_365" title="{{ t('data.period.long_365') }}"><span data-i18n="data.period.short_365">{{ t('data.period.short_365') }}</span></button>
+      <button type="button" data-days="all" aria-pressed="{{ 'true' if cur == 'all' else 'false' }}" data-i18n-title="data.period.long_all" title="{{ t('data.period.long_all') }}"><span data-i18n="data.period.short_all">{{ t('data.period.short_all') }}</span></button>
+    </div>
+    <button type="button" class="dh-per-btn" aria-haspopup="dialog" data-i18n-title="data.period.label" title="{{ t('data.period.label') }}"><span class="lbl">{{ t('data.period.short_' ~ cur) }}</span><span class="ico-slot" data-icon="chevdown" data-size="16"></span></button>
+  </div>
+</nav>

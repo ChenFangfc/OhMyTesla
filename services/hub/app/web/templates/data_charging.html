@@ -1,0 +1,91 @@
+{% extends "data_base.html" %}
+{% import "_data_ui.html" as ui %}
+{# 充电 asks "how much did I charge, and what did it cost?". Energy and cost
+   over the period first; then any one session's curve against the usual DC
+   curve; then where and when you charge, and how full. #}
+{% block title %}{{ t('data.title.charging') }}{% endblock %}
+{% block h1 %}<span data-i18n="data.nav.charging">{{ t('data.nav.charging') }}</span>{% endblock %}
+
+{% block chapter %}
+<section class="dh-sec first" id="cg-sum">
+  <div class="dh-body">{{ ui.kpis(6) }}</div>
+</section>
+
+<section class="dh-sec">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.chg.energy">{{ t('data.chg.energy') }}</h2>
+    <p class="dh-note" id="cg-energy-n">&nbsp;</p>
+  </header>
+  <div class="dh-grid">
+    <div class="dh-sub c8" id="cg-energy">
+      <h3 class="dh-subh" data-i18n="data.chg.energy_by">{{ t('data.chg.energy_by') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.chart() }}</div>
+    </div>
+    <div class="dh-sub c4" id="cg-acdc">
+      <h3 class="dh-subh" data-i18n="data.chg.acdc">{{ t('data.chg.acdc') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.rows(4) }}</div>
+    </div>
+  </div>
+</section>
+
+<section class="dh-sec">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.chg.cost">{{ t('data.chg.cost') }}</h2>
+    <p class="dh-note" id="cg-cost-n">&nbsp;</p>
+  </header>
+  <div class="dh-grid">
+    <div class="dh-sub c6" id="cg-costc">
+      <h3 class="dh-subh" data-i18n="data.chg.cost_by">{{ t('data.chg.cost_by') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.chart() }}</div>
+    </div>
+    <div class="dh-sub c6" id="cg-wall">
+      <h3 class="dh-subh" data-i18n="data.chg.wall">{{ t('data.chg.wall') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.rows(3) }}</div>
+    </div>
+  </div>
+</section>
+
+<section class="dh-sec" id="cg-sessions-sec">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.chg.sessions">{{ t('data.chg.sessions') }}</h2>
+    <p class="dh-note" data-i18n="data.chg.sessions_n">{{ t('data.chg.sessions_n') }}</p>
+  </header>
+  <div class="dh-grid">
+    <div class="dh-sub c5" id="cg-list">
+      <div class="dh-body"><div class="tr-list">{{ ui.rows(8) }}</div></div>
+      <div class="dh-tfoot" id="cg-more"></div>
+    </div>
+    <div class="dh-sub c7" id="cg-curve" aria-live="polite">
+      <div class="dh-body">{{ ui.lines(2) }}{{ ui.chart('tall') }}</div>
+    </div>
+  </div>
+</section>
+
+<section class="dh-sec">
+  <header class="dh-sec-h">
+    <h2 data-i18n="data.chg.where_when">{{ t('data.chg.where_when') }}</h2>
+  </header>
+  <div class="dh-grid">
+    <div class="dh-sub c6" id="cg-where">
+      <h3 class="dh-subh" data-i18n="data.chg.where">{{ t('data.chg.where') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.rows(5) }}</div>
+    </div>
+    <div class="dh-sub c6" id="cg-when">
+      <h3 class="dh-subh" data-i18n="data.chg.when">{{ t('data.chg.when') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.chart('mini') }}</div>
+    </div>
+  </div>
+  <div class="dh-grid" style="margin-top:32px">
+    <div class="dh-sub c6" id="cg-soc-start">
+      <h3 class="dh-subh" data-i18n="data.chg.soc_start">{{ t('data.chg.soc_start') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.chart('short') }}</div>
+    </div>
+    <div class="dh-sub c6" id="cg-soc-end">
+      <h3 class="dh-subh" data-i18n="data.chg.soc_end">{{ t('data.chg.soc_end') }}</h3>
+      <div class="dh-body"><p class="dh-subn">&nbsp;</p>{{ ui.chart('short') }}</div>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block data_scripts %}<script src="/static/js/pages/data-charging.js"></script>{% endblock %}

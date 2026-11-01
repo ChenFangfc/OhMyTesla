@@ -161,15 +161,24 @@ async def timeline(car_id: int, days: int | None = 30, limit: int = 300) -> dict
     # 后一个元素时间更早，空档 = 当前项的 start 减去下一项的 end。
     # 小于 10 分钟的空档不插——那多半是同一次停靠里 TeslaMate 分了两段，
     # 插出来只会让时间线满屏"停放 3 分钟"。
+    # 空档只在"行程/充电"之间算。软件更新没有里程读数，若把它当成边界，
+    # 一段 44 天、里程表走了 1060 km 的漏采集会被它切成两截"停放"——两边各自
+    # 少了一个里程读数，都判不出"动过"。更新照常列出，只是落在空档里面。
+    def anchor(e: dict) -> bool:
+        return e["kind"] in ("drive", "charge")
+
     merged: list[dict] = []
     for i, ev in enumerate(out):
         merged.append(ev)
-        if i + 1 >= len(out):
+        if not anchor(ev):
             continue
-        nxt = out[i + 1]
+        j = next((k for k in range(i + 1, len(out)) if anchor(out[k])), None)
+        if j is None:
+            continue
+        nxt = out[j]
         if not ev["start"] or not nxt["end"]:
             continue
-        gap_min = (rows[i]["start_date"] - rows[i + 1]["end_date"]).total_seconds() / 60
+        gap_min = (rows[i]["start_date"] - rows[j]["end_date"]).total_seconds() / 60
         if gap_min >= 10:
             # 空档里里程表动了，说明车开过但 TeslaMate 没记上 —— 那不是停放。
             # 把它如实标成 gap，附上跑掉的里程；否则界面上会出现

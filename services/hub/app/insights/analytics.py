@@ -1769,6 +1769,80 @@ async def locations(car_id: int, period: Period, limit: int = 20) -> dict:
     }
 
 
+# ======================================================================== 足迹
+
+_FOOTPRINT_CACHE: dict[tuple, tuple[float, dict]] = {}
+_FOOTPRINT_TTL_S = 600
+
+
+async def footprint(car_id: int, period: Period, cell_deg: float = 0.01) -> dict:
+    """一生足迹：车开过的地方，按约 1 km 的格子点亮。
+
+    格子 = (floor(lat / cell), floor(lon / cell))，每格带首次到达时间，前端按时间顺序逐格
+    点亮。面积按每格自己的纬度算（经向乘 cos(lat)），高纬度的格子更小。城市、地区、国家
+    沿用 locations() 的口径，另给一条「第一次」时间线：每座城市、每个地区第一次到达的时间。
+    """
+    key = (car_id, period.as_dict().get("from"), period.as_dict().get("to"), cell_deg)
+    hit = _FOOTPRINT_CACHE.get(key)
+    if hit and (datetime.now(UTC).timestamp() - hit[0]) < _FOOTPRINT_TTL_S:
+        return hit[1]
+    lo, hi = period.bounds()
+    rows = await db.fetch(
+        """
+        SELECT floor(latitude / $4)::int AS y, floor(longitude / $4)::int AS x, min(date) AS first
+        FROM positions
+        WHERE car_id = $1 AND date >= $2 AND date < $3 AND latitude IS NOT NULL AND longitude IS NOT NULL
+        GROUP BY 1, 2 ORDER BY 3
+        """,
+        car_id, lo, hi, cell_deg,
+    )
+    km = 111.32 * cell_deg
+    area = sum(km * km * math.cos(math.radians((r["y"] + 0.5) * cell_deg)) for r in rows)
+    loc = await locations(car_id, period, limit=12)
+    regions: dict[tuple, dict] = {}
+    for c in loc["cities"]:
+        k = (c["country_code"], c["region"] or "")
+        g = regions.setdefault(k, {"country_code": c["country_code"], "country": c["country"],
+                                   "region": c["region"], "cities": 0, "visits": 0,
+                                   "first_visit": c["first_visit"], "days": 0})
+        g["cities"] += 1
+        g["visits"] += c["visits"]
+        g["days"] += c["days"]
+        if c["first_visit"] and (not g["first_visit"] or c["first_visit"] < g["first_visit"]):
+            g["first_visit"] = c["first_visit"]
+    firsts = sorted(
+        [{"kind": "city", "name": c["city"], "region": c["region"], "country": c["country"],
+          "at": c["first_visit"]} for c in loc["cities"] if c["first_visit"]]
+        + [{"kind": "region", "name": r["region"], "country": r["country"], "at": r["first_visit"]}
+           for r in regions.values() if r["region"] and r["first_visit"]],
+        key=lambda f: f["at"])
+    ys = [r["y"] for r in rows]
+    xs = [r["x"] for r in rows]
+    out = {
+        "car": loc["car"], "period": period.as_dict(), "cell_deg": cell_deg,
+        "cells": [[r["y"], r["x"], int(r["first"].replace(tzinfo=UTC).timestamp())] for r in rows],
+        "bounds": ([round(v, 6) for v in (min(ys) * cell_deg, min(xs) * cell_deg,
+                                          (max(ys) + 1) * cell_deg, (max(xs) + 1) * cell_deg)]
+                   if rows else None),
+        "explored_km2": round(area, 1),
+        "counts": {"cells": len(rows), "cities": len(loc["cities"]),
+                   "regions": sum(1 for r in regions.values() if r["region"]),
+                   "countries": len(loc["countries"])},
+        "regions": sorted(regions.values(), key=lambda r: -r["days"]),
+        "countries": loc["countries"],
+        "cities": loc["cities"],
+        "top_places": loc["top_places"],
+        "firsts": firsts,
+        "first_drive": iso(await db.fetchval(
+            "SELECT min(start_date) FROM drives WHERE car_id = $1 AND start_date >= $2 AND start_date < $3",
+            car_id, lo, hi)),
+    }
+    _FOOTPRINT_CACHE[key] = (datetime.now(UTC).timestamp(), out)
+    if len(_FOOTPRINT_CACHE) > 32:
+        _FOOTPRINT_CACHE.pop(next(iter(_FOOTPRINT_CACHE)))
+    return out
+
+
 # ======================================================================== 软件更新
 
 async def updates(car_id: int) -> dict:

@@ -79,52 +79,50 @@
 </div>
 
 <style>
-  /* amber as text needs more weight on a light background */
-  .dc-page { --amber-ink: var(--amber); }
-  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .dc-page { --amber-ink: #9a5b00; } }
-  :root[data-theme="light"] .dc-page { --amber-ink: #9a5b00; }
-  .dc-page { padding-bottom: 96px; }
-  .dc-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 22px; }
-  .dc-notes { display: flex; flex-direction: column; gap: 10px; margin-bottom: 22px; }
+  /* amber as text: --wn-text is already composed per theme */
+  .dc-page { --amber-ink: var(--wn-text); }
+  .dc-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: var(--s-6); }
+  .dc-notes { display: flex; flex-direction: column; gap: 10px; margin-bottom: var(--s-6); }
   .dc-notes:empty { display: none; }
-  .dc-note { display: flex; gap: 14px; align-items: flex-start; padding: 14px 18px; border-radius: var(--radius);
-    background: var(--bg-secondary); border: 1px solid var(--line); }
-  .dc-note > .ic { flex: none; margin-top: 1px; color: var(--text-tertiary); display: flex; }
-  .dc-note.warn { border-color: rgba(255, 179, 64, .32); background: linear-gradient(90deg, var(--amber-soft), transparent 55%), var(--bg-secondary); }
+  .dc-note { display: flex; gap: 14px; align-items: flex-start; padding: 14px 16px; border-radius: var(--r-3);
+    background: var(--surface); border: 1px solid var(--line); }
+  .dc-note > .ic { flex: none; margin-top: 1px; color: var(--ink-3); display: flex; }
+  .dc-note.warn { border-color: var(--wn-line); background: var(--wn-tint); }
   .dc-note.warn > .ic { color: var(--amber-ink); }
   .dc-note .grow { flex: 1; min-width: 0; }
-  .dc-note .tt { font-size: 14.5px; font-weight: 550; }
-  .dc-note .bd { margin-top: 4px; font-size: 13.5px; color: var(--text-secondary); line-height: 1.55; max-width: 76ch; }
-  .dc-note code { font-family: ui-monospace, Menlo, monospace; font-size: 12px; background: var(--bg-hover); padding: 1px 6px; border-radius: 6px; word-break: break-all; }
+  .dc-note .tt { font-size: var(--t-15); font-weight: var(--w-semi); }
+  .dc-note .bd { margin-top: 4px; font-size: var(--t-14); color: var(--ink-2); line-height: var(--lead-prose); max-width: 76ch; }
+  .dc-note code { font-family: var(--font-mono); font-size: var(--t-12); background: var(--surface-2); padding: 1px 5px; border-radius: var(--r-1); word-break: break-all; }
   .dc-note details { margin-top: 8px; }
-  .dc-note details summary { cursor: pointer; font-size: 13px; color: var(--text-secondary); list-style: none; text-decoration: underline;
-    text-underline-offset: 3px; text-decoration-color: var(--line-strong); }
+  .dc-note details summary { cursor: pointer; font-size: var(--t-13); color: var(--ink-2); list-style: none; text-decoration: underline;
+    text-underline-offset: 3px; text-decoration-color: var(--line-2); }
   .dc-note details summary::-webkit-details-marker { display: none; }
-  .dc-note ul { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; color: var(--text-tertiary); }
+  .dc-note ul { margin: 8px 0 0; padding-left: 18px; font-size: var(--t-13); color: var(--ink-3); }
   .dc-note li { margin: 3px 0; word-break: break-all; }
-  .dc-cta { display: flex; gap: 16px; align-items: center; padding: 20px 22px; border-radius: var(--radius); margin-bottom: 26px;
-    background: var(--bg-secondary); border: 1px solid var(--line); }
-  .dc-cta .ic { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; flex: none; background: var(--bg-hover); color: var(--text-secondary); }
-  .dc-cta .grow { flex: 1; min-width: 0; }
-  .dc-cta .name { font-size: 15px; font-weight: 550; }
-  #fsd-section { margin-top: 0; margin-bottom: 40px; }
-  .dc-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
-  .clip { display: block; border-radius: var(--radius); overflow: hidden; background: var(--bg-secondary); border: 1px solid var(--line);
-    transition: background 160ms var(--ease-out), border-color 160ms var(--ease-out), transform 120ms var(--ease-out); }
-  .clip:hover { background: var(--bg-elevated); border-color: var(--line-strong); }
-  .clip .th { position: relative; aspect-ratio: 16 / 9; background: var(--bg-elevated); display: grid; place-items: center; color: var(--text-tertiary); }
+  .dc-cta { display: flex; gap: var(--s-4); align-items: center; padding: 18px 20px; border-radius: var(--r-3); margin-bottom: var(--s-6);
+    background: var(--surface); border: 1px solid var(--line); }
+  .dc-cta .ic { width: 40px; height: 40px; border-radius: var(--r-2); display: grid; place-items: center; flex: none; background: var(--surface-2); color: var(--ink-2); }
+  .dc-cta .grow { flex: 1 1 220px; min-width: 0; }
+  .dc-cta .name { font-size: var(--t-15); font-weight: var(--w-semi); }
+  #fsd-section { margin-top: 0; margin-bottom: var(--s-12); }
+  .dc-grid { display: grid; gap: var(--s-4); grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+  .clip { display: block; border-radius: var(--r-3); overflow: hidden; background: var(--surface); border: 1px solid var(--line);
+    transition: background-color var(--dur-hover) ease, border-color var(--dur-hover) ease, transform var(--dur-press) var(--ease-out); }
+  .clip:active { transform: scale(.99); }
+  @media (hover: hover) and (pointer: fine) { .clip:hover { border-color: var(--line-2); } }
+  .clip .th { position: relative; aspect-ratio: 16 / 9; background: var(--surface-2); display: grid; place-items: center; color: var(--ink-4); }
   .clip .th img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
   .clip .m { padding: 12px 14px 14px; }
-  .clip .r1 { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text-secondary); }
+  .clip .r1 { display: flex; align-items: center; gap: 7px; font-size: var(--t-13); color: var(--ink-2); }
   .clip .r1 .sp { flex: 1; }
-  .clip .r1 .when { font-size: 12px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .clip .r2 { margin-top: 6px; font-size: 13.5px; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .clip .r3 { margin-top: 3px; font-size: 12.5px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+  .clip .r1 .when { font-size: var(--t-12); color: var(--ink-3); white-space: nowrap; }
+  .clip .r2 { margin-top: 6px; font-size: var(--t-14); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .clip .r3 { margin-top: 3px; font-size: var(--t-13); color: var(--ink-3); }
   .dc-empty { grid-column: 1 / -1; text-align: center; padding: 56px 24px; }
-  .dc-empty .why { max-width: 58ch; margin: 24px auto 0; line-height: 1.7; text-align: left; }
+  .dc-empty .why { max-width: 58ch; margin: 24px auto 0; line-height: var(--lead-prose); text-align: left; }
   @media (max-width: 640px) {
     .dc-bar .seg2 { order: 3; flex-basis: 100%; display: flex; }
-    .dc-bar .seg2 button { flex: 1 1 auto; padding: 0 4px; font-size: 12.5px; white-space: nowrap; }
+    .dc-bar .seg2 button { flex: 1 1 auto; padding: 0 4px; white-space: nowrap; }
     .dc-cta { flex-wrap: wrap; }
     .dc-note { padding: 12px 14px; }
   }
@@ -221,7 +219,7 @@
       div.innerHTML = curType && st.events
         ? `<div class="empty" style="grid-column:1/-1">${esc(t("dashcam.empty.filter"))}</div>`
         : `<div class="empty dc-empty">
-          <div style="font-size:16px;color:var(--text-secondary)">${esc(t("dashcam.empty.title"))}</div>
+          <div style="font-size:var(--t-16);color:var(--ink-2)">${esc(t("dashcam.empty.title"))}</div>
           <div class="mt2"><a class="btn primary" href="/dashcam/usb">${esc(t("dashcam.empty.usb_cta"))}</a></div>
           <div class="body-sm why">${t("dashcam.empty.usb_why")}<br><br>${t("dashcam.empty.setup")}<br><br>${t("dashcam.empty.encryption")}</div></div>`;
       return;
@@ -305,7 +303,7 @@
       return;
     }
     $("d-events").hidden = false;
-    const hrs = (s) => (s / 3600).toFixed(1);
+    const hrs = (s) => fmt.fixed(s / 3600, 1);
     $("fsd-metrics").innerHTML =
       metric(t("fsd.m_auto"), sum.share.autonomous ?? "–", "%", t("fsd.m_auto_sub", { h: hrs(sum.seconds.fsd + sum.seconds.ap) })) +
       metric(t("fsd.m_fsd"), sum.share.fsd ?? "–", "%", `FSD ${hrs(sum.seconds.fsd)}h`) +

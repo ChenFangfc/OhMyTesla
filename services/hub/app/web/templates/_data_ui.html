@@ -1,0 +1,19 @@
+{# Skeletons at their final size. They only become visible after 300 ms
+   (data.css), so a fast answer never flashes grey. #}
+{% macro kpis(n, small=false) -%}
+<div class="dh-kpis{{ ' small' if small }}" style="--cols:{{ n }}">
+  {%- for i in range(n) %}<div class="dh-kpi"><span class="dh-sk t"></span><span class="dh-sk v"></span><span class="dh-sk d"></span></div>{% endfor -%}
+</div>
+{%- endmacro %}
+
+{% macro chart(cls='') -%}
+<div class="dh-chart {{ cls }}"><span class="dh-sk box"></span></div>
+{%- endmacro %}
+
+{% macro rows(n) -%}
+<div>{% for i in range(n) %}<span class="dh-sk row"></span>{% endfor %}</div>
+{%- endmacro %}
+
+{% macro lines(n) -%}
+<div>{% for i in range(n) %}<span class="dh-sk line" style="width:{{ [92, 78, 64, 86, 70][i % 5] }}%"></span>{% endfor %}</div>
+{%- endmacro %}

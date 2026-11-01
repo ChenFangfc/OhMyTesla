@@ -1,26 +1,25 @@
 {% extends "shell.html" %}
 {% block title %}{{ t('nav.controls', 'Controls') }} · OhmyTesla{% endblock %}
 
+{# 控制 answers: what do I want it to do? Grouped by job — climate,
+   charging, openings, security, Cybertruck — with the rarely used rest
+   folded away. Every command shows its own progress on the button and its
+   result right beside it. #}
 {% block content %}
-<div class="page">
-  <div class="row" style="align-items:flex-end;gap:16px;margin-bottom:18px">
-    <div>
-      <div class="eyebrow" id="c-eyebrow">&nbsp;</div>
-      <h1 class="display-md" data-i18n="nav.controls">Controls</h1>
-      <div class="body-sm" id="c-fresh" style="margin-top:6px">&nbsp;</div>
+<div class="page ctl">
+  <div class="ctl-head">
+    <div class="page-head">
+      <h1 data-i18n="nav.controls">Controls</h1>
+      <div class="sub" id="c-fresh">&nbsp;</div>
     </div>
-    <span class="spacer"></span>
-    <button class="btn" id="c-refresh"><span class="ico-slot" data-icon="refresh" data-size="16"></span><span data-i18n="controls.refresh">Refresh</span></button>
-    <button class="btn accent" id="c-wake" hidden><span class="ico-slot" data-icon="power" data-size="16"></span><span data-i18n="controls.wake">Wake</span></button>
+    <div class="acts">
+      <button class="btn" id="c-refresh" type="button"><span class="ico-slot" data-icon="refresh" data-size="16"></span><span data-i18n="controls.refresh">Refresh</span></button>
+      <button class="btn accent" id="c-wake" type="button" hidden><span class="ico-slot" data-icon="power" data-size="16"></span><span data-i18n="controls.wake">Wake</span></button>
+    </div>
   </div>
-
-  <div class="setup-banner" id="setup" hidden>
-    <span class="ico-slot" data-icon="key" data-size="22"></span>
-    <div class="txt"></div>
-    <a class="btn accent" href="/settings#commands" data-i18n="home.setup.cta">Set up</a>
-  </div>
-
-  <div class="ctl-grid" id="grid"></div>
+  <p class="inline-status" id="c-status" role="status" aria-live="polite"></p>
+  <div class="ctl-note" id="c-setup" hidden></div>
+  <div class="cgrid" id="grid"></div>
 </div>
 {% endblock %}
 

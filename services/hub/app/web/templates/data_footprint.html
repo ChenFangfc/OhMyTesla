@@ -1,0 +1,71 @@
+{% extends "data_base.html" %}
+{% import "_data_ui.html" as ui %}
+{# 足迹 (一生足迹) asks "where has the car been?". The map is the answer and
+   the hub's one delight surface: explored ~1 km cells lit in one hue on a
+   desaturated basemap, regions driven in lit beneath them, routes as thin
+   lines, stops as dots, the accent only on where the car is now. A ranked
+   list sits beside it. The 「首次出行 → 今天」 scrubber replays the record,
+   but only when the user drives it: the page always opens on today. #}
+{% block title %}{{ t('data.title.footprint') }}{% endblock %}
+{% block h1 %}<span data-i18n="data.nav.footprint">{{ t('data.nav.footprint') }}</span>{% endblock %}
+
+{% block chapter %}
+<section class="dh-sec first" id="fp-count" aria-live="polite">
+  <div class="dh-body">
+    <div class="fp-counters">
+      {% for i in range(4) %}<div class="fp-counter"><span class="dh-sk t"></span><span class="dh-sk v"></span><span class="dh-sk d"></span></div>{% endfor %}
+    </div>
+  </div>
+</section>
+
+<div class="fp-wrap">
+  <div class="fp-stage">
+    <div class="fp-map" id="fp-map">
+      <svg class="fp-topo" id="fp-topo" aria-hidden="true" preserveAspectRatio="xMidYMid slice"></svg>
+      <div class="fp-gl" id="fp-gl"></div>
+      <canvas class="fp-ink" id="fp-ink" aria-hidden="true"></canvas>
+      <div class="fp-tip" id="fp-tip" role="status"></div>
+      <div class="fp-msg" id="fp-msg" hidden></div>
+    </div>
+    <div class="fp-legend" id="fp-legend" hidden>
+      <span><i class="sw-cell"></i><span data-i18n="data.fp.lg_cells">{{ t('data.fp.lg_cells') }}</span></span>
+      <span><i class="sw-region"></i><span data-i18n="data.fp.lg_regions">{{ t('data.fp.lg_regions') }}</span></span>
+      <span><i class="sw-route"></i><span id="fp-lg-routes"></span></span>
+      <span><i class="sw-place"></i><span data-i18n="data.fp.lg_places">{{ t('data.fp.lg_places') }}</span></span>
+      <span><i class="sw-here"></i><span data-i18n="data.fp.lg_here">{{ t('data.fp.lg_here') }}</span></span>
+    </div>
+
+    <div class="fp-scrub" id="fp-scrub" hidden>
+      <div class="fp-scrub-top">
+        <span id="fp-scrub-l" data-i18n="data.fp.scrub">{{ t('data.fp.scrub') }}</span>
+        <span class="when" id="fp-when"></span>
+        <button type="button" class="dh-btn quiet" id="fp-play"><span class="ico-slot" data-icon="play" data-size="14"></span><span data-i18n="data.fp.replay">{{ t('data.fp.replay') }}</span></button>
+      </div>
+      <div class="fp-track" id="fp-track">
+        <div class="fp-rail"></div>
+        <div class="fp-fill" id="fp-fill"></div>
+        <div class="fp-ticks" id="fp-ticks"></div>
+        <input type="range" id="fp-range" min="0" max="1000" step="1" value="1000" data-i18n-title="data.fp.scrub_aria" aria-label="{{ t('data.fp.scrub_aria') }}">
+        <div class="fp-knob" id="fp-knob"></div>
+      </div>
+      <div class="fp-scale"><span id="fp-t0"></span><span id="fp-t1" data-i18n="data.c.today">{{ t('data.c.today') }}</span></div>
+      <p class="dh-note" id="fp-period-n" hidden></p>
+    </div>
+  </div>
+
+  <aside class="fp-aside" id="fp-aside">
+    <div class="dh-seg" role="group" aria-label="{{ t('data.fp.list') }}">
+      <button type="button" data-tab="regions" aria-pressed="true" data-i18n="data.fp.tab_regions">{{ t('data.fp.tab_regions') }}</button>
+      <button type="button" data-tab="cities" aria-pressed="false" data-i18n="data.fp.tab_cities">{{ t('data.fp.tab_cities') }}</button>
+      <button type="button" data-tab="firsts" aria-pressed="false" data-i18n="data.fp.tab_firsts">{{ t('data.fp.tab_firsts') }}</button>
+    </div>
+    <div class="fp-list" id="fp-list">{{ ui.rows(6) }}</div>
+  </aside>
+</div>
+{% endblock %}
+
+{% block data_scripts %}
+<script src="/static/js/geo.js"></script>
+<script src="/static/js/map.js"></script>
+<script src="/static/js/pages/data-footprint.js"></script>
+{% endblock %}

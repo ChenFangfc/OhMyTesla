@@ -1,0 +1,684 @@
+/* ============================================================================
+   数据 hub: the record layer.
+
+   History and statistics read like a journal: hairlines instead of boxes,
+   tabular figures, grey units, no decorative colour. Colour sits on the data
+   (one hue per chart) and on good/bad deltas; the accent appears once, on the
+   footprint map's "you are here".
+
+   Every value below derives from the shared tokens in design.css / app.css,
+   so a theme or token change upstream flows through without edits here.
+   ========================================================================= */
+
+.dh {
+  --dh-ink: var(--text-primary);
+  --dh-ink-2: var(--text-secondary);
+  --dh-ink-3: var(--text-tertiary);
+  --dh-rule: var(--border-subtle);
+  --dh-rule-2: var(--border-medium);
+  --dh-ground: var(--bg-primary);
+  --dh-raise: var(--bg-secondary);
+  --dh-hover: var(--bg-hover);
+  --dh-data: var(--series-1);
+  --dh-data-2: color-mix(in srgb, var(--series-1) 45%, var(--bg-primary));
+  --dh-data-soft: color-mix(in srgb, var(--series-1) 16%, transparent);
+  --dh-good: var(--green, var(--charging-green));
+  --dh-bad: var(--amber, var(--warning-orange));
+  --dh-skel: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  --dh-top: 0px;               /* data.js: bottom edge of the shell's fixed chrome */
+  --dh-nav-h: 48px;
+  --dh-ease-move: var(--ease-in-out, cubic-bezier(0.77, 0, 0.175, 1));
+  --dh-ease-out: var(--ease, cubic-bezier(0.23, 1, 0.32, 1));
+  font-variant-numeric: tabular-nums;
+  padding-bottom: 112px;
+}
+
+/* Text colours for deltas must hold 4.5:1 on a light ground; the raw semantic
+   hues are tuned for dark. Darken them toward the ink instead of inventing
+   new colours. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .dh {
+    --dh-good: color-mix(in srgb, var(--green, var(--charging-green)) 58%, var(--text-primary));
+    --dh-bad: color-mix(in srgb, var(--amber, var(--warning-orange)) 56%, var(--text-primary));
+    --dh-skel: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  }
+}
+:root[data-theme="light"] .dh {
+  --dh-good: color-mix(in srgb, var(--green, var(--charging-green)) 58%, var(--text-primary));
+  --dh-bad: color-mix(in srgb, var(--amber, var(--warning-orange)) 56%, var(--text-primary));
+  --dh-skel: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.dh [hidden] { display: none !important; }
+.dh .num, .dh .n { font-variant-numeric: tabular-nums; }
+.dh a { color: inherit; }
+.dh .dim { color: var(--dh-ink-2); }
+.dh .faint { color: var(--dh-ink-3); }
+.dh .dash { color: var(--dh-ink-3); }
+.dh .sr {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+/* ------------------------------------------------------------ chapter index
+   A sticky index of the six chapters and ONE period control for the hub.
+   Peers swap instantly; only the 2px indicator moves. */
+
+.dh-nav {
+  position: sticky; top: var(--dh-top); z-index: 20;
+  background: var(--dh-ground);
+  border-bottom: 1px solid var(--dh-rule);
+}
+.dh-nav-in {
+  display: flex; align-items: center; gap: 16px;
+  height: var(--dh-nav-h);
+}
+/* The first label lines up with the page edge; the link keeps its padding
+   as touch area. */
+.dh-chs {
+  position: relative; display: flex; align-items: stretch; gap: 4px;
+  height: 100%; min-width: 0; flex: 1; margin-left: -12px;
+  overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain;
+}
+.dh-chs::-webkit-scrollbar { display: none; }
+.dh-ch {
+  display: inline-flex; align-items: center; flex: none;
+  padding: 0 12px; font-size: 14px; color: var(--dh-ink-2);
+  white-space: nowrap; text-decoration: none;
+  transition: color 120ms var(--dh-ease-out);
+  -webkit-tap-highlight-color: transparent;
+}
+.dh-ch[aria-current="page"] { color: var(--dh-ink); font-weight: 500; }
+@media (hover: hover) and (pointer: fine) {
+  .dh-ch:hover { color: var(--dh-ink); }
+}
+.dh-ind {
+  position: absolute; left: 0; bottom: 0; height: 2px; width: 0;
+  background: var(--dh-ink); pointer-events: none;
+  transform-origin: left center;
+}
+.dh-ind.go { transition: transform 250ms var(--dh-ease-move), width 250ms var(--dh-ease-move); }
+
+.dh-per { display: inline-flex; gap: 2px; flex: none; }
+.dh-per button, .dh-per-btn {
+  height: 30px; padding: 0 10px; border: 0; border-radius: 4px;
+  background: transparent; color: var(--dh-ink-2);
+  font: inherit; font-size: 13px; font-weight: 400; cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 120ms var(--dh-ease-out), color 120ms var(--dh-ease-out);
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+}
+.dh-per button[aria-pressed="true"] { background: var(--dh-hover); color: var(--dh-ink); }
+@media (hover: hover) and (pointer: fine) {
+  .dh-per button:hover { color: var(--dh-ink); }
+}
+.dh-per button:active, .dh-per-btn:active { transform: scale(0.97); }
+.dh-per-btn {
+  display: none; align-items: center; gap: 4px; height: 44px; padding: 0 4px 0 12px;
+  color: var(--dh-ink); font-weight: 500; flex: none;
+}
+.dh-per-btn svg { color: var(--dh-ink-3); }
+
+/* ----------------------------------------------------------------- header */
+
+.dh-head { padding: 24px 0 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; }
+.dh-head h1 { font-size: 24px; line-height: 1.2; font-weight: 500; letter-spacing: -0.022em; margin: 0; }
+.dh-meta { font-size: 13px; color: var(--dh-ink-3); display: flex; flex-wrap: wrap; gap: 0 10px; }
+.dh-meta > span + span::before { content: "·"; margin-right: 10px; color: var(--dh-ink-3); }
+.dh-notes:empty { display: none; }
+.dh-notes { margin-top: 16px; display: flex; flex-direction: column; gap: 8px; }
+.dh-notice {
+  display: flex; gap: 10px; align-items: flex-start; padding: 10px 0 10px 12px;
+  border-left: 2px solid var(--dh-rule-2); font-size: 13px; line-height: 1.5; color: var(--dh-ink-2);
+}
+.dh-notice.warn { border-left-color: var(--dh-bad); }
+.dh-notice b { color: var(--dh-ink); font-weight: 500; }
+.dh-notice a { text-decoration: underline; text-underline-offset: 3px; }
+
+/* The lifetime ledger: totals set as type, not tiles. */
+.dh-lede {
+  margin: 16px 0 0; max-width: 62ch;
+  font-size: 18px; line-height: 1.55; color: var(--dh-ink-2); font-weight: 400;
+  text-wrap: pretty;
+}
+.dh-lede b { color: var(--dh-ink); font-weight: 500; }
+.dh-lede .u { color: var(--dh-ink-2); font-weight: 400; }
+.dh-lede-sub { margin-top: 6px; font-size: 13px; color: var(--dh-ink-3); max-width: 72ch; }
+
+/* --------------------------------------------------------------- sections */
+
+.dh-sec { margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--dh-rule); min-width: 0; }
+.dh-sec.first { border-top: 0; margin-top: 24px; padding-top: 0; }
+.dh-sec-h { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 16px; }
+.dh-sec-h h2 { font-size: 18px; line-height: 1.3; font-weight: 500; letter-spacing: -0.01em; margin: 0; }
+.dh-sec-h h3 { font-size: 15px; line-height: 1.35; font-weight: 500; margin: 0; }
+.dh-sec-h .dh-note { flex-basis: 100%; }
+.dh-sec-h .dh-tools { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.dh-note { font-size: 13px; line-height: 1.5; color: var(--dh-ink-3); margin: 0; }
+
+.dh-grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 0 48px; }
+.dh-grid > * { grid-column: span 12; min-width: 0; }
+.dh-grid > .c6 { grid-column: span 6; }
+.dh-grid > .c4 { grid-column: span 4; }
+.dh-grid > .c8 { grid-column: span 8; }
+.dh-grid > .c5 { grid-column: span 5; }
+.dh-grid > .c7 { grid-column: span 7; }
+.dh-grid > .dh-sec.c6:nth-child(-n+2), .dh-grid > .dh-sec.c4:nth-child(-n+3) { }
+.dh-sub { min-width: 0; }
+.dh-sub + .dh-sub { margin-top: 32px; }
+.dh-grid > .dh-sub + .dh-sub { margin-top: 0; }
+.dh-subh { font-size: 14px; font-weight: 500; margin: 0 0 4px; color: var(--dh-ink); }
+.dh-subn { font-size: 12px; color: var(--dh-ink-3); margin: 0 0 12px; }
+
+/* ------------------------------------------------------------------ KPIs
+   Grey label above, answer figure 32px, grey unit, delta below. One strip,
+   divided by hairlines. */
+
+.dh-kpis {
+  display: grid; grid-template-columns: repeat(var(--cols, 6), minmax(0, 1fr));
+  gap: 0; margin: 0;
+}
+.dh-kpi { padding: 2px 20px 2px 20px; border-left: 1px solid var(--dh-rule); min-width: 0; }
+.dh-kpi:first-child { padding-left: 0; border-left: 0; }
+.dh-kpi-l { font-size: 13px; line-height: 1.35; color: var(--dh-ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dh-kpi-v {
+  margin-top: 6px; font-size: 32px; line-height: 1.05; font-weight: 500; letter-spacing: -0.022em;
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.dh-kpi-v .u, .dh-fig .u, .dh-val .u {
+  font-size: 15px; font-weight: 400; letter-spacing: 0; color: var(--dh-ink-2); margin-left: 4px;
+}
+.dh-kpi-v .u.pre { margin: 0 2px 0 0; }
+.dh-kpi-d { margin-top: 6px; font-size: 13px; line-height: 1.35; color: var(--dh-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dh-kpi-d .good, .dh-d.good { color: var(--dh-good); }
+.dh-kpi-d .bad, .dh-d.bad { color: var(--dh-bad); }
+.dh-kpi-d .flat, .dh-d.flat { color: var(--dh-ink-3); }
+.dh-kpis.small .dh-kpi-v { font-size: 24px; }
+/* Records: a 3 × 2 strip on wide screens, the usual 2-column grid on phones. */
+@media (min-width: 721px) {
+  .dh-kpis.rec { --cols: 3; }
+  .dh-kpis.rec .dh-kpi:nth-child(n+4) { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--dh-rule); }
+  .dh-kpis.rec .dh-kpi:nth-child(3n+1) { padding-left: 0; border-left: 0; }
+}
+.dh-kpis.small .dh-kpi-v .u { font-size: 13px; }
+
+/* Secondary figures inside a block: 20px, never competing with the answer. */
+.dh-figs { display: flex; flex-wrap: wrap; gap: 16px 32px; }
+.dh-fig { min-width: 0; }
+.dh-fig-l { font-size: 12px; color: var(--dh-ink-2); }
+.dh-fig-v { margin-top: 2px; font-size: 20px; line-height: 1.2; font-weight: 500; letter-spacing: -0.01em; white-space: nowrap; }
+.dh-fig-v .u { font-size: 13px; }
+.dh-fig-s { margin-top: 2px; font-size: 12px; color: var(--dh-ink-3); }
+
+/* The one big answer figure of a block (battery health, explored area…). */
+.dh-answer { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px 40px; }
+.dh-answer .big { font-size: 44px; line-height: 1; font-weight: 500; letter-spacing: -0.022em; font-variant-numeric: tabular-nums; }
+.dh-answer .big .u { font-size: 18px; font-weight: 400; color: var(--dh-ink-2); margin-left: 4px; letter-spacing: 0; }
+
+/* --------------------------------------------------------------- ledgers
+   Label left, figure right, date grey. The journal rows of the record layer. */
+
+.dh-ledger { list-style: none; margin: 0; padding: 0; }
+.dh-ledger li, .dh-ledger .row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline;
+  gap: 2px 16px; padding: 11px 0; border-bottom: 1px solid var(--dh-rule);
+}
+.dh-ledger li:last-child { border-bottom: 0; }
+.dh-ledger .k { font-size: 14px; color: var(--dh-ink-2); min-width: 0; }
+.dh-ledger .v { font-size: 16px; font-weight: 500; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dh-ledger .v .u { font-size: 13px; font-weight: 400; color: var(--dh-ink-2); margin-left: 3px; }
+.dh-ledger .s { grid-column: 1 / -1; font-size: 12px; color: var(--dh-ink-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dh-ledger a.row { text-decoration: none; }
+@media (hover: hover) and (pointer: fine) {
+  .dh-ledger a.row:hover .k { color: var(--dh-ink); }
+}
+.dh-ledger.big .v { font-size: 20px; }
+
+/* ----------------------------------------------------------------- charts */
+
+.dh-chart { position: relative; height: var(--h, 200px); min-width: 0; }
+.dh-chart:focus-visible { outline: 2px solid var(--accent, var(--tesla-blue)); outline-offset: 4px; border-radius: 2px; }
+.dh-chart > svg { display: block; width: 100%; height: 100%; overflow: visible; max-width: none; }
+.dh-chart.tall { --h: 240px; }
+.dh-chart.short { --h: 160px; }
+.dh-chart.mini { --h: 120px; }
+
+.dc-grid { stroke: var(--dh-rule); stroke-width: 1; shape-rendering: crispEdges; }
+.dc-base { stroke: var(--dh-rule-2); stroke-width: 1; shape-rendering: crispEdges; }
+.dc-lab { fill: var(--dh-ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
+.dc-lab.end { text-anchor: end; }
+.dc-lab.mid { text-anchor: middle; }
+.dc-unit { fill: var(--dh-ink-3); font-size: 11px; }
+.dc-bar { fill: var(--dh-data); }
+.dc-bar.alt { fill: var(--dh-data-2); }
+.dc-bar.hollow { fill: var(--dh-ground); stroke: var(--dh-data); stroke-width: 1; stroke-opacity: .7; }
+.dc-bar.weak { fill: var(--dh-data-2); }
+.dc-bar.hi { fill: var(--dh-ink); }
+.dc-line { fill: none; stroke: var(--dh-data); stroke-width: 2; stroke-linejoin: round; stroke-linecap: butt; }
+.dc-line.thin { stroke-width: 1.5; }
+.dc-area { fill: var(--dh-data-soft); stroke: none; }
+.dc-ref { stroke: var(--dh-ink-3); stroke-width: 1; stroke-dasharray: 4 4; fill: none; }
+.dc-ref-lab, .dc-mark-lab { paint-order: stroke; stroke: var(--dh-ground); stroke-width: 4px; stroke-linejoin: round; }
+.dc-ref-lab { fill: var(--dh-ink-2); font-size: 11px; }
+.dc-guide { stroke: var(--dh-rule-2); stroke-width: 1; stroke-dasharray: 2 4; }
+.dc-mark { stroke: var(--dh-ink-3); stroke-width: 1; stroke-dasharray: 2 3; }
+.dc-mark-lab { fill: var(--dh-ink-2); font-size: 11px; }
+.dc-dot { fill: var(--dh-data); stroke: var(--dh-ground); stroke-width: 2; }
+.dc-cross { stroke: var(--dh-rule-2); stroke-width: 1; }
+.dc-hit { fill: transparent; }
+.dc-col { fill: var(--dh-ink); opacity: 0; }
+.dc-col.on { opacity: .05; }
+.dc-empty { fill: var(--dh-ink-3); font-size: 13px; text-anchor: middle; }
+.dc-cell { fill: var(--dh-skel); }
+.dc-cell.l1 { fill: color-mix(in srgb, var(--dh-data) 26%, var(--dh-ground)); }
+.dc-cell.l2 { fill: color-mix(in srgb, var(--dh-data) 48%, var(--dh-ground)); }
+.dc-cell.l3 { fill: color-mix(in srgb, var(--dh-data) 72%, var(--dh-ground)); }
+.dc-cell.l4 { fill: var(--dh-data); }
+.dc-cell.out { opacity: .35; }
+.dc-cell.on { stroke: var(--dh-ink); stroke-width: 1.5; }
+.dc-cell.tap { cursor: pointer; }
+
+.dc-tip {
+  position: absolute; z-index: 6; pointer-events: none; left: 0; top: 0;
+  min-width: 120px; max-width: 260px; padding: 7px 9px;
+  background: var(--bg-elevated); border: 1px solid var(--dh-rule-2); border-radius: 4px;
+  font-size: 12px; line-height: 1.45; color: var(--dh-ink-2);
+  opacity: 0; transition: opacity 120ms var(--dh-ease-out);
+}
+.dc-tip.on { opacity: 1; }
+.dc-tip b { display: block; color: var(--dh-ink); font-weight: 500; margin-bottom: 2px; }
+.dc-tip .r { display: flex; justify-content: space-between; gap: 12px; }
+.dc-tip .r .v { color: var(--dh-ink); font-variant-numeric: tabular-nums; }
+
+.dh-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 12px; color: var(--dh-ink-2); }
+.dh-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.dh-legend svg { flex: none; overflow: visible; }
+
+/* --------------------------------------------------------- ranked bar list */
+
+.dh-rank { list-style: none; margin: 0; padding: 0; }
+.dh-rank li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 9px 0 10px; border-bottom: 1px solid var(--dh-rule); }
+.dh-rank li:last-child { border-bottom: 0; }
+.dh-rank .lbl { font-size: 14px; color: var(--dh-ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dh-rank .val { font-size: 14px; font-weight: 500; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dh-rank .val .u { font-size: 12px; color: var(--dh-ink-2); font-weight: 400; margin-left: 3px; }
+.dh-rank .bar { grid-column: 1 / -1; height: 3px; background: var(--dh-skel); border-radius: 1px; overflow: hidden; }
+.dh-rank .bar i { display: block; height: 100%; background: var(--dh-data); border-radius: 1px; transform-origin: left center; transition: transform 260ms var(--dh-ease-move); }
+.dh-rank .sub { grid-column: 1 / -1; font-size: 12px; color: var(--dh-ink-3); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dh-rank button.lbl, .dh-rank a.lbl {
+  all: unset; cursor: pointer; font-size: 14px; color: var(--dh-ink); min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dh-rank button.lbl:focus-visible, .dh-rank a.lbl:focus-visible { outline: 2px solid var(--accent, var(--tesla-blue)); outline-offset: 2px; border-radius: 2px; }
+@media (hover: hover) and (pointer: fine) {
+  .dh-rank button.lbl:hover, .dh-rank a.lbl:hover { text-decoration: underline; text-underline-offset: 3px; }
+}
+
+/* ---------------------------------------------------- proportional splits */
+
+.dh-split { display: flex; height: 10px; gap: 2px; border-radius: 2px; overflow: hidden; }
+.dh-split i { display: block; min-width: 2px; height: 100%; transition: flex-grow 260ms var(--dh-ease-move); }
+:is(.dh-split, .dh-keys) .s-driving { background: var(--dh-data); }
+:is(.dh-split, .dh-keys) .s-charging { background: var(--dh-good); }
+:is(.dh-split, .dh-keys) .s-online { background: var(--dh-bad); }
+:is(.dh-split, .dh-keys) .s-updating { background: var(--dh-ink-2); }
+:is(.dh-split, .dh-keys) .s-asleep { background: color-mix(in srgb, var(--dh-ink) 34%, var(--dh-ground)); }
+:is(.dh-split, .dh-keys) .s-offline { background: color-mix(in srgb, var(--dh-ink) 14%, var(--dh-ground)); box-shadow: inset 0 0 0 1px var(--dh-rule-2); }
+:is(.dh-split, .dh-keys) .s-unknown { background: repeating-linear-gradient(135deg, var(--dh-rule-2) 0 2px, transparent 2px 5px); }
+:is(.dh-split, .dh-keys) .s-battery { background: var(--dh-data); }
+:is(.dh-split, .dh-keys) .s-loss { background: transparent; box-shadow: inset 0 0 0 1px var(--dh-data); }
+.dh-keys { display: flex; flex-wrap: wrap; gap: 8px 20px; margin-top: 12px; font-size: 13px; color: var(--dh-ink-2); }
+.dh-keys span { display: inline-flex; align-items: baseline; gap: 6px; }
+.dh-keys i { width: 8px; height: 8px; border-radius: 1px; align-self: center; flex: none; }
+.dh-keys b { color: var(--dh-ink); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.dh-flow { display: grid; gap: 14px; }
+.dh-flow .row { display: grid; grid-template-columns: 72px minmax(0, 1fr) auto; gap: 12px; align-items: center; }
+.dh-flow .k { font-size: 13px; color: var(--dh-ink-2); }
+.dh-flow .v { font-size: 13px; color: var(--dh-ink-2); white-space: nowrap; text-align: right; }
+.dh-flow .v b { color: var(--dh-ink); font-weight: 500; }
+
+/* ------------------------------------------------------------------ tables */
+
+.dh-tscroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.dh-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.dh-table th {
+  text-align: left; font-weight: 400; font-size: 12px; color: var(--dh-ink-3);
+  padding: 0 12px 8px 0; border-bottom: 1px solid var(--dh-rule-2); white-space: nowrap;
+}
+.dh-table td { padding: 10px 12px 10px 0; border-bottom: 1px solid var(--dh-rule); color: var(--dh-ink); vertical-align: baseline; }
+.dh-table th:last-child, .dh-table td:last-child { padding-right: 0; }
+.dh-table .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dh-table td.dim { color: var(--dh-ink-2); }
+.dh-table td.nowrap { white-space: nowrap; }
+.dh-table tr:last-child td { border-bottom: 0; }
+.dh-table tbody tr.tap { cursor: pointer; }
+.dh-table tbody tr[aria-selected="true"] td { background: var(--dh-hover); }
+.dh-table tbody tr[aria-selected="true"] td:first-child { box-shadow: inset 2px 0 0 var(--dh-ink); }
+@media (hover: hover) and (pointer: fine) {
+  .dh-table tbody tr.tap:hover td { background: var(--dh-raise); }
+  .dh-table tbody tr.tap[aria-selected="true"]:hover td { background: var(--dh-hover); }
+}
+.dh-table td .s { display: block; font-size: 12px; color: var(--dh-ink-3); margin-top: 1px; }
+.dh-tfoot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 12px; font-size: 12px; color: var(--dh-ink-3); }
+
+/* --------------------------------------------------------------- controls */
+
+.dh-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  height: 32px; padding: 0 12px; border-radius: 4px;
+  border: 1px solid var(--dh-rule-2); background: transparent; color: var(--dh-ink);
+  font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; text-decoration: none; white-space: nowrap;
+  transition: background-color 120ms var(--dh-ease-out), border-color 120ms var(--dh-ease-out);
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+.dh-btn:active { transform: scale(0.97); }
+.dh-btn.quiet { border-color: transparent; color: var(--dh-ink-2); }
+.dh-btn[disabled] { opacity: .45; cursor: default; }
+@media (hover: hover) and (pointer: fine) {
+  .dh-btn:hover { background: var(--dh-hover); }
+  .dh-btn.quiet:hover { color: var(--dh-ink); }
+}
+
+.dh-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 4px; background: var(--dh-raise); }
+.dh-seg button {
+  height: 28px; padding: 0 10px; border: 0; border-radius: 2px; background: transparent;
+  color: var(--dh-ink-2); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+  transition: background-color 120ms var(--dh-ease-out), color 120ms var(--dh-ease-out);
+  touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+}
+.dh-seg button[aria-pressed="true"] { background: var(--dh-hover); color: var(--dh-ink); }
+.dh-seg button:active { transform: scale(0.97); }
+@media (hover: hover) and (pointer: fine) { .dh-seg button:hover { color: var(--dh-ink); } }
+
+.dh-input { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--dh-ink-2); }
+.dh-input input {
+  width: 96px; height: 32px; padding: 0 8px; border-radius: 4px;
+  border: 1px solid var(--dh-rule-2); background: var(--dh-ground); color: var(--dh-ink);
+  font: inherit; font-size: 14px; font-variant-numeric: tabular-nums;
+}
+@media (pointer: coarse) { .dh-input input { font-size: 16px; height: 40px; } }
+
+details.dh-more { margin-top: 16px; border-top: 1px solid var(--dh-rule); }
+details.dh-more > summary {
+  display: flex; align-items: center; gap: 8px; padding: 12px 0; cursor: pointer; list-style: none;
+  font-size: 13px; color: var(--dh-ink-2);
+}
+details.dh-more > summary::-webkit-details-marker { display: none; }
+details.dh-more > summary .chev { margin-left: auto; color: var(--dh-ink-3); transition: transform 200ms var(--dh-ease-out); display: inline-flex; }
+details.dh-more[open] > summary .chev { transform: rotate(90deg); }
+details.dh-more > summary .val { margin-left: auto; color: var(--dh-ink); font-variant-numeric: tabular-nums; }
+details.dh-more > summary .val + .chev { margin-left: 8px; }
+@media (hover: hover) and (pointer: fine) { details.dh-more > summary:hover { color: var(--dh-ink); } }
+
+/* ------------------------------------------------------- honest states
+   Skeletons at final size with no shimmer, shown only after 300ms so a fast
+   answer never flashes grey. Errors stay inside the failing block. */
+
+.dh-sk { display: block; background: var(--dh-skel); border-radius: 2px; animation: dhSkIn 1ms 300ms both; }
+@keyframes dhSkIn { from { opacity: 0; } to { opacity: 1; } }
+.dh-sk.t { height: 12px; width: 64px; margin: 2px 0; }
+.dh-sk.v { height: 28px; width: 96px; margin-top: 8px; }
+.dh-sk.d { height: 11px; width: 56px; margin-top: 10px; }
+.dh-sk.line { height: 13px; margin: 6px 0; }
+.dh-sk.box { height: 100%; width: 100%; background: transparent; position: relative; }
+.dh-sk.box::before {
+  content: ""; position: absolute; inset: 8px 0 24px 0;
+  background: repeating-linear-gradient(to bottom, var(--dh-rule) 0 1px, transparent 1px 25%);
+}
+.dh-sk.row { height: 40px; margin: 0; border-bottom: 1px solid var(--dh-rule); background: transparent; position: relative; }
+.dh-sk.row::before { content: ""; position: absolute; left: 0; top: 14px; height: 12px; width: 46%; background: var(--dh-skel); border-radius: 2px; }
+.dh-sk.row::after { content: ""; position: absolute; right: 0; top: 14px; height: 12px; width: 14%; background: var(--dh-skel); border-radius: 2px; }
+[aria-busy="true"] > .dh-body > :not(.dh-sk):not(.dh-err):not([data-shell]),
+[aria-busy="true"] > .dh-body > [data-shell] > * { opacity: .55; transition: opacity 200ms var(--dh-ease-out) 300ms; }
+
+.dh-err {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+  padding: 16px 0; border-top: 1px solid var(--dh-rule); border-bottom: 1px solid var(--dh-rule);
+  font-size: 13px; color: var(--dh-ink-2);
+}
+.dh-err .ic { color: var(--dh-bad); display: inline-flex; }
+.dh-err .msg { flex: 1; min-width: 180px; }
+.dh-err .msg b { display: block; color: var(--dh-ink); font-weight: 500; font-size: 14px; }
+.dh-empty { padding: 16px 0; font-size: 14px; line-height: 1.55; color: var(--dh-ink-2); max-width: 60ch; }
+.dh-empty a { color: var(--dh-ink); text-decoration: underline; text-underline-offset: 3px; }
+
+/* First hub visit of a session: stat rows light up in place (opacity + 8px,
+   300ms, 40ms stagger, ≤300ms total). Never again in that session. */
+@media (prefers-reduced-motion: no-preference) {
+  .dh.rv [data-rv] { animation: dhRise 300ms var(--dh-ease-out) both; animation-delay: calc(min(var(--i, 0), 6) * 40ms); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dh.rv [data-rv] { animation: dhFade 200ms linear both; }
+}
+@keyframes dhRise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes dhFade { from { opacity: 0; } to { opacity: 1; } }
+
+/* ------------------------------------------------------------- 足迹 map */
+
+.fp-counters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 24px; }
+.fp-counter { padding: 0 20px; border-left: 1px solid var(--dh-rule); min-width: 0; }
+.fp-counter:first-child { padding-left: 0; border-left: 0; }
+.fp-counter .l { font-size: 13px; color: var(--dh-ink-2); }
+.fp-counter .v { margin-top: 6px; font-size: 32px; line-height: 1.05; font-weight: 500; letter-spacing: -0.022em; display: flex; align-items: baseline; white-space: nowrap; }
+.fp-counter .v .u { font-size: 15px; font-weight: 400; color: var(--dh-ink-2); margin-left: 4px; letter-spacing: 0; }
+.fp-counter .s { margin-top: 6px; font-size: 12px; color: var(--dh-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Odometer digits: each digit is a 0–9 strip moved by transform. 720ms,
+   hard deceleration, only when the value really changes. */
+.odo { display: inline-flex; align-items: baseline; font-variant-numeric: tabular-nums; }
+.odo .od { display: inline-block; position: relative; height: 1.05em; overflow: hidden; line-height: 1.05; }
+.odo .od > span { display: flex; flex-direction: column; transition: transform 720ms cubic-bezier(0.16, 1, 0.3, 1); }
+.odo .od > span > i { font-style: normal; height: 1.05em; line-height: 1.05; display: block; text-align: center; }
+.odo .os { display: inline-block; }
+.odo.still .od > span { transition: none; }
+@media (prefers-reduced-motion: reduce) { .odo .od > span { transition: transform 200ms linear; } }
+
+.fp-wrap { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 0 32px; margin-top: 24px; align-items: start; }
+.fp-stage { min-width: 0; }
+.fp-map {
+  position: relative; height: clamp(420px, 64vh, 680px); border-radius: 6px; overflow: hidden;
+  background: var(--dh-raise); isolation: isolate;
+}
+.fp-map .fp-gl { position: absolute; inset: 0; opacity: 0; transition: opacity 400ms var(--dh-ease-out); }
+.fp-map.ready .fp-gl { opacity: 1; }
+.fp-map .maplibregl-canvas { filter: saturate(0.12) brightness(0.92); }
+.fp-map canvas.fp-ink { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 2; }
+.fp-topo { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 0; color: var(--dh-rule-2); }
+.fp-topo path { fill: none; stroke: currentColor; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.fp-topo path.major { stroke-width: 1.2; opacity: 1; }
+.fp-topo path.minor { opacity: .55; }
+.fp-map.ready .fp-topo { opacity: 0; transition: opacity 400ms var(--dh-ease-out); }
+.fp-msg {
+  position: absolute; left: 24px; bottom: 24px; right: 24px; z-index: 3; max-width: 44ch;
+  font-size: 14px; line-height: 1.55; color: var(--dh-ink-2);
+}
+.fp-msg b { display: block; color: var(--dh-ink); font-weight: 500; font-size: 16px; margin-bottom: 4px; }
+.fp-tip {
+  position: absolute; z-index: 4; pointer-events: none; padding: 6px 8px; border-radius: 4px;
+  background: var(--bg-elevated); border: 1px solid var(--dh-rule-2); font-size: 12px; color: var(--dh-ink-2);
+  white-space: nowrap; opacity: 0; transition: opacity 120ms var(--dh-ease-out);
+}
+.fp-tip.on { opacity: 1; }
+.fp-tip b { display: block; color: var(--dh-ink); font-weight: 500; }
+.fp-here { width: 14px; height: 14px; border-radius: 50%; background: var(--accent, var(--tesla-blue)); box-shadow: 0 0 0 3px var(--dh-ground); }
+.fp-here::after {
+  content: attr(data-label); position: absolute; left: 20px; top: 50%; transform: translateY(-50%);
+  font-size: 11px; color: var(--dh-ink); white-space: nowrap; letter-spacing: .02em;
+  padding: 1px 5px; border-radius: 2px; background: var(--dh-ground);
+}
+.fp-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 12px; color: var(--dh-ink-3); }
+.fp-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.fp-legend .sw-cell { width: 9px; height: 9px; background: var(--dh-data); opacity: .7; }
+.fp-legend .sw-route { width: 14px; height: 0; border-top: 1.5px solid var(--dh-data); opacity: .7; }
+.fp-legend .sw-place { width: 7px; height: 7px; border-radius: 50%; background: var(--dh-ink); }
+.fp-legend .sw-here { width: 9px; height: 9px; border-radius: 50%; background: var(--accent, var(--tesla-blue)); }
+.fp-legend .sw-region { width: 11px; height: 9px; background: var(--dh-data-soft); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dh-data) 60%, transparent); }
+
+/* 「首次出行 → 今天」 scrubber. Never autoplays; the user drives the reveal. */
+.fp-scrub { margin-top: 16px; }
+.fp-scrub-top { display: flex; align-items: baseline; gap: 12px; font-size: 13px; color: var(--dh-ink-2); }
+.fp-scrub-top .when { color: var(--dh-ink); font-weight: 500; font-variant-numeric: tabular-nums; }
+.fp-scrub-top .dh-btn { margin-left: auto; }
+.fp-track { position: relative; margin-top: 10px; height: 44px; touch-action: none; }
+.fp-track input[type="range"] {
+  position: absolute; inset: 0; width: 100%; height: 44px; margin: 0; opacity: 0; cursor: pointer; z-index: 2;
+}
+.fp-rail { position: absolute; left: 0; right: 0; top: 21px; height: 2px; background: var(--dh-rule-2); border-radius: 1px; }
+.fp-fill { position: absolute; left: 0; top: 21px; height: 2px; background: var(--dh-ink); border-radius: 1px; transform-origin: left center; width: 100%; }
+.fp-knob { position: absolute; top: 14px; width: 16px; height: 16px; margin-left: -8px; border-radius: 50%; background: var(--dh-ink); box-shadow: 0 0 0 3px var(--dh-ground); }
+.fp-track input:focus-visible ~ .fp-knob { outline: 2px solid var(--accent, var(--tesla-blue)); outline-offset: 3px; }
+.fp-ticks { position: absolute; left: 0; right: 0; top: 0; height: 44px; pointer-events: none; }
+.fp-ticks i { position: absolute; top: 15px; width: 1px; height: 6px; background: var(--dh-ink-3); }
+.fp-ticks i.first { top: 13px; height: 8px; background: var(--dh-data); width: 2px; margin-left: -1px; }
+.fp-scale { display: flex; justify-content: space-between; font-size: 11px; color: var(--dh-ink-3); font-variant-numeric: tabular-nums; }
+
+.fp-aside { min-width: 0; }
+.fp-aside .dh-seg { margin-bottom: 8px; }
+.fp-list { max-height: clamp(360px, 60vh, 640px); overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
+.fp-list .dh-rank li.later { opacity: .35; }
+.fp-firsts { list-style: none; margin: 0; padding: 0; }
+.fp-firsts li { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 2px 12px; padding: 9px 0; border-bottom: 1px solid var(--dh-rule); }
+.fp-firsts li:last-child { border-bottom: 0; }
+.fp-firsts .d { font-size: 12px; color: var(--dh-ink-3); font-variant-numeric: tabular-nums; padding-top: 2px; }
+.fp-firsts .t { font-size: 14px; color: var(--dh-ink); min-width: 0; }
+.fp-firsts .t small { display: block; font-size: 12px; color: var(--dh-ink-3); }
+.fp-firsts li.later { opacity: .35; }
+.fp-firsts li.region .t { font-weight: 500; }
+
+/* ----------------------------------------------------------- trips (行车) */
+
+.tr-wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 400px); gap: 0 32px; align-items: start; }
+.tr-map { position: relative; height: clamp(320px, 46vh, 460px); border-radius: 6px; overflow: hidden; background: var(--dh-raise); }
+.tr-map .maplibregl-canvas { filter: saturate(0.35); }
+.tr-map .tr-gl { position: absolute; inset: 0; }
+.tr-map .tr-idle { position: absolute; inset: 0; display: grid; place-items: center; font-size: 13px; color: var(--dh-ink-3); z-index: 3; pointer-events: none; }
+.tr-detail { margin-top: 20px; }
+.tr-detail h3 { font-size: 16px; font-weight: 500; margin: 0; line-height: 1.35; }
+.tr-detail .when { font-size: 13px; color: var(--dh-ink-3); margin-top: 2px; }
+.tr-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 16px; font-size: 13px; color: var(--dh-ink-2); }
+.tr-tags .dh-btn { margin-left: auto; }
+.tr-tags [role="status"] { font-size: 12px; color: var(--dh-ink-3); }
+.tr-clips { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-top: 12px; }
+.tr-clip { display: block; text-decoration: none; min-width: 0; }
+.tr-clip img, .tr-clip .ph { width: 100%; aspect-ratio: 16 / 9; object-fit: cover; display: block; border-radius: 4px; background: var(--dh-raise); }
+.tr-clip .ph { display: grid; place-items: center; color: var(--dh-ink-3); }
+.tr-clip .c { font-size: 12px; color: var(--dh-ink-2); margin-top: 6px; }
+.tr-list { max-height: clamp(420px, 70vh, 760px); overflow-y: auto; overscroll-behavior: contain; }
+.tr-list .dh-table thead th { position: sticky; top: 0; background: var(--dh-ground); z-index: 1; }
+.tr-dot { display: flex; align-items: center; gap: 8px; pointer-events: none; }
+.tr-dot i { width: 10px; height: 10px; border-radius: 50%; background: var(--dh-ground); border: 2px solid var(--dh-data); flex: none; transform: translateX(-5px); }
+.tr-dot span { font-size: 12px; padding: 3px 7px; border-radius: 4px; white-space: nowrap; background: var(--bg-elevated); color: var(--dh-ink); border: 1px solid var(--dh-rule-2); }
+.tr-dot span:empty { display: none; }
+
+/* --------------------------------------------------------------- 时间线 */
+
+.tl-evts { list-style: none; margin: 0; padding: 0; }
+.tl-day {
+  position: sticky; top: calc(var(--dh-top) + var(--dh-nav-h)); z-index: 2;
+  padding: 16px 0 6px; font-size: 12px; color: var(--dh-ink-3); background: var(--dh-ground);
+  border-bottom: 1px solid var(--dh-rule);
+}
+.tl-day.flash { color: var(--dh-ink); }
+.tl-row a, .tl-row > div {
+  display: grid; grid-template-columns: 56px 20px minmax(0, 1fr) auto; gap: 0 12px; align-items: baseline;
+  padding: 10px 0; border-bottom: 1px solid var(--dh-rule); text-decoration: none; color: inherit;
+}
+.tl-row .tm { font-size: 12px; color: var(--dh-ink-3); font-variant-numeric: tabular-nums; }
+.tl-row .ic { color: var(--dh-ink-3); display: inline-flex; align-self: center; }
+.tl-row.k-drive .ic { color: var(--dh-data); }
+.tl-row.k-charge .ic { color: var(--dh-good); }
+.tl-row.k-gap .ic { color: var(--dh-bad); }
+.tl-row .bd { min-width: 0; }
+.tl-row .tt { font-size: 14px; color: var(--dh-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-row .sb { font-size: 12px; color: var(--dh-ink-3); margin-top: 1px; }
+.tl-row .go { color: var(--dh-ink-3); display: inline-flex; align-self: center; }
+.tl-row.k-idle .tt, .tl-row.k-update .tt { color: var(--dh-ink-2); }
+@media (hover: hover) and (pointer: fine) { .tl-row a:hover .tt { text-decoration: underline; text-underline-offset: 3px; } }
+
+/* ------------------------------------------------------------------ phone */
+
+@media (max-width: 1100px) {
+  .dh-grid > .c4 { grid-column: span 6; }
+  .dh-grid > .c8 { grid-column: span 12; }
+  .fp-wrap { grid-template-columns: minmax(0, 1fr) 280px; }
+}
+
+@media (max-width: 900px) {
+  .dh-grid { gap: 0; }
+  .dh-grid > .c6, .dh-grid > .c4, .dh-grid > .c5, .dh-grid > .c7 { grid-column: span 12; }
+  .dh-grid > .dh-sub + .dh-sub { margin-top: 32px; }
+  .tr-wrap, .fp-wrap { grid-template-columns: minmax(0, 1fr); }
+  .fp-aside { margin-top: 32px; }
+  .fp-list { max-height: none; overflow: visible; }
+  .tr-list { max-height: none; overflow: visible; margin-top: 32px; }
+}
+
+@media (max-width: 720px) {
+  .dh { --dh-nav-h: 44px; padding-bottom: 72px; }
+  .dh-nav { margin: 0 calc(-1 * var(--page-pad, 16px)); padding: 0 var(--page-pad, 16px); }
+  .dh-chs { margin-left: -10px; }
+  .dh-per { display: none; }
+  .dh-per-btn { display: inline-flex; }
+  .dh-ch { padding: 0 10px; font-size: 15px; }
+  .dh-head h1 { font-size: 22px; }
+  .dh-lede { font-size: 16px; }
+  .dh-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dh-kpi { padding: 14px 0 14px 16px; border-left: 1px solid var(--dh-rule); border-top: 1px solid var(--dh-rule); }
+  .dh-kpi:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .dh-kpi:nth-child(-n+2) { border-top: 0; padding-top: 0; }
+  .dh-kpi-v { font-size: 28px; }
+  .dh-kpis.small .dh-kpi-v { font-size: 22px; }
+  .dh-sec { margin-top: 40px; }
+  .dh-chart { --h: 180px; }
+  .dh-chart.tall { --h: 200px; }
+  .dh-answer .big { font-size: 40px; }
+  .fp-counters { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 16px; }
+  .fp-counter:nth-child(odd) { padding-left: 0; border-left: 0; }
+  .fp-counter:nth-child(n+3) { padding-top: 16px; border-top: 1px solid var(--dh-rule); }
+  .fp-counter .v { font-size: 28px; }
+  .fp-map { height: 56vh; min-height: 340px; border-radius: 4px; }
+  .tr-map { height: 300px; }
+  .dh-figs { gap: 14px 24px; }
+  .dh-fig-v { font-size: 18px; }
+  .dh-table { font-size: 13px; }
+  .dh-hide-sm { display: none; }
+  .tl-row a, .tl-row > div { grid-template-columns: 48px 18px minmax(0, 1fr) auto; gap: 0 10px; }
+  .dh-flow .row { grid-template-columns: 56px minmax(0, 1fr); }
+  .dh-flow .v { grid-column: 2; text-align: left; }
+}
+
+/* Software versions along time: one hue, alternating lightness, the version
+   running now outlined. */
+.bt-ver { position: relative; height: 12px; background: var(--dh-skel); border-radius: 2px; overflow: hidden; }
+.bt-ver i { position: absolute; top: 0; bottom: 0; background: var(--dh-data); }
+.bt-ver i.alt { background: var(--dh-data-2); }
+.bt-ver i.cur { box-shadow: inset 0 0 0 1.5px var(--dh-ink); }
+.cg-clock { margin-top: 4px; }
+
+/* The footprint's lit tone: the data hue pulled toward the ink, so it reads
+   as light on the dark map and as ink on the light one. */
+.dh { --fp-lit: color-mix(in srgb, var(--dh-data) 70%, var(--dh-ink)); }
+.dh-linkbtn {
+  all: unset; cursor: pointer; color: var(--dh-ink); font-size: 14px;
+  text-decoration: underline; text-decoration-color: var(--dh-rule-2); text-underline-offset: 3px;
+}
+.dh-linkbtn:focus-visible { outline: 2px solid var(--accent, var(--tesla-blue)); outline-offset: 2px; border-radius: 2px; }
+@media (hover: hover) and (pointer: fine) { .dh-linkbtn:hover { text-decoration-color: currentColor; } }
+.fp-list .dh-rank li.later, .fp-firsts li.later { opacity: .35; transition: opacity 120ms linear; }
+.tl-row .tt, .tl-row .sb { display: block; }
+.tl-row .sb:empty { display: none; }
+/* Jumps (deep links, "longest drives") land below the sticky index. */
+.dh-sec, .dh-sub, .tl-day { scroll-margin-top: calc(var(--dh-top) + var(--dh-nav-h) + 16px); }
+.tr-list .dh-table th:first-child, .tr-list .dh-table td:first-child { padding-left: 10px; }
+
+/* DH.shell's marker wraps a block's built content without adding a box. */
+.dh [data-shell] { display: contents; }
+.tr-wrap.empty { grid-template-columns: minmax(0, 1fr); }
+.tr-wrap.empty .tr-left { display: none; }
+.dh-kpi-d a, .dh-fig-s a, .dh-tfoot a {
+  text-decoration: underline; text-decoration-color: var(--dh-rule-2); text-underline-offset: 3px;
+}
+@media (hover: hover) and (pointer: fine) {
+  .dh-kpi-d a:hover, .dh-fig-s a:hover, .dh-tfoot a:hover { color: var(--dh-ink); text-decoration-color: currentColor; }
+}

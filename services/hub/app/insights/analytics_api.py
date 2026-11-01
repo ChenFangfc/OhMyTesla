@@ -144,6 +144,16 @@ async def locations(car_id: int | None = None, days: int | None = None,
                              clamp(limit, 1, 500, 20))
 
 
+@router.get("/footprint")
+@guard
+async def footprint(car_id: int | None = None, days: int | None = None,
+                    from_: str | None = Query(None, alias="from"), to: str | None = None,
+                    cell: float = 0.01):
+    """一生足迹：开过的 ~1 km 格子（带首次到达时间）+ 城市/地区/国家与「第一次」时间线。"""
+    cell = min(max(float(cell), 0.005), 0.5)
+    return await A.footprint(await _car(car_id), parse_period(days, from_, to), cell)
+
+
 @router.get("/updates")
 @guard
 async def updates(car_id: int | None = None):

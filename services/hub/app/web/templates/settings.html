@@ -2,7 +2,7 @@
 {% block title %}{{ t('settings.page_title') }}{% endblock %}
 
 {% block content %}
-<div class="page" style="padding-bottom:96px">
+<div class="page">
   {# 内容收窄到 780，但左边缘和导航对齐——居中会让整页看起来歪掉 #}
   <div style="max-width:780px">
 
@@ -220,7 +220,7 @@
       <div class="eyebrow" data-i18n="settings.token.heading">Tesla API token</div>
       <div id="token-info" class="body-sm mt"></div>
       <div class="row mt">
-        <input type="text" id="token-input" style="flex:1" data-i18n-ph="settings.token.placeholder">
+        <input type="text" id="token-input" style="flex:1;min-width:0" spellcheck="false" autocomplete="off" data-i18n-ph="settings.token.placeholder">
         <button id="token-save" class="btn" data-i18n="common.save">Save</button>
       </div>
 
@@ -235,9 +235,9 @@
       <div class="eyebrow mt3" data-i18n="settings.about.heading">About</div>
       <p class="body-sm mt" style="max-width:64ch;line-height:1.7"><span data-i18n="settings.about.line1"></span><br><span data-i18n="settings.about.line2"></span><br><br><span data-i18n="settings.credits">Data logging is powered by</span>
         <a href="https://github.com/teslamate-org/teslamate" target="_blank" rel="noopener"
-           style="color:var(--text-primary);text-decoration:underline">TeslaMate</a><span data-i18n="settings.credits2">and charts by</span>
+           class="link">TeslaMate</a><span data-i18n="settings.credits2">and charts by</span>
         <a href="https://grafana.com" target="_blank" rel="noopener"
-           style="color:var(--text-primary);text-decoration:underline">Grafana</a>.
+           class="link">Grafana</a>.
       </p>
       <div class="row mt">
         <a id="lnk-grafana" class="btn ghost" href="#" target="_blank" rel="noopener" data-i18n="settings.open_grafana">Open Grafana ↗</a>
@@ -270,8 +270,8 @@ async function loadGeofences() {
   try {
     const rows = await apiGet("/api/setup/geofences");
     div.innerHTML = rows.length ? rows.map(g => `
-      <div class="rule-row"><span class="name"><b>${esc(g.name)}</b><span class="muted small">${g.latitude.toFixed(5)}, ${g.longitude.toFixed(5)} · ${g.radius} m</span></span>
-        <button data-del="${g.id}">${t("settings.places_remove")}</button>
+      <div class="rule-row"><span class="name"><b>${esc(g.name)}</b><span class="muted small">${fmt.fixed(g.latitude, 5)}, ${fmt.fixed(g.longitude, 5)} · ${fmt.int(g.radius)} m</span></span>
+        <button type="button" class="btn sm ghost" data-del="${g.id}">${t("settings.places_remove")}</button>
       </div>`).join("") : `<div class="muted small">${t("settings.places_none")}</div>`;
     div.querySelectorAll("[data-del]").forEach(b => b.addEventListener("click", async () => {
       if (!confirm(t("settings.places_confirm"))) return;
@@ -306,8 +306,9 @@ document.getElementById("gf-here").addEventListener("click", async () => {
     const cars = await apiGet("/api/live/state");
     const c = Object.values(cars).find(v => v.latitude && v.longitude);
     if (!c) { msg.textContent = t("settings.places_no_loc"); return; }
-    document.getElementById("gf-lat").value = (+c.latitude).toFixed(5);
-    document.getElementById("gf-lon").value = (+c.longitude).toFixed(5);
+    // an <input type=number> wants a plain number, not a localised string
+    document.getElementById("gf-lat").value = String(Math.round(+c.latitude * 1e5) / 1e5);
+    document.getElementById("gf-lon").value = String(Math.round(+c.longitude * 1e5) / 1e5);
     msg.textContent = t("settings.places_filled");
   } catch (e) { msg.textContent = e.message; }
 });
@@ -317,7 +318,7 @@ async function loadCarSettings() {
   try {
     const cars = await apiGet("/api/setup/cars");
     div.innerHTML = cars.length ? cars.map(c => `
-      <div style="border-bottom:1px solid var(--grid);padding:10px 0" data-car="${c.id}">
+      <div style="border-bottom:1px solid var(--line);padding:12px 0" data-car="${c.id}">
         <div class="row">
           <input type="text" class="c-name" value="${esc(c.name || "")}" placeholder="${t('settings.car_name_ph')}" style="width:170px"><span class="muted small">${esc([Car.label({ vin: c.vin, model: c.model }), Car.variant(c)].filter(Boolean).join(" · "))} · VIN …${esc((c.vin || "").slice(-6))}${Car.info(c.id) && Car.info(c.id).active === false ? " · " + esc(t("cars.archived")) : ""}</span>
         </div>
@@ -330,7 +331,7 @@ async function loadCarSettings() {
         <div class="row mt">
           <label class="check"><input type="checkbox" class="c-free" ${c.free_supercharging ? "checked" : ""}> ${t("settings.car_free_sc")}</label>
           <label class="check"><input type="checkbox" class="c-lfp" ${c.lfp_battery ? "checked" : ""}> ${t("settings.car_lfp")}</label>
-          <button class="c-save primary">${t("common.save")}</button><span class="c-msg small muted"></span>
+          <button type="button" class="btn primary c-save">${t("common.save")}</button><span class="c-msg small muted" role="status"></span>
         </div>
       </div>`).join("") : `<div class="muted small">${t("settings.car_none")}</div>`;
 
@@ -484,9 +485,9 @@ function ruleEditor(id, rule, onChange) {
         <td><input type="time" data-p="${i}" data-f="from" value="${esc(p.from || "")}"></td>
         <td><input type="time" data-p="${i}" data-f="to" value="${esc(p.to || "")}"></td>
         <td class="num"><input type="number" step="0.01" data-p="${i}" data-f="rate" value="${p.rate ?? 0}" style="width:80px"></td>
-        <td><button data-del="${i}"></button></td></tr>`;
+        <td><button type="button" class="btn sm ghost" data-del="${i}" aria-label="${esc(t("common.delete"))}">${icon("x", 14)}</button></td></tr>`;
     });
-    html += `</tbody></table><button data-add="1" class="mt">${t("settings.tariff.period_add")}</button>`;
+    html += `</tbody></table><button type="button" data-add="1" class="btn sm mt">${t("settings.tariff.period_add")}</button>`;
   }
   const el = document.getElementById(id);
   el.innerHTML = html;
@@ -532,8 +533,8 @@ function renderPlan() {
 
   const locs = Object.entries(plan.locations || {});
   document.getElementById("loc-rules").innerHTML = locs.length
-    ? locs.map(([name], i) => `<div class="card mt" style="background:var(--page)">
-        <div class="row"><b>${esc(name)}</b><span class="spacer"></span><button data-rm="${esc(name)}">${t("settings.tariff.loc_remove")}</button></div>
+    ? locs.map(([name], i) => `<div class="card mt" style="background:var(--bg);padding:16px">
+        <div class="row"><b>${esc(name)}</b><span class="spacer"></span><button type="button" class="btn sm ghost" data-rm="${esc(name)}">${t("settings.tariff.loc_remove")}</button></div>
         <div id="loc-rule-${i}" class="mt"></div></div>`).join("")
     : `<div class="muted small">${t("settings.tariff.loc_empty")}</div>`;
   locs.forEach(([name, rule], i) =>
@@ -806,12 +807,12 @@ async function loadMaintenance() {
     const last = i.last_date
       ? t("settings.maint_last", { when: i.last_date })
       : t("settings.maint_never");
-    return `<div class="row" style="gap:12px;align-items:center">
+    return `<div class="row" style="gap:12px;align-items:center;flex-wrap:wrap;padding:8px 0;border-bottom:1px solid var(--line)">
       <span style="min-width:9em">${esc(i18n.state.locale === "zh" ? i.name_zh : i.name_en)}</span>
       <span class="body-sm muted">${esc(every)} · ${esc(last)}</span>
-      ${i.due ? `<span class="pill warning">${esc(t("settings.maint_due"))}</span>` : ""}
+      ${i.due ? `<span class="chip warn">${esc(t("settings.maint_due"))}</span>` : ""}
       <span class="spacer"></span>
-      <button class="btn ghost maint-done" data-id="${esc(i.id)}">${esc(t("settings.maint_done"))}</button>
+      <button type="button" class="btn sm ghost maint-done" data-id="${esc(i.id)}">${esc(t("settings.maint_done"))}</button>
     </div>`;
   }).join("");
 

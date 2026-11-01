@@ -1,24 +1,59 @@
-/* Home: the car, what it's doing, and the handful of things you do most.
+/* 总览 — is the truck all right, right now?
  *
- * The 3D view is driven by the same live stream as everything else; the
- * quick controls send real commands and the car on screen moves only when
- * the car does (state comes back over MQTT / the fast check), so the picture
- * never claims something the truck hasn't done.
+ * The truck and one hero figure answer first. The 3D view mirrors live
+ * state and moves only when the car does (state comes back over the live
+ * stream), so the picture never claims something the truck hasn't done.
+ * Quick controls carry their own state; one "now" slot names the single
+ * most important current thing; the rest sits in one plate.
+ *
+ * Live values keep their last good reading: a cleared or failed value
+ * never flickers to a dash.
  */
 import { VehicleView, webglAvailable } from "/static/js/vehicle3d.js";
 
 const $ = (id) => document.getElementById(id);
-let view = null;
-let model = null;          // /api/vehicle/model response
-let overview = null;       // /api/overview response
-let fullState = null;      // /api/vehicle/state (only when awake)
-let labelsOn = false;
-
 const truthy = (v) => v === "true" || v === true;
-const num = (v) => (v == null || v === "" ? null : Number(v));
+const num = (v) => (v == null || v === "" || v === "nil" || !isFinite(Number(v)) ? null : Number(v));
+const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+let carId = null;
+let view = null;            // VehicleView
+let model = null;           // /api/vehicle/model
+let overview = null;        // /api/overview
+let caps = null;            // command capabilities
+let tyresOn = false;
+const keep = {};            // car id -> last good live values
+
+/* ------------------------------------------------------------------ data */
+
+function car() {
+  const c = Live.car(carId);
+  const k = keep[carId] || (keep[carId] = {});
+  for (const [key, v] of Object.entries(c)) if (v !== "" && v != null && v !== "nil") k[key] = v;
+  return k;
+}
+const ov = () => (overview && overview.car_id === carId ? overview : {});
+const isCT = () => !!(model && model.identity && model.identity.key === "cybertruck");
+const archived = () => { const i = Car.info(carId); return !!(i && i.active === false); };
+const awake = (c) => ["online", "driving", "charging", "updating"].includes(c.state);
+const incident = () => (window.ShellSentry && window.ShellSentry.active || {})[String(carId)] || null;
+
+function sinceSec(c) {
+  const s = c.since || ov().since;
+  const ms = s ? Date.parse(s) : NaN;
+  return isNaN(ms) ? null : Math.max(0, (Date.now() - ms) / 1000);
+}
+function place(c) { return c.geofence || ov().place || ""; }
+function tempStr(v) { return v == null ? "–" : `${fmt.num(U.temp(v, 0), 0)}°`; }
+function clock(ms) {
+  if (ms == null) return "";
+  const d = new Date(ms), today = new Date();
+  return d.toDateString() === today.toDateString() ? fmt.time(ms)
+    : d.toLocaleString(localeTag(), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
 
 function liveToView(c) {
-  const sentryOn = truthy(c.sentry_mode);
+  const inc = incident();
   return {
     door_fl: truthy(c.driver_front_door_open), door_rl: truthy(c.driver_rear_door_open),
     door_fr: truthy(c.passenger_front_door_open), door_rr: truthy(c.passenger_rear_door_open),
@@ -26,353 +61,580 @@ function liveToView(c) {
     charge_port: truthy(c.charge_port_door_open),
     charging: c.charging_state === "Charging",
     climate: truthy(c.is_climate_on),
-    sentry: c._incident || (sentryOn ? "armed" : "off"),
-    awake: ["online", "driving", "charging", "updating"].includes(c.state),
+    sentry: inc ? (inc.peak === "panic" ? "panic" : "aware") : truthy(c.sentry_mode) ? "armed" : "off",
+    awake: awake(c),
     speed_mps: c.state === "driving" ? (num(c.speed) || 0) / 3.6 : 0,
   };
 }
 
-/* ---------------------------------------------------------------- hero */
+/* ------------------------------------------------------------- the truck */
 
-async function mountVehicle(carId) {
+function stillFallback(stage) {
+  // A still render if the backend has one, else the line drawing. No WebGL
+  // is not an error state: the page reads the same without it.
+  stage.innerHTML = "";
+  const img = document.createElement("img");
+  img.className = "stage-still"; img.alt = ""; img.decoding = "async";
+  img.onerror = () => { img.remove(); stage.insertAdjacentHTML("beforeend", silhouette()); };
+  if (model && model.render) { img.src = model.render; stage.append(img); }
+  else stage.insertAdjacentHTML("beforeend", silhouette());
+  $("views").hidden = true;
+}
+function silhouette() {
+  return `<svg class="stage-still svg" viewBox="0 0 1260 440" fill="none" aria-hidden="true">
+    <path d="M22 318V168l38-30 488-112 152 4 512 58 8 230h-106l-32-116H946l-32 116H310l-32-116H142l-32 116Z"
+      stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+    <path d="M432 169 404 76l144-33 152 3 102 18 8 105Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+    <circle cx="210" cy="320" r="66" stroke="currentColor" stroke-width="2"/><circle cx="1014" cy="320" r="66" stroke="currentColor" stroke-width="2"/>
+    <path d="M60 386h1140" stroke="currentColor" stroke-opacity=".4"/></svg>`;
+}
+
+async function mountVehicle() {
   const stage = $("stage");
   if (view) { view.dispose(); view = null; }
   stage.innerHTML = "";
+  $("hud").innerHTML = "";
+  hud.els = {};
   try { model = await apiGet(`/api/vehicle/model?car_id=${carId}`); } catch (e) { model = null; }
-  const ident = (model && model.identity) || {};
-  $("h-eyebrow").textContent = [ident.name, ident.variant].filter(Boolean).join(" · ").toUpperCase();
-  const info = Car.info(carId);
-  $("h-name").textContent = (model && model.name) || Car.label(info);
-
   if (model && model.model && webglAvailable()) {
-    const desc = { ...model.model, view: "hero" };
-    if (!desc.rigged) desc.view = "hero";
     view = new VehicleView(stage, {
       interactive: true,
-      onPick: (part) => onPick(part),
-      // wide screens: nudge the truck right so the battery readout has room
-      shiftX: (w) => (w > 900 ? 0.09 : 0),
-      // phones: lift the truck clear of the readout and quick controls
-      shiftY: (w, h) => (w <= 900 ? 0.07 : 0),
+      margin: 0.06,
+      onPick: onPick,
+      onFrame: () => hud.place(),
+      onLost: () => { view = null; stillFallback(stage); paintHud(); },
     });
     try {
-      await view.load(desc);
-      if (ident.paint_hex && !desc.rigged) view.setPaint(ident.paint_hex);
-      view.setState(liveToView(Live.car(carId)));
-      document.querySelectorAll("#views button").forEach((b) => (b.disabled = false));
+      await view.load({ ...model.model, view: "hero" });
+      const ident = model.identity || {};
+      if (ident.paint_hex && !model.model.rigged) view.setPaint(ident.paint_hex);
+      view.setState(liveToView(car()));
+      $("views").hidden = false;
+      window.omtView = view;           // for debugging: omtView.dimensions()
       return;
     } catch (e) {
-      console.error("3D model failed to load", e);
+      console.warn("3D model unavailable, showing a still", e);
+      if (view) view.dispose();
       view = null;
-      stage.innerHTML = "";
     }
   }
-  // 2D fallback: a render if one exists, otherwise just the readouts.
-  if (model && model.render) {
-    const img = document.createElement("img");
-    img.className = "fallback-img"; img.alt = ""; img.src = model.render;
-    img.onerror = () => img.remove();
-    stage.append(img);
-  }
-  document.querySelectorAll("#views button").forEach((b) => (b.disabled = true));
-}
-
-function paintHero() {
-  const carId = Car.current;
-  const c = Live.car(carId);
-  const o = overview && overview.car_id === carId ? overview : null;
-  const soc = num(c.battery_level) ?? (o && o.soc);
-  $("h-soc").innerHTML = soc == null ? "–" : `${Math.round(soc)}<small>%</small>`;
-  const limit = num(c.charge_limit_soc);
-  const bar = document.querySelector(".socbar > i");
-  bar.style.width = `${Math.max(0, Math.min(100, soc || 0))}%`;
-  bar.classList.toggle("charging", c.charging_state === "Charging");
-  const mark = document.querySelector(".socbar > b");
-  mark.style.display = limit ? "" : "none";
-  if (limit) mark.style.left = `${limit}%`;
-
-  const rangeKm = num(c.rated_battery_range_km) ?? num(c.est_battery_range_km) ?? (o && o.range_km);
-  const parts = [];
-  if (rangeKm != null) parts.push(`${U.dist(rangeKm, 0)} ${U.distLabel()}`);
-  if (c.charging_state === "Charging") {
-    const kw = num(c.charger_power);
-    const mins = num(c.time_to_full_charge) != null ? Math.round(num(c.time_to_full_charge) * 60) : null;
-    parts.push(t("home.charging_at", { kw: kw ?? "–" }) + (mins ? " · " + t("home.full_in", { t: fmtMinutes(mins) }) : ""));
-  } else if (limit) {
-    parts.push(t("home.limit", { n: limit }));
-  }
-  $("h-range").textContent = parts.join(" · ");
-
-  // status pills
-  const pills = [];
-  const archived = Car.info(carId) && Car.info(carId).active === false;
-  if (archived) pills.push(["", t("cars.archived")]);
-  else {
-    const st = c.state || (o && o.state);
-    if (st) pills.push([st === "online" || st === "driving" ? "info" : st === "charging" ? "good" : "", stateLabel2(st)]);
-    if (c.locked != null) pills.push([truthy(c.locked) ? "" : "warn", t(truthy(c.locked) ? "home.locked" : "home.unlocked")]);
-    if (truthy(c.sentry_mode)) pills.push([c._incident ? "bad" : "bad", t(c._incident ? "home.sentry_active" : "home.sentry_on")]);
-    if (truthy(c.is_climate_on)) pills.push(["info", t("home.climate_on", { temp: tempStr(c.inside_temp) })]);
-    if (c.geofence) pills.push(["", c.geofence]);
-    const age = num(c._seed_age);
-    if (age && age > 600) pills.push(["", t("home.last_seen", { ago: fmt.ago(age) })]);
-  }
-  $("h-status").innerHTML = pills.map(([cls, txt]) => `<span class="tagpill ${cls}">${esc(txt)}</span>`).join("");
-
-  if (view) view.setState(liveToView(c));
-  paintQuick(c);
-  if (labelsOn) paintLabels();
-}
-
-function tempStr(c) { return c == null || c === "" ? "–" : `${U.temp(Number(c), 0)}${U.tempLabel()}`; }
-function fmtMinutes(m) { return m >= 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${m} min`; }
-
-/* -------------------------------------------------------- quick actions */
-
-function quickSpec(c) {
-  const ct = model && model.identity && model.identity.key === "cybertruck";
-  const locked = truthy(c.locked);
-  const items = [
-    { id: "lock", icon: locked ? "lock" : "unlock", label: t(locked ? "home.q.locked" : "home.q.unlocked"),
-      on: !locked, color: locked ? "" : "", cmd: locked ? "door_unlock" : "door_lock" },
-    { id: "climate", icon: "climate", label: t("home.q.climate"), on: truthy(c.is_climate_on),
-      cmd: truthy(c.is_climate_on) ? "climate_off" : "climate_on" },
-    { id: "frunk", icon: "box", label: t("home.q.frunk"), on: truthy(c.frunk_open), cmd: "frunk" },
-    ct ? { id: "tonneau", icon: "bed", label: t("home.q.tonneau"), on: false, cmd: "tonneau_open", alt: "tonneau_close" }
-       : { id: "trunk", icon: "box", label: t("home.q.trunk"), on: truthy(c.trunk_open), cmd: "trunk" },
-    { id: "port", icon: "plug", label: t("home.q.port"), on: truthy(c.charge_port_door_open), color: "green",
-      cmd: truthy(c.charge_port_door_open) ? "charge_port_close" : "charge_port_open" },
-    { id: "sentry", icon: "shield", label: t("home.q.sentry"), on: truthy(c.sentry_mode), color: "red",
-      cmd: truthy(c.sentry_mode) ? "sentry_off" : "sentry_on" },
-    { id: "flash", icon: "lightbulb", label: t("home.q.flash"), on: false, cmd: "flash_lights" },
-    { id: "more", icon: "sliders", label: t("home.q.more"), href: "/controls" },
-  ];
-  return items;
-}
-
-let capsReady = null;
-function paintQuick(c) {
-  const host = $("quick");
-  const items = quickSpec(c);
-  const locked = capsReady === false;
-  host.innerHTML = items.map((q) => `<button class="qbtn ${q.on ? "on " + (q.color || "") : ""} ${locked && !q.href ? "locked" : ""}"
-      data-id="${q.id}" aria-pressed="${q.on ? "true" : "false"}">
-      <span class="qi">${icon(q.icon, 20)}</span><span>${esc(q.label)}</span></button>`).join("");
-  host.querySelectorAll(".qbtn").forEach((b) => b.addEventListener("click", () => {
-    const q = items.find((x) => x.id === b.dataset.id);
-    if (q.href) { location.href = q.href; return; }
-    if (q.id === "tonneau") return tonneauSheet();
-    b.classList.add("busy");
-    Cmd.run(q.cmd, null, { label: t("cmd." + q.cmd) }).then((r) => {
-      b.classList.remove("busy");
-      if (r && q.id === "flash" && view) view.flash();
-    });
-  }));
-}
-
-async function tonneauSheet() {
-  const choice = await Sheet.open({
-    title: t("home.tonneau.title"),
-    actions: [{ label: t("home.tonneau.close"), value: "tonneau_close" },
-              { label: t("home.tonneau.stop"), value: "tonneau_stop" },
-              { label: t("home.tonneau.open"), kind: "accent", value: "tonneau_open" }],
-  });
-  if (choice) Cmd.run(choice, null, { label: t("cmd." + choice) });
+  stillFallback(stage);
 }
 
 /* Tap the truck: the part under your finger is the control. */
 function onPick(part) {
-  const c = Live.car();
-  const map = {
-    frunk: "frunk", tailgate: "trunk",
-    charge_port: truthy(c.charge_port_door_open) ? "charge_port_close" : "charge_port_open",
-  };
-  if (part === "tonneau") return tonneauSheet();
-  if (map[part]) return Cmd.run(map[part], null, { label: t("cmd." + map[part]) });
-  if (part && part.startsWith("wheel")) return toggleLabels(true);
-  if (part && part.startsWith("door")) toast(t("home.doors_hint"), "ok");
+  if (part === "tonneau") return quick.run("tonneau");
+  if (part === "frunk") return say("hint", t("home.hint.hold_frunk"));
+  if (part === "tailgate") return isCT() ? runPlain("trunk") : quick.run("tonneau");
+  if (part === "charge_port") return quick.run("port");
+  if (part && part.startsWith("wheel")) return setTyres(true);
+  if (part && part.startsWith("door")) say("hint", t("home.doors_hint"));
 }
 
-/* --------------------------------------------------------- tyre labels */
+/* ---------------------------------------------------------- HUD labels
+   Small mono labels pinned to the body: doors, frunk, charge port, tonneau
+   (and, on demand, the four tyres). Text changes with state; position is
+   recomputed on every rendered frame. */
+const hud = {
+  els: {},
+  items() {
+    const c = car();
+    const out = [];
+    const known = (v) => v != null && v !== "";
+    const open = (v) => truthy(v);
+    if (known(c.frunk_open)) out.push(["frunk", t("home.q.frunk"), open(c.frunk_open) ? t("home.st.open") : t("home.st.closed"), open(c.frunk_open) ? "is-open" : ""]);
+    if (isCT()) {
+      const pct = num(c.tonneau_percent_open ?? c.tonneau_open_percent);
+      // TeslaMate doesn't report the tonneau; an unknown label is noise.
+      if (pct != null) out.push(["tonneau", t("home.q.tonneau"), pct > 1 ? t("home.st.pct_open", { n: fmt.int(pct) }) : t("home.st.closed"), pct > 1 ? "is-open" : ""]);
+    } else if (known(c.trunk_open)) {
+      out.push(["tonneau", t("home.q.trunk"), open(c.trunk_open) ? t("home.st.open") : t("home.st.closed"), open(c.trunk_open) ? "is-open" : ""]);
+    }
+    if (c.charging_state === "Charging") out.push(["charge_port", t("home.q.port"), t("home.st.charging"), "is-live"]);
+    else if (known(c.charge_port_door_open)) out.push(["charge_port", t("home.q.port"), open(c.charge_port_door_open) ? t("home.st.open") : t("home.st.closed"), open(c.charge_port_door_open) ? "is-open" : ""]);
+    const doors = ["driver_front_door_open", "driver_rear_door_open", "passenger_front_door_open", "passenger_rear_door_open"];
+    if (doors.some((k) => known(c[k])) || known(c.doors_open)) {
+      const n = doors.filter((k) => open(c[k])).length;
+      out.push(["doors", t("home.hud.doors"), n ? t("home.st.n_open", { n }) : t("home.st.closed"), n ? "is-open" : ""]);
+    }
+    if (tyresOn) {
+      for (const k of ["fl", "fr", "rl", "rr"]) {
+        const bar = num(c[`tpms_pressure_${k}`]);
+        if (bar == null) continue;
+        out.push([`wheel_${k}`, t("tire." + k), `${fmt.fixed(U.press(bar), U.pressDigits())} ${U.pressLabel()}`, truthy(c[`tpms_soft_warning_${k}`]) ? "is-open" : ""]);
+      }
+    }
+    return out;
+  },
+  paint() {
+    const layer = $("hud");
+    if (!view) { layer.innerHTML = ""; this.els = {}; return; }
+    // On a small stage only what deserves attention is pinned to the body
+    // (open, charging, or the tyres on request); the quick controls below
+    // already say "closed" for everything else.
+    const small = $("ov-stage").clientWidth < 560;
+    const want = this.items().filter((w) => !small || w[3] || tyresOn);
+    const keys = new Set(want.map((w) => w[0]));
+    for (const [k, el] of Object.entries(this.els)) if (!keys.has(k)) { el.remove(); delete this.els[k]; }
+    for (const [key, name, value, cls] of want) {
+      let el = this.els[key];
+      if (!el) {
+        el = document.createElement("span");
+        el.innerHTML = `<i class="hl-dot"></i><i class="hl-ln"></i><span class="hl-tx"><b></b><span></span></span>`;
+        layer.append(el);
+        this.els[key] = el;
+      }
+      el.className = "hl " + cls;
+      el.querySelector("b").textContent = name;
+      el.querySelector(".hl-tx > span").textContent = value;
+      el._w = 0;
+    }
+    this.place();
+  },
+  place() {
+    if (!view) return;
+    const W = $("ov-stage").clientWidth;
+    for (const [key, el] of Object.entries(this.els)) {
+      const p = view.anchor(key);
+      if (!p || p.behind) { el.classList.add("is-hidden"); continue; }
+      const visible = p.facing > 0.25 || key === "frunk" || key === "tonneau";
+      el.classList.toggle("is-hidden", !visible);
+      if (!el._w) { el._w = el.offsetWidth; el._h = el.offsetHeight; }
+      // Text points away from the middle of the frame, so it sits off the
+      // body — and never past the edge of the stage.
+      const roomRight = p.x + el._w < W - 4, roomLeft = p.x - el._w > 4;
+      const flip = (p.x < W / 2 - 40 && roomLeft) || (!roomRight && roomLeft);
+      el.classList.toggle("flip", flip);
+      const x = flip ? p.x - el._w + 2.5 : p.x - 2.5;
+      el.style.transform = `translate(${Math.round(x)}px, ${Math.round(p.y - el._h / 2)}px)`;
+    }
+  },
+};
+const paintHud = () => hud.paint();
 
-function toggleLabels(on) {
-  labelsOn = on ?? !labelsOn;
-  $("labels").innerHTML = "";
-  if (labelsOn && view) { view.view("top"); setTimeout(paintLabels, 950); }
+function setTyres(on) {
+  tyresOn = on;
+  if (view) view.view(on ? "top" : "hero");
+  paintHud();
+  paintPlate();
 }
 
-function paintLabels() {
-  if (!view) return;
-  const c = Live.car();
-  const host = $("labels");
-  const corners = { wheel_fl: "fl", wheel_fr: "fr", wheel_rl: "rl", wheel_rr: "rr" };
-  host.innerHTML = Object.entries(corners).map(([node, k]) => {
-    const p = view.screenPoint(node, [0, 0.55, 0]);
-    const bar = num(c[`tpms_pressure_${k}`]) ?? (fullState && fullState.tires ? fullState.tires[k] : null);
-    if (!p || bar == null) return "";
-    const warn = truthy(c[`tpms_soft_warning_${k}`]);
-    return `<span class="v3d-label ${warn ? "warn" : ""}" style="left:${p.x}px;top:${p.y}px">${U.press(bar)} ${U.pressLabel()}</span>`;
-  }).join("");
+async function openViews(e) {
+  const v = await Menu.open(e.currentTarget, [
+    { label: t("home.view.hero"), value: "hero" },
+    { label: t("home.view.side"), value: "side" },
+    { label: t("home.view.rear"), value: "rear" },
+    { label: t("home.view.top"), value: "top" },
+    { sep: true },
+    { label: t("home.view.tires"), value: "tires", checked: tyresOn },
+  ], { title: t("home.views") });
+  if (v == null) return;
+  if (v === "tires") return setTyres(!tyresOn);
+  tyresOn = false;
+  paintHud(); paintPlate();
+  if (view) view.view(v);
 }
 
-/* --------------------------------------------------------------- cards */
+/* ------------------------------------------------------------- the head */
 
-async function paintCards() {
-  const carId = Car.current;
-  const c = Live.car(carId);
-  const o = overview && overview.car_id === carId ? overview : {};
-  const cards = [];
-
-  // charging
-  const charging = c.charging_state === "Charging";
-  const chg = o.charging || {};
-  cards.push(`<a class="tile2" href="/energy">
-    <div class="t-head">${icon("bolt", 16)}<span>${esc(t("home.card.charging"))}</span><span class="go">${icon("chevron", 16)}</span></div>
-    <div class="t-big">${charging ? `${esc(c.charger_power || "–")}<small>kW</small>` : chg.added_kwh != null ? `${fmt.num(chg.added_kwh, 1)}<small>kWh</small>` : "–"}</div>
-    <div class="t-sub">${esc(charging ? t("home.card.charging_now", { v: c.charger_voltage || "–", a: c.charger_actual_current || "–" })
-      : chg.ended_at ? t("home.card.last_charge", { ago: fmt.ago(Date.now() / 1000 - chg.ended_at), soc: chg.end_soc ?? "–" }) : t("home.card.no_charge"))}</div></a>`);
-
-  // climate
-  cards.push(`<a class="tile2" href="/controls#climate">
-    <div class="t-head">${icon("thermo", 16)}<span>${esc(t("home.card.climate"))}</span><span class="go">${icon("chevron", 16)}</span></div>
-    <div class="t-big">${esc(tempStr(c.inside_temp ?? o.inside_temp))}<small>${esc(t("home.card.inside"))}</small></div>
-    <div class="t-sub">${esc(t("home.card.outside", { temp: tempStr(c.outside_temp ?? o.outside_temp) }))} · ${esc(truthy(c.is_climate_on) ? t("home.card.climate_running") : t("home.card.climate_off"))}</div></a>`);
-
-  // location (map)
-  cards.push(`<a class="tile2" href="/trips" id="loc-card" style="min-height:200px">
-    <div class="minimap" id="minimap"></div>
-    <div class="over"><div class="t-head" style="color:var(--text-primary)">${icon("pin", 16)}<span id="loc-name">${esc(c.geofence || o.place || t("home.card.location"))}</span></div>
-    <div class="t-sub" id="loc-sub"></div></div></a>`);
-
-  // security
-  let sentry = null;
-  try { sentry = await apiGet(`/api/alerts/sentry/sessions?limit=20&car_id=${carId}`); } catch (e) { /* optional */ }
-  const today = (Array.isArray(sentry) ? sentry : []).filter((s) => Date.now() / 1000 - s.started < 86400);
-  const alarm = today.some((s) => s.peak_state === "panic");
-  cards.push(`<a class="tile2 ${alarm ? "alert" : ""}" href="/security">
-    <div class="t-head">${icon("shield", 16)}<span>${esc(t("home.card.security"))}</span><span class="go">${icon("chevron", 16)}</span></div>
-    <div class="t-big">${today.length}<small>${esc(t("home.card.events_24h"))}</small></div>
-    <div class="t-sub">${esc(truthy(c.sentry_mode) ? t("home.sentry_on") : t("home.card.sentry_off"))}</div></a>`);
-
-  // tyres
-  const ty = ["fl", "fr", "rl", "rr"].map((k) => num(c[`tpms_pressure_${k}`]));
-  if (ty.some((v) => v != null)) {
-    const cell = (k, v, r) => `<div class="ty ${r ? "r" : ""} ${truthy(c[`tpms_soft_warning_${k}`]) ? "warn" : ""}">${v == null ? "–" : U.press(v)}<small>${U.pressLabel()}</small></div>`;
-    cards.push(`<button class="tile2" id="tyre-card">
-      <div class="t-head">${icon("tire", 16)}<span>${esc(t("home.card.tyres"))}</span></div>
-      <div class="tyres">${cell("fl", ty[0])}<div class="car"></div>${cell("fr", ty[1], true)}${cell("rl", ty[2])}${cell("rr", ty[3], true)}</div></button>`);
-  }
-
-  // software & health
-  const health = o.health || {};
-  cards.push(`<a class="tile2" href="/settings#vehicles">
-    <div class="t-head">${icon("download", 16)}<span>${esc(t("home.card.software"))}</span><span class="go">${icon("chevron", 16)}</span></div>
-    <div class="t-big" style="font-size:22px">${esc(c.version || o.version || "–")}</div>
-    <div class="t-sub">${esc(truthy(c.update_available) ? t("home.card.update", { v: c.update_version || "" })
-      : health.ok === false ? t("home.card.issues", { n: (health.issues || []).length }) : t("home.card.up_to_date"))}</div></a>`);
-
-  const host = $("cards");
-  const mapCard = $("loc-card");
-  // Keep the live map instance across refreshes: re-creating a WebGL map on
-  // every update would flicker and leak contexts.
-  const html = cards.join("");
-  if (mapCard && mini) {
-    const tmp = document.createElement("div");
-    tmp.innerHTML = html;
-    tmp.querySelector("#loc-card").replaceWith(mapCard);
-    host.replaceChildren(...tmp.childNodes);
-    paintLocation(c, o);
+function paintHead() {
+  const c = car(), o = ov();
+  const info = Car.info(carId);
+  $("ov-name").textContent = (model && model.name) || (info ? Car.label(info) : "") || " ";
+  const parts = [];
+  if (archived()) {
+    parts.push(t("cars.archived"));
   } else {
-    host.innerHTML = html;
-    mountMiniMap(c, o);
+    const st = c.state || o.state;
+    const pl = place(c);
+    if (st === "driving") parts.push(t("home.s.driving"));
+    else if (c.charging_state === "Charging") parts.push(pl ? t("home.s.charging_at", { place: pl }) : t("home.s.charging"));
+    else if (pl) parts.push(t("home.s.parked_at", { place: pl }));
+    else if (["asleep", "offline", "online", "suspended"].includes(st)) parts.push(t("home.s.parked"));
+    else if (st) parts.push(stateLabel2(st));
+    const locked = c.locked != null ? truthy(c.locked) : o.locked;
+    if (locked != null) parts.push(t(locked ? "home.locked" : "home.unlocked"));
+    if (truthy(c.sentry_mode) || (c.sentry_mode == null && o.sentry)) parts.push(t("home.sentry_on"));
   }
-  const tc = $("tyre-card");
-  if (tc) tc.addEventListener("click", () => { toggleLabels(true); window.scrollTo({ top: 0, behavior: "smooth" }); });
+  $("ov-sentence").textContent = parts.join(" · ");
+
+  const fresh = $("ov-fresh");
+  if (archived()) {
+    const age = num(c._seed_age);
+    fresh.textContent = age ? t("home.fresh.last_seen", { ago: fmt.ago(age) }) : "";
+  } else if (awake(c)) {
+    fresh.innerHTML = `<span class="micro is-live">${esc(t("home.fresh.live"))}</span>`;
+  } else {
+    const since = sinceSec(c);
+    const at = since != null ? Date.now() - since * 1000 : Live.seenAt(carId);
+    fresh.textContent = at ? t("home.fresh.updated", { t: clock(at) }) : "";
+  }
 }
 
-let cardTimer = null;
-function scheduleCards() {
-  clearTimeout(cardTimer);
-  cardTimer = setTimeout(paintCards, 1500);
+/* --------------------------------------------------------- hero figure */
+
+function paintFigure() {
+  const c = car(), o = ov();
+  const soc = num(c.battery_level) ?? (o.soc != null ? o.soc : null);
+  if (soc != null) Odo.set($("fig-soc"), fmt.int(soc));
+  const rangeKm = num(c.rated_battery_range_km) ?? num(c.est_battery_range_km) ?? (o.range_km ?? null);
+  const rangeEl = $("fig-range");
+  if (rangeKm != null) {
+    if (!rangeEl.querySelector(".fr-n")) rangeEl.innerHTML = `<small class="fr-l"></small><span class="fr-n"></span><small class="fr-u"></small>`;
+    rangeEl.querySelector(".fr-l").textContent = t("common.range");
+    Odo.set(rangeEl.querySelector(".fr-n"), fmt.int(U.dist(rangeKm, 0)));
+    rangeEl.querySelector(".fr-u").textContent = U.distLabel();
+  }
+  const charging = c.charging_state === "Charging";
+  const track = $("soc-track");
+  track.classList.toggle("is-live", charging);
+  track.querySelector(".fill").style.transform = `scaleX(${Math.max(0, Math.min(1, (soc || 0) / 100))})`;
+  const limit = num(c.charge_limit_soc);
+  const mark = track.querySelector(".limit");
+  mark.hidden = !limit;
+  if (limit) mark.style.left = `${limit}%`;
+
+  const meta = [];
+  if (limit) meta.push(t("home.limit", { n: limit }));
+  const chg = o.charging || {};
+  if (!charging && chg.ended_at) meta.push(t("home.last_charge", { ago: fmt.ago(Date.now() / 1000 - chg.ended_at) }));
+  $("fig-meta").textContent = meta.join(" · ") || " ";
 }
 
-let mini = null;
-async function mountMiniMap(c, o) {
-  const lat = num(c.latitude) ?? o.latitude, lon = num(c.longitude) ?? o.longitude;
-  const el = $("minimap");
-  if (!el || lat == null || lon == null) return;
-  try {
-    mini = await OmtMap.create(el, { center: [lat, lon], zoom: 14.2, interactive: false });
-    OmtMap.ready(mini).then(() => { miniMarker = OmtMap.carMarker(mini, OmtMap.ll(mini, lat, lon), num(c.heading)); });
-  } catch (e) { /* map optional */ }
-  paintLocation(c, o);
-}
+/* -------------------------------------------------------------- now slot
+   The single most important current thing, in priority order. */
 
-let miniMarker = null;
-function paintLocation(c, o) {
-  const name = $("loc-name"), sub = $("loc-sub");
-  if (name) name.textContent = c.geofence || o.place || t("home.card.location");
-  if (!sub) return;
+function nowItem() {
+  const c = car(), o = ov();
+  const inc = incident();
+  if (inc) {
+    return { kind: "alarm", ic: "alarm", t: t(inc.peak === "panic" ? "home.now.alarm" : "home.now.activity"),
+             b: t("home.now.since", { ago: fmt.ago(Date.now() / 1000 - inc.started) }),
+             acts: [{ href: "/security", label: t("home.now.see") }] };
+  }
+  const h = window.ShellHealth;
+  if (h && h.stale) {
+    return { kind: "warn", ic: "warn", t: t("home.now.stale", { n: Math.round((h.seconds_since_data || 0) / 60) }),
+             b: t("home.now.stale_b") };
+  }
+  if (archived()) return { kind: "", ic: "info", t: t("cars.archived"), b: t("cars.archived_hint") };
+  if (c.charging_state === "Charging") {
+    const kw = num(c.charger_power);
+    const hrs = num(c.time_to_full_charge);
+    const limit = num(c.charge_limit_soc);
+    return { kind: "live", ic: "bolt", t: t("home.now.charging", { kw: kw == null ? "–" : fmt.num(kw, 0) }),
+             b: hrs ? t("home.now.full_in", { t: fmt.dur(hrs * 3600), n: limit ?? 100 }) : limit ? t("home.limit", { n: limit }) : "",
+             track: { soc: num(c.battery_level) || 0, limit } };
+  }
   if (c.state === "driving") {
     const kmh = num(c.speed);
-    sub.textContent = t("home.card.driving", { speed: kmh == null ? "–" : `${U.speed(kmh)} ${U.speedLabel()}` });
-  } else {
-    sub.textContent = c.since ? t("home.card.since", { ago: fmt.ago((Date.now() - Date.parse(c.since)) / 1000) }) : "";
+    return { kind: "live", ic: "route", t: t("home.now.driving"), b: kmh == null ? "" : U.speedStr(kmh) };
   }
-  const lat = num(c.latitude), lon = num(c.longitude);
-  if (mini && lat != null && lon != null) {
-    const at = OmtMap.ll(mini, lat, lon);
-    if (miniMarker) miniMarker.setLngLat(at); else if (mini.loaded()) miniMarker = OmtMap.carMarker(mini, at, num(c.heading));
-    mini.easeTo({ center: at, duration: 600 });
+  if (truthy(c.is_climate_on)) {
+    return { kind: "live", ic: "climate", t: t("home.now.climate"), b: t("home.now.inside", { temp: tempStr(num(c.inside_temp)) }) };
+  }
+  if (truthy(c.update_available)) {
+    return { kind: "", ic: "download", t: t("home.now.update"), b: c.update_version || "",
+             acts: [{ href: "/controls#software", label: t("home.now.update_go") }] };
+  }
+  const open = [];
+  if (truthy(c.frunk_open)) open.push(t("home.q.frunk"));
+  if (truthy(c.trunk_open)) open.push(isCT() ? t("controls.tailgate") : t("home.q.trunk"));
+  if (truthy(c.doors_open) || ["driver_front_door_open", "driver_rear_door_open", "passenger_front_door_open", "passenger_rear_door_open"].some((k) => truthy(c[k]))) open.push(t("home.hud.doors"));
+  if (truthy(c.windows_open)) open.push(t("controls.windows"));
+  if (open.length && c.state !== "driving") return { kind: "warn", ic: "warn", t: t("home.now.open", { what: open.join("、") }), b: "" };
+  if (c.locked != null && !truthy(c.locked) && c.state !== "driving") {
+    return { kind: "warn", ic: "unlock", t: t("home.now.unlocked"), b: t("home.now.unlocked_b") };
+  }
+  const soft = ["fl", "fr", "rl", "rr"].find((k) => truthy(c[`tpms_soft_warning_${k}`]));
+  if (soft) {
+    const bar = num(c[`tpms_pressure_${soft}`]);
+    return { kind: "warn", ic: "tire", t: t("home.now.tyre", { corner: t("tire." + soft) }),
+             b: bar == null ? "" : `${fmt.fixed(U.press(bar), U.pressDigits())} ${U.pressLabel()}` };
+  }
+  if (caps && caps.ready === false && !dismissedSetup()) {
+    return { kind: "", ic: "key", t: t("home.setup.title"),
+             b: caps.reason === "not_paired" ? t("home.setup.pair") : t("home.setup.body"),
+             acts: [{ href: "/settings#commands", label: t("home.setup.cta") }, { run: dismissSetup, label: t("common.later"), quiet: true }] };
+  }
+  if (!Object.keys(c).length && !o.car_id) return null;
+  return { kind: "ok", ic: "check", t: t("home.now.ok"), b: "" };
+}
+
+function dismissedSetup() { try { return localStorage.getItem("omt.setup.later") === "1"; } catch (e) { return false; } }
+function dismissSetup() { try { localStorage.setItem("omt.setup.later", "1"); } catch (e) { /* storage blocked */ } paintNow(); }
+
+let nowKey = "";
+function paintNow() {
+  const el = $("now");
+  const it = nowItem();
+  el.hidden = !it;
+  if (!it) return;
+  const key = JSON.stringify([it.kind, it.ic, it.t, it.b, (it.acts || []).map((a) => a.label)]);
+  el.className = `now rail is-${it.kind || "plain"}`;
+  if (key !== nowKey) {
+    nowKey = key;
+    el.innerHTML = `<span class="now-ic">${icon(it.ic, 18)}</span><span class="now-t">${esc(it.t)}</span>
+      ${it.b ? `<span class="now-b">${esc(it.b)}</span>` : ""}
+      ${it.track ? `<div class="charge-track"><i class="fill"></i>${it.track.limit ? `<i class="limit" style="left:${it.track.limit}%"></i>` : ""}</div>` : ""}
+      ${it.acts && it.acts.length ? `<span class="now-acts">${it.acts.map((a, i) => a.href
+        ? `<a class="now-a" href="${esc(a.href)}">${esc(a.label)}</a>`
+        : `<button type="button" class="now-a${a.quiet ? " quiet" : ""}" data-i="${i}">${esc(a.label)}</button>`).join("")}</span>` : ""}`;
+    el.querySelectorAll("button.now-a").forEach((b) => b.addEventListener("click", () => it.acts[Number(b.dataset.i)].run()));
+  }
+  const fill = el.querySelector(".charge-track .fill");
+  if (fill && it.track) fill.style.transform = `scaleX(${Math.max(0, Math.min(1, it.track.soc / 100))})`;
+}
+
+/* -------------------------------------------------------- quick controls
+   Built once; each paint only updates text and state, so a hold or a
+   pending command is never torn down by the next live update. */
+
+const QUICK = [
+  { id: "lock", icon: (c) => (truthy(c.locked) ? "lock" : "unlock"), label: () => t("home.q.doors"),
+    state: (c) => (c.locked == null ? null : truthy(c.locked) ? [t("home.st.locked"), ""] : [t("home.st.unlocked"), "is-warn"]),
+    action: (c) => (truthy(c.locked) ? { cmd: "door_unlock", hold: true, hint: t("home.hint.hold_unlock") } : { cmd: "door_lock" }) },
+  { id: "climate", icon: () => "climate", label: () => t("home.q.climate"),
+    state: (c) => (c.is_climate_on == null ? null : truthy(c.is_climate_on)
+      ? [t("home.st.climate_on", { temp: tempStr(num(c.inside_temp)) }), "is-live"]
+      : [t("home.st.climate_off", { temp: tempStr(num(c.inside_temp)) }), ""]),
+    action: (c) => ({ cmd: truthy(c.is_climate_on) ? "climate_off" : "climate_on" }) },
+  { id: "frunk", icon: () => "box", label: () => t("home.q.frunk"),
+    state: (c) => (c.frunk_open == null ? null : truthy(c.frunk_open) ? [t("home.st.open"), "is-warn"] : [t("home.st.closed"), ""]),
+    action: (c) => (truthy(c.frunk_open) ? { none: t("home.hint.frunk_close") } : { cmd: "frunk", hold: true, hint: t("home.hint.hold_frunk") }) },
+  { id: "tonneau", icon: () => (isCT() ? "bed" : "box"), label: () => (isCT() ? t("home.q.tonneau") : t("home.q.trunk")),
+    state: (c) => {
+      if (isCT()) {
+        const pct = num(c.tonneau_percent_open ?? c.tonneau_open_percent);
+        return pct == null ? null : pct > 1 ? [t("home.st.pct_open", { n: fmt.int(pct) }), "is-warn"] : [t("home.st.closed"), ""];
+      }
+      return c.trunk_open == null ? null : truthy(c.trunk_open) ? [t("home.st.open"), "is-warn"] : [t("home.st.closed"), ""];
+    },
+    action: () => (isCT() ? { menu: "tonneau" } : { cmd: "trunk" }) },
+  { id: "port", icon: () => "plug", label: () => t("home.q.port"),
+    state: (c) => (c.charging_state === "Charging" ? [t("home.st.charging"), "is-live"]
+      : c.charge_port_door_open == null ? null : truthy(c.charge_port_door_open) ? [t("home.st.open"), ""] : [t("home.st.closed"), ""]),
+    action: (c) => ({ cmd: truthy(c.charge_port_door_open) ? "charge_port_close" : "charge_port_open" }) },
+  { id: "sentry", icon: () => "shield", label: () => t("home.q.sentry"),
+    state: (c) => (c.sentry_mode == null ? null : truthy(c.sentry_mode) ? [t("home.st.armed"), "is-live"] : [t("home.st.off"), ""]),
+    action: (c) => ({ cmd: truthy(c.sentry_mode) ? "sentry_off" : "sentry_on" }) },
+];
+
+let statusTimer = null;
+function say(kind, text, link) {
+  const el = $("quick-status");
+  clearTimeout(statusTimer);
+  const cls = { hint: "", pending: "is-pending", done: "is-done", fail: "is-fail", wait: "is-wait" }[kind] ?? "";
+  const ic = { hint: "info", pending: "clock", done: "check", fail: "warn", wait: "clock" }[kind] || "info";
+  el.className = "inline-status " + cls;
+  el.innerHTML = text ? `${icon(ic, 14)}<span>${esc(text)}</span>${link ? ` <a href="${esc(link.href)}">${esc(link.label)}</a>` : ""}` : "";
+  if (kind === "done" || kind === "hint") statusTimer = setTimeout(() => { el.innerHTML = ""; el.className = "inline-status"; }, 5000);
+}
+
+const quick = {
+  els: {},
+  build() {
+    const host = $("quick");
+    host.innerHTML = QUICK.map((q) => `<button type="button" class="qc" data-id="${q.id}">
+        <span class="qc-ic"></span><span class="qc-l"></span><span class="qc-s">–</span></button>`).join("");
+    host.querySelectorAll(".qc").forEach((b) => {
+      const q = QUICK.find((x) => x.id === b.dataset.id);
+      this.els[q.id] = b;
+      Cmd.hold(b, {
+        when: () => !!(q.action(car()).hold) && !archived() && !(caps && caps.ready === false),
+        onComplete: () => this.exec(q, true),
+        onHint: () => say("hint", q.action(car()).hint || ""),
+      });
+      b.addEventListener("click", () => {
+        const a = q.action(car());
+        if (a.hold && !(caps && caps.ready === false)) return;     // the hold handler owns these
+        this.exec(q, false);
+      });
+    });
+  },
+  paint() {
+    const c = car();
+    for (const q of QUICK) {
+      const b = this.els[q.id];
+      if (!b || b.classList.contains("is-pending")) continue;
+      const st = q.state(c);
+      const a = q.action(c);
+      const ic = q.icon(c);
+      if (b._ic !== ic) { b.querySelector(".qc-ic").innerHTML = icon(ic, 20); b._ic = ic; }
+      b.querySelector(".qc-l").textContent = q.label();
+      b.querySelector(".qc-s").textContent = st ? st[0] : "–";
+      b.classList.remove("is-live", "is-warn");
+      if (st && st[1]) b.classList.add(st[1]);
+      b.classList.toggle("is-unknown", !st);
+      const off = archived() || !!a.none;
+      b.setAttribute("aria-disabled", off ? "true" : "false");
+      const what = a.cmd ? (a.hold ? a.hint : t("cmd." + a.cmd)) : a.menu ? t("home.q.tonneau") : a.none || "";
+      b.setAttribute("aria-label", `${q.label()}: ${st ? st[0] : "–"}${what ? ` — ${what}` : ""}`);
+      b.title = what;
+    }
+  },
+  run(id) { const q = QUICK.find((x) => x.id === id); if (q) this.exec(q, false); },
+  async exec(q, held) {
+    const c = car();
+    const a = q.action(c);
+    const b = this.els[q.id];
+    if (archived()) return say("hint", t("cars.archived_hint"));
+    if (a.none) return say("hint", a.none);
+    let cmd = a.cmd;
+    if (a.menu === "tonneau") {
+      cmd = await Menu.open(b, [
+        { label: t("cmd.tonneau_open"), value: "tonneau_open", icon: "bed" },
+        { label: t("cmd.tonneau_close"), value: "tonneau_close", icon: "bed" },
+        { label: t("cmd.tonneau_stop"), value: "tonneau_stop", icon: "x" },
+      ], { title: t("home.tonneau.title") });
+      if (!cmd) return;
+    }
+    const what = t("cmd." + cmd);
+    await Cmd.run(cmd, null, {
+      confirmed: held,
+      onState: (phase, info) => {
+        if (phase === "pending") {
+          b.classList.add("is-pending"); b.setAttribute("aria-busy", "true");
+          b.querySelector(".qc-s").textContent = info.text;
+          say("pending", info.text);
+        } else {
+          b.classList.remove("is-pending"); b.removeAttribute("aria-busy");
+        }
+        if (phase === "sent") say(info.watching ? "pending" : "done", info.watching ? t("cmd.sent_wait") : t("cmd.done", { what }));
+        if (phase === "done") { say("done", t("cmd.done", { what })); if (cmd === "flash_lights" && view) view.flash(); }
+        if (phase === "unconfirmed") say("wait", t("cmd.unconfirmed"));
+        if (phase === "failed") say("fail", info.message);
+        if (phase === "setup") say("wait", t("cmd.setup.short"), { href: "/settings#commands", label: t("cmd.setup.go") });
+        if (phase === "cancelled") say("", "");
+        this.paint();
+      },
+    });
+  },
+};
+
+/* A command with no quick control of its own: status line only. */
+function runPlain(cmd) {
+  const what = t("cmd." + cmd);
+  return Cmd.run(cmd, null, {
+    onState: (phase, info) => {
+      if (phase === "pending") say("pending", info.text);
+      if (phase === "sent") say(info.watching ? "pending" : "done", info.watching ? t("cmd.sent_wait") : t("cmd.done", { what }));
+      if (phase === "done") say("done", t("cmd.done", { what }));
+      if (phase === "unconfirmed") say("wait", t("cmd.unconfirmed"));
+      if (phase === "failed") say("fail", info.message);
+      if (phase === "setup") say("wait", t("cmd.setup.short"), { href: "/settings#commands", label: t("cmd.setup.go") });
+      if (phase === "cancelled") say("", "");
+    },
+  });
+}
+
+/* ---------------------------------------------------------------- plate */
+
+function paintPlate() {
+  const c = car(), o = ov();
+  const cells = [];
+  // where
+  const pl = place(c);
+  const where = pl || "–";   // a place in words, never raw coordinates
+  let whereSub = "";
+  if (c.state === "driving") whereSub = t("home.card.driving", { speed: U.speedStr(num(c.speed)) });
+  else { const s = sinceSec(c); if (s != null) whereSub = t("home.plate.parked_for", { t: fmt.dur(s) }); }
+  cells.push(`<div class="pc"><span class="pc-l">${esc(t("home.plate.where"))}</span><span class="pc-v">${esc(where)}</span><span class="pc-s">${esc(whereSub)}</span></div>`);
+  // today
+  const td = o.today || {};
+  const todayV = td.km != null ? `${fmt.num(U.dist(td.km, 1), 1)} ${U.distLabel()} · ${fmt.num(td.kwh, 1)} kWh` : "–";
+  const todaySub = td.drives ? t("home.plate.drives", { n: td.drives }) : td.km != null ? t("home.plate.no_drives") : "";
+  cells.push(`<a class="pc" href="/data"><span class="pc-l">${esc(t("home.plate.today"))}</span><span class="pc-v">${esc(todayV)}</span><span class="pc-s">${esc(todaySub)}</span></a>`);
+  // tyres
+  const bars = ["fl", "fr", "rl", "rr"].map((k) => num(c[`tpms_pressure_${k}`]));
+  const have = bars.filter((v) => v != null);
+  const d = U.pressDigits();
+  let tyreV = "–", tyreSub = "", tyreWarn = false;
+  if (have.length) {
+    const lo = U.press(Math.min(...have)), hi = U.press(Math.max(...have));
+    tyreV = `${lo === hi ? fmt.fixed(lo, d) : `${fmt.fixed(lo, d)}–${fmt.fixed(hi, d)}`} ${U.pressLabel()}`;
+    const soft = ["fl", "fr", "rl", "rr"].filter((k) => truthy(c[`tpms_soft_warning_${k}`]));
+    tyreWarn = soft.length > 0;
+    tyreSub = tyreWarn ? t("home.plate.tyre_low", { corner: soft.map((k) => t("tire." + k)).join("、") }) : t("home.plate.tyres_ok");
+  }
+  cells.push(`<button type="button" class="pc" id="pc-tyres" aria-pressed="${tyresOn}"><span class="pc-l">${esc(t("home.card.tyres"))}</span><span class="pc-v">${esc(tyreV)}</span><span class="pc-s${tyreWarn ? " is-warn" : ""}">${esc(tyresOn ? t("home.plate.tyres_hide") : tyreSub)}</span></button>`);
+  // software
+  const ver = c.version || o.version || "–";
+  const upd = truthy(c.update_available);
+  cells.push(`<a class="pc" href="/controls#software"><span class="pc-l">${esc(t("home.card.software"))}</span><span class="pc-v">${esc(ver)}</span><span class="pc-s${upd ? " is-warn" : ""}">${esc(upd ? t("home.card.update", { v: c.update_version || "" }) : t("home.card.up_to_date"))}</span></a>`);
+  const host = $("plate");
+  const html = cells.join("");
+  if (host._html !== html) {
+    host._html = html;
+    host.innerHTML = html;
+    $("pc-tyres").addEventListener("click", () => {
+      setTyres(!tyresOn);
+      if (tyresOn && !view) say("hint", t("home.hint.no_3d"));
+    });
   }
 }
 
-/* ------------------------------------------------------------- setup */
+/* ---------------------------------------------------------------- paint */
 
-async function paintSetup() {
-  const caps = await Cmd.capabilities(Car.current, true);
-  capsReady = !!caps.ready;
-  const el = $("setup");
-  const archived = Car.info() && Car.info().active === false;
-  el.hidden = capsReady || archived;
-  if (!el.hidden) {
-    el.querySelector(".txt").innerHTML = `<b>${esc(t("home.setup.title"))}</b>${esc(
-      caps.reason === "not_paired" ? t("home.setup.pair") : t("home.setup.body"))}`;
+let lastView = "";
+function paint() {
+  const c = car();
+  paintHead();
+  paintFigure();
+  paintNow();
+  quick.paint();
+  paintPlate();
+  if (view) {
+    const v = liveToView(c);
+    const sig = JSON.stringify(v);
+    if (sig !== lastView) { lastView = sig; view.setState(v); }
   }
-  paintQuick(Live.car());
+  paintHud();
 }
 
-/* -------------------------------------------------------------- boot */
+let rafPending = false;
+function schedule() {
+  if (rafPending) return;
+  rafPending = true;
+  requestAnimationFrame(() => { rafPending = false; paint(); });
+}
+
+async function loadOverview() {
+  if (document.hidden) return;
+  try { overview = await apiGet(`/api/overview?car_id=${carId}`); } catch (e) { /* keep the last good one */ }
+  schedule();
+}
+
+async function loadCaps() {
+  caps = await Cmd.capabilities(carId, true);
+  schedule();
+}
+
+/* ----------------------------------------------------------------- boot */
 
 async function boot() {
-  await i18nReady;
+  await i18nReady.catch(() => {});
   await Car.load();
+  carId = Car.current;
   Car.paint();
-  document.querySelectorAll("#views button").forEach((b) => b.addEventListener("click", () => {
-    document.querySelectorAll("#views button").forEach((x) => x.classList.toggle("on", x === b));
-    if (!view) return;
-    if (b.dataset.v === "tires") { toggleLabels(true); return; }
-    toggleLabels(false);
-    view.view(b.dataset.v);
-  }));
-  window.onOverviewData = (d) => { overview = d; paintHero(); scheduleCards(); };
-  await mountVehicle(Car.current);
-  paintHero();
-  paintCards();
-  paintSetup();
-  Live.subscribe(() => { paintHero(); scheduleCards(); });
+  quick.build();
+  $("views").addEventListener("click", openViews);
+  window.onOverviewData = (d) => { overview = d; schedule(); };
+  window.addEventListener("omt:sentry", schedule);
+  window.addEventListener("omt:health", schedule);
+  window.addEventListener("omt:locale", () => { hud.els = {}; $("hud").innerHTML = ""; $("plate")._html = ""; nowKey = ""; schedule(); });
+  Live.subscribe(schedule);
+  await Promise.all([mountVehicle(), loadOverview(), loadCaps()]);
+  paint();
+  setInterval(loadOverview, 30000);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) loadOverview(); });
   Car.onChange(async (id) => {
-    overview = null;
-    await mountVehicle(id);
-    paintHero(); paintCards(); paintSetup();
-    refreshConnection();
+    carId = id; overview = null; tyresOn = false; lastView = "";
+    $("plate")._html = ""; nowKey = "";
+    await Promise.all([mountVehicle(), loadOverview(), loadCaps()]);
+    paint();
   });
-  // When the car is awake, read the full state once (tyres, limits, seats).
-  const st = Live.car().state;
-  if (["online", "charging", "driving"].includes(st)) {
-    try { fullState = await apiGet(`/api/vehicle/state?car_id=${Car.current}`); } catch (e) { /* optional */ }
-  }
-  window.addEventListener("resize", () => { if (labelsOn) paintLabels(); });
+  if (reduced()) document.documentElement.classList.add("reduced");
 }
 
 boot();
