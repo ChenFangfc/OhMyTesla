@@ -241,8 +241,16 @@ export class VehicleView {
     });
     if (!meshes.length) return;
     root.updateMatrixWorld(true);
-    const box = new THREE.Box3();
-    meshes.forEach((o) => box.expandByObject(o));
+    // The hinge comes from the vertices the cover actually draws. Primitives of
+    // one glTF file can share a vertex buffer (the bundled model does), and then
+    // a mesh's bounding box is the whole truck: the cover would hinge at the
+    // front bumper and fold toward the hood.
+    const box = new THREE.Box3(), v = new THREE.Vector3();
+    for (const o of meshes) {
+      const pos = o.geometry.attributes.position, idx = o.geometry.index;
+      const n = idx ? idx.count : pos.count;
+      for (let i = 0; i < n; i++) box.expandByPoint(v.fromBufferAttribute(pos, idx ? idx.getX(i) : i).applyMatrix4(o.matrixWorld));
+    }
     const pivot = new THREE.Group();
     pivot.name = "tonneau";
     // front edge of the cover = its max z (front is +Z), at the top
