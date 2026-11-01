@@ -20,6 +20,14 @@
     </summary>
     <div class="body">
       <div class="setting-row">
+        <div class="info"><div class="name" data-i18n="settings.theme">Appearance</div></div>
+        <select id="pref-theme">
+          <option value="light" data-i18n="settings.theme_light">Light</option>
+          <option value="dark" data-i18n="settings.theme_dark">Dark</option>
+          <option value="system" data-i18n="settings.theme_system">System</option>
+        </select>
+      </div>
+      <div class="setting-row">
         <div class="info"><div class="name" data-i18n="settings.lang">Language</div></div>
         <select id="pref-locale">
           <option value="zh">中文</option>
@@ -426,6 +434,11 @@ Object.entries(PREF_IDS).forEach(([key, id]) => {
   });
 });
 
+/* 外观只存在这台设备上，不进服务器的偏好 */
+const themeSel = document.getElementById("pref-theme");
+themeSel.value = Theme.pref();
+themeSel.addEventListener("change", (e) => { Theme.set(e.target.value); paintSummaries(); });
+
 document.getElementById("pref-auto").addEventListener("change", async (e) => {
   const p = await i18n.save({ auto: e.target.checked });
   paintPrefs(p);
@@ -746,7 +759,7 @@ async function loadTariff() {
 /* 折叠标题右侧带各组当前状态：不展开也能一眼看到配置到哪了 */
 function paintSummaries() {
   const set = (id, v) => { const n = document.getElementById(id); if (n) n.textContent = v; };
-  set("v-appearance", t("settings.summary_units", {
+  set("v-appearance", t("settings.theme_" + Theme.pref()) + " · " + t("settings.summary_units", {
     lang: i18n.state.locale === "zh" ? "中文" : "English",
     length: U.distLabel(), temp: U.tempLabel(),
   }));

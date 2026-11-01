@@ -46,6 +46,25 @@ function zhPlace(p) {
   if (!p || !localeTag().startsWith("zh")) return p;
   return (/^[A-Za-z0-9]/.test(p) ? " " : "") + p + (/[A-Za-z0-9.]$/.test(p) ? " " : "");
 }
+/* 外观：默认浅色。偏好只存在这台设备上（手机和电脑可以不一样）；
+   shell.html 的启动脚本在首帧前已按同样的规则设好 data-theme。 */
+const Theme = (() => {
+  const KEY = "omt.theme";
+  const mq = matchMedia("(prefers-color-scheme: dark)");
+  const pref = () => { try { return localStorage.getItem(KEY) || "light"; } catch (e) { return "light"; } };
+  const dark = () => { const p = pref(); return p === "dark" || (p === "system" && mq.matches); };
+  function apply() {
+    const d = dark();
+    document.documentElement.setAttribute("data-theme", d ? "dark" : "light");
+    const m = document.querySelector('meta[name="theme-color"]');
+    if (m) m.setAttribute("content", d ? "#0d0e11" : "#f1f3f5");
+    window.dispatchEvent(new CustomEvent("omt:theme", { detail: { dark: d } }));
+  }
+  function set(p) { try { localStorage.setItem(KEY, p); } catch (e) { /* private mode: this page only */ } apply(); }
+  mq.addEventListener("change", () => { if (pref() === "system") apply(); });
+  return { pref, dark, set, apply };
+})();
+
 function localeTag() {
   return (window.i18n && i18n.state.locale === "en") ? "en-US" : "zh-CN";
 }

@@ -250,6 +250,7 @@
     return F.mapP;
   }
   matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => { if (F.map) { resolveColors(); draw(); } });
+  window.addEventListener("omt:theme", () => { if (F.map) { resolveColors(); draw(); } });
 
   function hover(e) {
     const tip = $("#fp-tip");
