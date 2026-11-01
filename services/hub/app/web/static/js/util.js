@@ -30,7 +30,7 @@ async function apiPost(url, body, method = "POST") {
    （地理围栏名/OSM 地名/车名/event.json 字段都可能含特殊字符） */
 /* 推送文案里的前导 emoji 在通知栏有用，在单色界面里没有。
    目录保持原值不动，界面渲染时剥掉。 */
-const LEAD_EMOJI = /^[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE0F}\s]+/u;
+const LEAD_EMOJI = /^(?:[\p{Extended_Pictographic}\u{FE0F}\u{200D}\u{20E3}]|\s)+/u;
 function plain(text) { return String(text || "").replace(LEAD_EMOJI, "").trim(); }
 
 function esc(v) {
@@ -40,6 +40,12 @@ function esc(v) {
 }
 
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
+/* 中文句子里嵌地名：中文地名紧贴，英文地名两侧留空格（停在家 / 停在 1st Street）。
+   英文界面原样返回，句子自己带空格。 */
+function zhPlace(p) {
+  if (!p || !localeTag().startsWith("zh")) return p;
+  return (/^[A-Za-z0-9]/.test(p) ? " " : "") + p + (/[A-Za-z0-9.]$/.test(p) ? " " : "");
+}
 function localeTag() {
   return (window.i18n && i18n.state.locale === "en") ? "en-US" : "zh-CN";
 }
@@ -67,19 +73,39 @@ const fmt = {
     return numberFormat({ minimumFractionDigits: d, maximumFractionDigits: d }).format(Number(v));
   },
   int(v) { return fmt.num(v, 0); },
+  /* 并列项："前备箱、后备箱和车窗" / "frunk, trunk, and windows" */
+  list(items) {
+    const xs = (items || []).filter(Boolean).map(String);
+    try { return new Intl.ListFormat(localeTag(), { type: "conjunction" }).format(xs); }
+    catch (e) { return xs.join(localeTag().startsWith("zh") ? "、" : ", "); }
+  },
   /* 百分比：输入是 0–100 的数，不是 0–1 */
   pct(v, d = 0) {
     if (v == null || v === "" || !isFinite(Number(v))) return DASH;
     return numberFormat({ style: "percent", maximumFractionDigits: d }).format(Number(v) / 100);
   },
+  /* 小时的写法：24 小时制补零（"09:05"，一列时间宽度一致）；
+     12 小时制不补（"3:53 PM"，"03:53 PM" 在英文里不像话）。 */
+  hour() { return localeTag() === "en-US" ? "numeric" : "2-digit"; },
   dt(iso) {
     if (!iso) return DASH;
-    return new Date(iso).toLocaleString(localeTag(), { year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    return new Date(iso).toLocaleString(localeTag(), { year: "numeric", month: "numeric", day: "numeric", hour: fmt.hour(), minute: "2-digit" });
   },
-  /* 只要时刻："14:02" */
+  /* 只要时刻："14:02" / "2:02 PM" */
   time(ms) {
     if (ms == null || !isFinite(ms)) return DASH;
-    return new Date(ms).toLocaleTimeString(localeTag(), { hour: "2-digit", minute: "2-digit" });
+    return new Date(ms).toLocaleTimeString(localeTag(), { hour: fmt.hour(), minute: "2-digit" });
+  },
+  /* 句子后面接链接时的空格：中文全角标点自带留白，再加空格就成了"。 去设置"；
+     英文句号后要空格。 */
+  gap(text) { return /[，。：；！？、）」』》]$/.test(String(text || "").trim()) ? "" : " "; },
+  /* "a · b · c" 拼成 HTML：只在两段之间换行——短的一段（"2 小时 40 分"、"8 s"）
+     不拆开，点也不会落到行首。长的一段（街道地址）照常可以折行。 */
+  dots(parts) {
+    return (parts || []).filter(Boolean).map((p) => {
+      const s = String(p);
+      return s.length <= 24 ? `<span class="nowrap">${esc(s)}</span>` : esc(s);
+    }).join(" · ");
   },
   // 纯日期串按字面解析——new Date("2026-08-01") 会当 UTC 解析，西半球时区显示会差一天
   date(iso) {

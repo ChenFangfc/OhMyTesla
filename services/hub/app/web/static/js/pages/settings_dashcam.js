@@ -219,12 +219,12 @@
       parts.push(`<span>${icon("clock", 15)}${esc(d >= 1 ? tn("sdc.pi.up_days", d) : t("sdc.pi.up_hours", { n: Math.max(1, Math.round(pi.uptime_s / 3600)) }))}</span>`);
     }
     const disk = pi.disk || {};
-    if (disk.free_bytes != null) parts.push(`<span>${icon("box", 15)}${esc(t("sdc.pi.disk", { free: bytes(disk.free_bytes), total: bytes(disk.total_bytes) }))}</span>`);
+    if (disk.free_bytes != null) parts.push(`<span>${icon("disk", 15)}${esc(t("sdc.pi.disk", { free: bytes(disk.free_bytes), total: bytes(disk.total_bytes) }))}</span>`);
     const wifi = pi.wifi || {};
-    if (wifi.ssid || wifi.ip) parts.push(`<span>${icon("wind", 15)}${esc([wifi.ssid, wifi.strength, wifi.ip].filter(Boolean).join(" · "))}</span>`);
+    if (wifi.ssid || wifi.ip) parts.push(`<span>${icon("wifi", 15)}${esc([wifi.ssid, wifi.strength, wifi.ip].filter(Boolean).join(" · "))}</span>`);
     const snaps = pi.snapshots || {};
     if (snaps.count != null) parts.push(`<span>${icon("film", 15)}${esc(t("sdc.pi.snapshots", { n: snaps.count }))}</span>`);
-    parts.push(`<span>${icon("drive", 15)}${esc(t(pi.drives_active ? "sdc.pi.drive_on" : "sdc.pi.drive_off"))}</span>`);
+    parts.push(`<span>${icon("usb", 15)}${esc(t(pi.drives_active ? "sdc.pi.drive_on" : "sdc.pi.drive_off"))}</span>`);
     box.innerHTML = parts.join("");
   }
 

@@ -4,6 +4,13 @@
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<!-- The app's own text follows the hub's language (zh / en); these let macOS
+	     show its prompts and standard menus in the same two languages. -->
+	<key>CFBundleLocalizations</key>
+	<array>
+		<string>en</string>
+		<string>zh-Hans</string>
+	</array>
 	<key>CFBundleDisplayName</key>
 	<string>OhmyTesla</string>
 	<key>CFBundleExecutable</key>

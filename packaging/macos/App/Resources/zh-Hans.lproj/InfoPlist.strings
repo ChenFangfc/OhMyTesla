@@ -1,0 +1,3 @@
+/* 系统提示与“关于”面板（简体中文）。 */
+"NSLocalNetworkUsageDescription" = "OhmyTesla 需要连接你在本地网络上填写的 OhmyTesla 服务器。";
+"NSHumanReadableCopyright" = "OhmyTesla 是基于 GNU AGPL-3.0 的自由软件。内置组件保留各自的许可证（见 Contents/Resources/runtime/licenses）。";

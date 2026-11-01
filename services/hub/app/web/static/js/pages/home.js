@@ -49,7 +49,7 @@ function clock(ms) {
   if (ms == null) return "";
   const d = new Date(ms), today = new Date();
   return d.toDateString() === today.toDateString() ? fmt.time(ms)
-    : d.toLocaleString(localeTag(), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    : d.toLocaleString(localeTag(), { month: "short", day: "numeric", hour: fmt.hour(), minute: "2-digit" });
 }
 
 function liveToView(c) {
@@ -124,7 +124,7 @@ async function mountVehicle() {
 /* Tap the truck: the part under your finger is the control. */
 function onPick(part) {
   if (part === "tonneau") return quick.run("tonneau");
-  if (part === "frunk") return say("hint", t("home.hint.hold_frunk"));
+  if (part === "frunk") return quick.run("frunk");
   if (part === "tailgate") return isCT() ? runPlain("trunk") : quick.run("tonneau");
   if (part === "charge_port") return quick.run("port");
   if (part && part.startsWith("wheel")) return setTyres(true);
@@ -342,7 +342,7 @@ function nowItem() {
   if (truthy(c.trunk_open)) open.push(isCT() ? t("controls.tailgate") : t("home.q.trunk"));
   if (truthy(c.doors_open) || ["driver_front_door_open", "driver_rear_door_open", "passenger_front_door_open", "passenger_rear_door_open"].some((k) => truthy(c[k]))) open.push(t("home.hud.doors"));
   if (truthy(c.windows_open)) open.push(t("controls.windows"));
-  if (open.length && c.state !== "driving") return { kind: "warn", ic: "warn", t: t("home.now.open", { what: open.join("、") }), b: "" };
+  if (open.length && c.state !== "driving") return { kind: "warn", ic: "warn", t: t("home.now.open", { what: fmt.list(open) }), b: "" };
   if (c.locked != null && !truthy(c.locked) && c.state !== "driving") {
     return { kind: "warn", ic: "unlock", t: t("home.now.unlocked"), b: t("home.now.unlocked_b") };
   }
@@ -387,13 +387,13 @@ function paintNow() {
 }
 
 /* -------------------------------------------------------- quick controls
-   Built once; each paint only updates text and state, so a hold or a
+   Built once; each paint only updates text and state, so a
    pending command is never torn down by the next live update. */
 
 const QUICK = [
   { id: "lock", icon: (c) => (truthy(c.locked) ? "lock" : "unlock"), label: () => t("home.q.doors"),
     state: (c) => (c.locked == null ? null : truthy(c.locked) ? [t("home.st.locked"), ""] : [t("home.st.unlocked"), "is-warn"]),
-    action: (c) => (truthy(c.locked) ? { cmd: "door_unlock", hold: true, hint: t("home.hint.hold_unlock") } : { cmd: "door_lock" }) },
+    action: (c) => ({ cmd: truthy(c.locked) ? "door_unlock" : "door_lock" }) },
   { id: "climate", icon: () => "climate", label: () => t("home.q.climate"),
     state: (c) => (c.is_climate_on == null ? null : truthy(c.is_climate_on)
       ? [t("home.st.climate_on", { temp: tempStr(num(c.inside_temp)) }), "is-live"]
@@ -401,7 +401,7 @@ const QUICK = [
     action: (c) => ({ cmd: truthy(c.is_climate_on) ? "climate_off" : "climate_on" }) },
   { id: "frunk", icon: () => "box", label: () => t("home.q.frunk"),
     state: (c) => (c.frunk_open == null ? null : truthy(c.frunk_open) ? [t("home.st.open"), "is-warn"] : [t("home.st.closed"), ""]),
-    action: (c) => (truthy(c.frunk_open) ? { none: t("home.hint.frunk_close") } : { cmd: "frunk", hold: true, hint: t("home.hint.hold_frunk") }) },
+    action: (c) => (truthy(c.frunk_open) ? { none: t("home.hint.frunk_close") } : { cmd: "frunk" }) },
   { id: "tonneau", icon: () => (isCT() ? "bed" : "box"), label: () => (isCT() ? t("home.q.tonneau") : t("home.q.trunk")),
     state: (c) => {
       if (isCT()) {
@@ -440,16 +440,8 @@ const quick = {
     host.querySelectorAll(".qc").forEach((b) => {
       const q = QUICK.find((x) => x.id === b.dataset.id);
       this.els[q.id] = b;
-      Cmd.hold(b, {
-        when: () => !!(q.action(car()).hold) && !archived() && !(caps && caps.ready === false),
-        onComplete: () => this.exec(q, true),
-        onHint: () => say("hint", q.action(car()).hint || ""),
-      });
-      b.addEventListener("click", () => {
-        const a = q.action(car());
-        if (a.hold && !(caps && caps.ready === false)) return;     // the hold handler owns these
-        this.exec(q, false);
-      });
+      // Risky commands (unlock, frunk, Sentry off …) ask in Cmd.run's sheet.
+      b.addEventListener("click", () => this.exec(q));
     });
   },
   paint() {
@@ -468,13 +460,13 @@ const quick = {
       b.classList.toggle("is-unknown", !st);
       const off = archived() || !!a.none;
       b.setAttribute("aria-disabled", off ? "true" : "false");
-      const what = a.cmd ? (a.hold ? a.hint : t("cmd." + a.cmd)) : a.menu ? t("home.q.tonneau") : a.none || "";
+      const what = a.cmd ? t("cmd." + a.cmd) : a.menu ? t("home.q.tonneau") : a.none || "";
       b.setAttribute("aria-label", `${q.label()}: ${st ? st[0] : "–"}${what ? ` — ${what}` : ""}`);
       b.title = what;
     }
   },
-  run(id) { const q = QUICK.find((x) => x.id === id); if (q) this.exec(q, false); },
-  async exec(q, held) {
+  run(id) { const q = QUICK.find((x) => x.id === id); if (q) this.exec(q); },
+  async exec(q) {
     const c = car();
     const a = q.action(c);
     const b = this.els[q.id];
@@ -491,7 +483,6 @@ const quick = {
     }
     const what = t("cmd." + cmd);
     await Cmd.run(cmd, null, {
-      confirmed: held,
       onState: (phase, info) => {
         if (phase === "pending") {
           b.classList.add("is-pending"); b.setAttribute("aria-busy", "true");
@@ -555,7 +546,7 @@ function paintPlate() {
     tyreV = `${lo === hi ? fmt.fixed(lo, d) : `${fmt.fixed(lo, d)}–${fmt.fixed(hi, d)}`} ${U.pressLabel()}`;
     const soft = ["fl", "fr", "rl", "rr"].filter((k) => truthy(c[`tpms_soft_warning_${k}`]));
     tyreWarn = soft.length > 0;
-    tyreSub = tyreWarn ? t("home.plate.tyre_low", { corner: soft.map((k) => t("tire." + k)).join("、") }) : t("home.plate.tyres_ok");
+    tyreSub = tyreWarn ? t("home.plate.tyre_low", { corner: fmt.list(soft.map((k) => t("tire." + k))) }) : t("home.plate.tyres_ok");
   }
   cells.push(`<button type="button" class="pc" id="pc-tyres" aria-pressed="${tyresOn}"><span class="pc-l">${esc(t("home.card.tyres"))}</span><span class="pc-v">${esc(tyreV)}</span><span class="pc-s${tyreWarn ? " is-warn" : ""}">${esc(tyresOn ? t("home.plate.tyres_hide") : tyreSub)}</span></button>`);
   // software

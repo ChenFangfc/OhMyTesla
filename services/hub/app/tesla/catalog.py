@@ -179,7 +179,7 @@ _ALL: list[Cmd] = [
         expect={"charge_port_door_open": False}),
     Cmd("homelink", "closures", "garage", "trigger_homelink", lambda p: {"lat": p["_lat"], "lon": p["_lon"]},
         rest="trigger_homelink", body=lambda p: {"lat": p["_lat"], "lon": p["_lon"]},
-        needs_location=True, risk=1),
+        needs_location=True, risk=2),          # opens the house, not just the car
     Cmd("sunroof_vent", "closures", "window", "sun_roof_control", lambda p: {"state": "vent"},
         rest="sun_roof_control", body=lambda p: {"state": "vent"}, models=SX, risk=1),
     Cmd("sunroof_close", "closures", "window", "sun_roof_control", lambda p: {"state": "close"},

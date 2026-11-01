@@ -142,6 +142,9 @@
   text-wrap: pretty;
 }
 .dh-lede b { color: var(--dh-ink); font-weight: 500; }
+/* The ledger sentence has a space or a comma at every phrase boundary, so in
+   Chinese it breaks only there, never inside 花费 or 933 次行程. */
+:lang(zh) .dh-lede { word-break: keep-all; overflow-wrap: break-word; }
 .dh-lede .u { color: var(--dh-ink-2); font-weight: 400; }
 .dh-lede-sub { margin-top: 6px; font-size: 13px; color: var(--dh-ink-3); max-width: 72ch; }
 
@@ -189,7 +192,13 @@
   font-size: 15px; font-weight: 400; letter-spacing: 0; color: var(--dh-ink-2); margin-left: 4px;
 }
 .dh-kpi-v .u.pre { margin: 0 2px 0 0; }
-.dh-kpi-d { margin-top: 6px; font-size: 13px; line-height: 1.35; color: var(--dh-ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Two lines before an ellipsis: the detail is often the only place a date,
+   a place or a split appears. */
+.dh-kpi-d {
+  margin-top: 6px; font-size: 13px; line-height: 1.35; color: var(--dh-ink-3);
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+  overflow: hidden; text-wrap: pretty;
+}
 .dh-kpi-d .good, .dh-d.good { color: var(--dh-good); }
 .dh-kpi-d .bad, .dh-d.bad { color: var(--dh-bad); }
 .dh-kpi-d .flat, .dh-d.flat { color: var(--dh-ink-3); }
@@ -247,6 +256,7 @@
 .dc-base { stroke: var(--dh-rule-2); stroke-width: 1; shape-rendering: crispEdges; }
 .dc-lab { fill: var(--dh-ink-3); font-size: 11px; font-variant-numeric: tabular-nums; }
 .dc-lab.end { text-anchor: end; }
+.dc-lab.start { text-anchor: start; }
 .dc-lab.mid { text-anchor: middle; }
 .dc-unit { fill: var(--dh-ink-3); font-size: 11px; }
 .dc-bar { fill: var(--dh-data); }
@@ -290,7 +300,11 @@
 .dc-tip .r { display: flex; justify-content: space-between; gap: 12px; }
 .dc-tip .r .v { color: var(--dh-ink); font-variant-numeric: tabular-nums; }
 
-.dh-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; font-size: 12px; color: var(--dh-ink-2); }
+.dh-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: 10px; font-size: 12px; color: var(--dh-ink-2); }
+/* Less ▪▪▪▪▪ More: one scale, set tight; the note about dimmed days sits at
+   the far end, or on its own line on a phone. */
+.dh-legend .dh-ramp { gap: var(--s-1); }
+.dh-legend .dh-legend-note { margin-left: auto; color: var(--dh-ink-3); }
 .dh-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .dh-legend svg { flex: none; overflow: visible; }
 
@@ -557,7 +571,11 @@ details.dh-more > summary .val + .chev { margin-left: 8px; }
 .tr-detail h3 { font-size: 16px; font-weight: 500; margin: 0; line-height: 1.35; }
 .tr-detail .when { font-size: 13px; color: var(--dh-ink-3); margin-top: 2px; }
 .tr-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-top: 16px; font-size: 13px; color: var(--dh-ink-2); }
-.tr-tags .dh-btn { margin-left: auto; }
+/* The trip's own export sits on its title, like Export CSV on the section's;
+   on the category row it fell to a line of its own in English. */
+.tr-dh { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 16px; align-items: center; }
+.tr-dh > h3, .tr-dh > .when { grid-column: 1; }
+.tr-dh > .dh-btn { grid-column: 2; grid-row: 1 / span 2; }
 .tr-tags [role="status"] { font-size: 12px; color: var(--dh-ink-3); }
 .tr-clips { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin-top: 12px; }
 .tr-clip { display: block; text-decoration: none; min-width: 0; }
@@ -592,6 +610,7 @@ details.dh-more > summary .val + .chev { margin-left: 8px; }
 .tl-row .bd { min-width: 0; }
 .tl-row .tt { font-size: 14px; color: var(--dh-ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tl-row .sb { font-size: 12px; color: var(--dh-ink-3); margin-top: 1px; }
+.tl-row .tm { white-space: nowrap; }
 .tl-row .go { color: var(--dh-ink-3); display: inline-flex; align-self: center; }
 .tl-row.k-idle .tt, .tl-row.k-update .tt { color: var(--dh-ink-2); }
 @media (hover: hover) and (pointer: fine) { .tl-row a:hover .tt { text-decoration: underline; text-underline-offset: 3px; } }
@@ -611,7 +630,9 @@ details.dh-more > summary .val + .chev { margin-left: 8px; }
   .tr-wrap, .fp-wrap { grid-template-columns: minmax(0, 1fr); }
   .fp-aside { margin-top: 32px; }
   .fp-list { max-height: none; overflow: visible; }
-  .tr-list { max-height: none; overflow: visible; margin-top: 32px; }
+  .tr-list { max-height: none; overflow: visible; }
+  /* the drive list follows the map; the charging list opens its section */
+  .tr-right .tr-list { margin-top: 32px; }
 }
 
 @media (max-width: 720px) {
@@ -621,31 +642,33 @@ details.dh-more > summary .val + .chev { margin-left: 8px; }
   .dh-per { display: none; }
   .dh-per-btn { display: inline-flex; }
   .dh-ch { padding: 0 10px; font-size: 15px; }
-  .dh-head h1 { font-size: 22px; }
   .dh-lede { font-size: 16px; }
   .dh-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dh-kpi { padding: 14px 0 14px 16px; border-left: 1px solid var(--dh-rule); border-top: 1px solid var(--dh-rule); }
   .dh-kpi:nth-child(odd) { padding-left: 0; border-left: 0; }
   .dh-kpi:nth-child(-n+2) { border-top: 0; padding-top: 0; }
-  .dh-kpi-v { font-size: 28px; }
-  .dh-kpis.small .dh-kpi-v { font-size: 22px; }
+  /* phone steps on the type ramp: 32 → 24, 24 → 20, 44 → 32 */
+  .dh-kpi-v { font-size: 24px; }
+  .dh-kpis.small .dh-kpi-v { font-size: 20px; }
   .dh-sec { margin-top: 40px; }
   .dh-chart { --h: 180px; }
   .dh-chart.tall { --h: 200px; }
-  .dh-answer .big { font-size: 40px; }
+  .dh-answer .big { font-size: 32px; }
   .fp-counters { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 16px; }
   .fp-counter:nth-child(odd) { padding-left: 0; border-left: 0; }
   .fp-counter:nth-child(n+3) { padding-top: 16px; border-top: 1px solid var(--dh-rule); }
-  .fp-counter .v { font-size: 28px; }
+  .fp-counter .v { font-size: 24px; }
   .fp-map { height: 56vh; min-height: 340px; border-radius: 4px; }
   .tr-map { height: 300px; }
-  .dh-figs { gap: 14px 24px; }
+  /* secondary figures in even columns, so a second row lines up with the first */
+  .dh-figs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
   .dh-fig-v { font-size: 18px; }
   .dh-table { font-size: 13px; }
   .dh-hide-sm { display: none; }
   .tl-row a, .tl-row > div { grid-template-columns: 48px 18px minmax(0, 1fr) auto; gap: 0 10px; }
   .dh-flow .row { grid-template-columns: 56px minmax(0, 1fr); }
   .dh-flow .v { grid-column: 2; text-align: left; }
+  .dh-legend .dh-legend-note { flex-basis: 100%; margin-left: 0; }
 }
 
 /* Software versions along time: one hue, alternating lightness, the version
@@ -676,9 +699,49 @@ details.dh-more > summary .val + .chev { margin-left: 8px; }
 .dh [data-shell] { display: contents; }
 .tr-wrap.empty { grid-template-columns: minmax(0, 1fr); }
 .tr-wrap.empty .tr-left { display: none; }
-.dh-kpi-d a, .dh-fig-s a, .dh-tfoot a {
+.dh-kpi-d a, .dh-fig-s a, .dh-tfoot a, .dh-note a {
   text-decoration: underline; text-decoration-color: var(--dh-rule-2); text-underline-offset: 3px;
 }
 @media (hover: hover) and (pointer: fine) {
-  .dh-kpi-d a:hover, .dh-fig-s a:hover, .dh-tfoot a:hover { color: var(--dh-ink); text-decoration-color: currentColor; }
+  .dh-kpi-d a:hover, .dh-fig-s a:hover, .dh-tfoot a:hover, .dh-note a:hover { color: var(--dh-ink); text-decoration-color: currentColor; }
+}
+
+/* ----------------------------------------------- 时间线: one grid, all rows
+   The whole list shares one grid, so the time column is as wide as the
+   longest time in it ("11:25 AM" in English, "22:23" in Chinese) and the
+   icons line up from row to row in either language. Without subgrid the
+   per-row 56/48 px columns above still apply. */
+@supports (grid-template-columns: subgrid) {
+  .tl-evts { display: grid; grid-template-columns: max-content 20px minmax(0, 1fr) auto; column-gap: 12px; }
+  .tl-evts > li { grid-column: 1 / -1; min-width: 0; }
+  .tl-row { display: grid; grid-template-columns: subgrid; }
+  .tl-row a, .tl-row > div { grid-column: 1 / -1; grid-template-columns: subgrid; }
+  @media (max-width: 720px) {
+    .tl-evts { grid-template-columns: max-content 18px minmax(0, 1fr) auto; column-gap: 10px; }
+  }
+}
+/* A route is the row's answer: two lines before an ellipsis. */
+.tl-row .tt { white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+/* The icon sits on the title's first line, like the time beside it, so a
+   route that wraps doesn't pull it down between the lines. */
+.tl-row .ic { align-self: start; margin-top: 3px; }
+
+/* Scrollers (the chapter index, wide tables, the calendar) fade at the edge
+   where more is waiting instead of cutting a word or a column in half.
+   Scroll-driven, so no script; where unsupported the edge stays hard. */
+@property --fade-l { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@property --fade-r { syntax: "<length>"; inherits: false; initial-value: 0px; }
+@keyframes dhEdge {
+  0% { --fade-l: 0px; --fade-r: 24px; }
+  6% { --fade-l: 24px; }
+  94% { --fade-r: 24px; }
+  100% { --fade-l: 24px; --fade-r: 0px; }
+}
+@supports (animation-timeline: scroll()) {
+  .dh-chs, .dh-tscroll {
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 var(--fade-l), #000 calc(100% - var(--fade-r)), transparent);
+    animation: dhEdge linear both;
+    animation-timeline: scroll(self inline);
+  }
 }

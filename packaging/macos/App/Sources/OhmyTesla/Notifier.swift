@@ -14,16 +14,16 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate {
         center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
 
-    func post(id: String, title: String, subtitle: String? = nil, body: String,
-              critical: Bool = false, path: String? = nil) {
+    /// Short by design (the hub's push policy): the title says what happened —
+    /// hub titles already carry their icon and the car — the body where and when.
+    func post(id: String, title: String, subtitle: String? = nil, body: String, path: String? = nil) {
         let content = UNMutableNotificationContent()
         content.title = title
         if let subtitle, !subtitle.isEmpty { content.subtitle = subtitle }
         content.body = body
         // .defaultCritical needs Apple's critical-alerts entitlement, which an
-        // ad-hoc signed app cannot have; critical alerts are marked in the title instead.
+        // ad-hoc signed app cannot have.
         content.sound = .default
-        if critical, !title.hasPrefix("‼️") { content.title = "‼️ " + title }
         content.threadIdentifier = "ohmytesla"
         if let path { content.userInfo = ["path": path] }
         let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)

@@ -626,7 +626,8 @@
       $("#fp-scrub-l").textContent = DH.period === "all" ? t("data.fp.scrub") : t("data.fp.scrub_period");
       const pn = $("#fp-period-n");
       pn.hidden = DH.period === "all";
-      pn.innerHTML = DH.period === "all" ? "" : `${esc(t("data.fp.period_note"))} <a href="?days=all">${esc(t("data.fp.see_all"))}</a>`;
+      const note = t("data.fp.period_note");
+      pn.innerHTML = DH.period === "all" ? "" : `${esc(note)}${fmt.gap(note)}<a href="?days=all">${esc(t("data.fp.see_all"))}</a>`;
       $("#fp-lg-routes").textContent = t(tracks.length === 1 ? "data.fp.lg_routes_one" : "data.fp.lg_routes", { n: tracks.length });
       counters(true);
       paintList();

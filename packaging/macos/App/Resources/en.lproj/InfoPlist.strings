@@ -1,0 +1,3 @@
+/* System prompts and the About panel (English). */
+"NSLocalNetworkUsageDescription" = "OhmyTesla connects to the OhmyTesla server you entered on your local network.";
+"NSHumanReadableCopyright" = "OhmyTesla is free software under the GNU AGPL-3.0. Bundled components keep their own licences (see Contents/Resources/runtime/licenses).";

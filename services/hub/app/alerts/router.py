@@ -299,6 +299,9 @@ async def sentry_fast_poll(body: FastPollBody):
     """0 = off. Never below 5 s (Tesla rate limits), never above 120 s."""
     v = 0 if body.seconds <= 0 else max(5, min(body.seconds, 120))
     await store.set_setting("sentry_fast_poll_seconds", v)
+    from .fastpoll import poller
+
+    poller.invalidate()
     return {"fast_poll_seconds": v}
 
 

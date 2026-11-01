@@ -30,9 +30,9 @@
       const tt = st.totals || {}, ac = (st.ac_dc || {}).AC || {}, dc = (st.ac_dc || {}).DC || {};
       if (!tt.charges) { body.innerHTML = DH.empty(t("data.chg.none"), `<a href="?days=all">${esc(t("data.c.try_all"))}</a>`); return; }
       const priced = isPriced(plan, st);
-      const split = [ac.sessions ? t("data.chg.n_ac", { n: ac.sessions }) : "", dc.sessions ? t("data.chg.n_dc", { n: dc.sessions }) : ""].filter(Boolean).join(" · ");
+      const split = DH.dots([ac.sessions ? t("data.chg.n_ac", { n: ac.sessions }) : "", dc.sessions ? t("data.chg.n_dc", { n: dc.sessions }) : ""]);
       const items = [
-        [t("data.k.sessions"), DH.vu(tt.charges, "", 0), esc(split)],
+        [t("data.k.sessions"), DH.vu(tt.charges, "", 0), split],
         [t("data.chg.added"), DH.vu(tt.added_kwh, "kWh", tt.added_kwh < 100 ? 1 : 0),
           esc(t("data.chg.per_session", { kwh: DH.nf(tt.added_kwh / tt.charges, 1) }))],
         [t("data.chg.used"), DH.vu(tt.used_kwh, "kWh", tt.used_kwh < 100 ? 1 : 0),
@@ -40,8 +40,8 @@
         [t("data.k.cost"), priced ? DH.mv(tt.cost, tt.cost < 100 ? 2 : 0) : '<span class="dash">–</span>',
           priced ? (tt.suc_cost ? esc(t("data.chg.at_suc", { cost: DH.money(tt.suc_cost) })) : "") : ratesLink()],
         [t("data.chg.per_kwh"), priced ? DH.mv(tt.cost_per_kwh, 2) : '<span class="dash">–</span>',
-          priced ? esc([ac.cost_per_kwh != null ? `${t("analytics.charge.ac")} ${DH.money(ac.cost_per_kwh)}` : "",
-                        dc.cost_per_kwh != null ? `${t("data.chg.dc_short")} ${DH.money(dc.cost_per_kwh)}` : ""].filter(Boolean).join(" · ")) : ""],
+          priced ? DH.dots([ac.cost_per_kwh != null ? `${t("analytics.charge.ac")} ${DH.money(ac.cost_per_kwh)}` : "",
+                            dc.cost_per_kwh != null ? `${t("data.chg.dc_short")} ${DH.money(dc.cost_per_kwh)}` : ""]) : ""],
         [t(DH.u.dist() === "mi" ? "data.chg.per_100mi" : "data.chg.per_100km"), priced ? DH.mv(per100(tt.cost_per_100km), 2) : '<span class="dash">–</span>',
           tt.gross_wh_per_km ? esc(t("data.chg.at_cons", { v: `${DH.nf(DH.cv.cons(tt.gross_wh_per_km), 0)} ${DH.u.cons()}` })) : ""],
       ];

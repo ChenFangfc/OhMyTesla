@@ -469,8 +469,9 @@
         d.outside_temp_avg_c != null ? esc(t("data.drv.outside", { v: `${DH.nf(DH.cv.temp(d.outside_temp_avg_c), 0)}${DH.u.temp()}` })) : ""),
     ];
     const cur = (Trips.tags[String(d.id)] || {}).category || "";
-    $("#tr-detail").innerHTML = `<h3>${esc(routeOf(x))}</h3>
+    $("#tr-detail").innerHTML = `<div class="tr-dh"><h3>${esc(routeOf(x))}</h3>
       <div class="when">${esc(DH.date(d.start))} · ${esc(DH.time(d.start))}${d.end ? `–${esc(DH.time(d.end))}` : ""}${d.open ? ` · ${esc(t("data.drv.open"))}` : ""}</div>
+      <a class="dh-btn" href="/api/trips/${d.id}/export.gpx" download><span class="ico-slot" data-icon="download" data-size="15"></span>${esc(t("data.drv.gpx"))}</a></div>
       ${outside ? `<p class="dh-note" style="margin-top:8px">${esc(t("data.drv.outside_period"))}</p>` : ""}
       <div class="dh-figs" style="margin-top:16px">${figs.join("")}</div>
       <div class="dh-grid" style="margin-top:20px">
@@ -482,7 +483,6 @@
         <div class="dh-seg" role="group" aria-label="${esc(t("data.drv.category"))}">${TRIP_CATS.map((c) =>
           `<button type="button" data-cat="${c}" aria-pressed="${c === cur}">${esc(t("trips.cat_" + c))}</button>`).join("")}</div>
         <span role="status" id="tr-tag-st"></span>
-        <a class="dh-btn" href="/api/trips/${d.id}/export.gpx" download><span class="ico-slot" data-icon="download" data-size="15"></span>${esc(t("data.drv.gpx"))}</a>
       </div>
       <div id="tr-clips"></div>`;
     paintIcons($("#tr-detail"));

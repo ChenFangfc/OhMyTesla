@@ -26,8 +26,10 @@ body.app { min-height: 100dvh; }
 .skip:focus { top: var(--s-2); }
 
 /* One colour, always: a bar whose shade depends on what scrolls under it
-   reads as a rendering fault. Opaque ground, one hairline. */
-.bar {
+   reads as a rendering fault. Opaque ground, one hairline. Scoped to the
+   element: ".bar" alone also matched the ranked-list bars and the decrypt
+   progress bar, which turned sticky at z-index 50 and slid over this bar. */
+header.bar {
   position: sticky; top: 0; z-index: 50;
   padding-top: env(safe-area-inset-top, 0px);
   background: var(--bg);
@@ -97,8 +99,12 @@ body.app { min-height: 100dvh; }
 
 @media (max-width: 840px) {
   :root { --bar-h: 48px; --tabbar-h: 56px; }
-  .bar-in { gap: var(--s-2); padding: 0 var(--s-2) 0 var(--s-3); }
+  /* The logo starts on the page's own left edge, like every heading below it. */
+  .bar-in { gap: var(--s-2); padding: 0 var(--s-2) 0 var(--gutter); }
   .nav, .bar-kbd, .brand .word { display: none; }
+  /* Only the mark shows here: give it the bar's full height as a target
+     without moving the car switcher. */
+  .brand { align-self: stretch; padding-right: var(--s-2); margin-right: calc(-1 * var(--s-2)); }
   .carswitch {
     flex: 1; max-width: none; height: 44px; margin-right: 0; padding: 0 6px;
     border-color: transparent;
@@ -116,7 +122,7 @@ body.app { min-height: 100dvh; }
     background: var(--bg); border-top: 1px solid var(--line);
   }
   .tabbar-a {
-    position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+    position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--s-1);
     min-width: 0; color: var(--ink-3); font-size: var(--t-11); font-weight: var(--w-medium);
     -webkit-tap-highlight-color: transparent; touch-action: manipulation;
     transition: color var(--dur-hover) ease;
@@ -269,8 +275,7 @@ dialog.sheet.out .sheet-scrim, dialog.sheet.out .sheet-panel { transition-durati
 
 /* ------------------------------------------------------- command buttons
    .cb — a command. Pressed scales; pending names the operation on the
-   button itself (aria-busy) with a moving highlight on the label;
-   .holdable fills over 2 s and snaps back if released early. */
+   button itself (aria-busy) with a moving highlight on the label. */
 .cb {
   position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   min-height: var(--target); padding: 0 14px;
@@ -294,17 +299,6 @@ dialog.sheet.out .sheet-scrim, dialog.sheet.out .sheet-panel { transition-durati
   animation: labelShimmer 1.4s linear infinite;
 }
 @keyframes labelShimmer { from { background-position: 110% 0; } to { background-position: -110% 0; } }
-
-.holdable { overflow: hidden; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
-.holdable > :not(.hold-fill) { position: relative; z-index: 1; }
-.hold-fill {
-  position: absolute; inset: 0; z-index: 0; pointer-events: none;
-  background: color-mix(in oklab, var(--acc) 34%, transparent);
-  transform: scaleX(0); transform-origin: left center;
-  transition: transform 200ms var(--ease-out);
-}
-.holding .hold-fill { transform: scaleX(1); transition: transform 2s linear; }
-.holding { border-color: var(--acc); }
 
 /* --------------------------------------------------------------- 总览 */
 .ov { padding-bottom: var(--s-6); }
@@ -393,9 +387,10 @@ dialog.sheet.out .sheet-scrim, dialog.sheet.out .sheet-panel { transition-durati
 }
 .now-ic { grid-row: 1 / span 3; display: inline-flex; margin-top: 1px; color: var(--ink-3); }
 .now-t { font-size: var(--t-15); font-weight: var(--w-medium); }
-.now-b { font-size: var(--t-13); color: var(--ink-2); }
+.now-b { font-size: var(--t-13); color: var(--ink-2); text-wrap: pretty; }
 .now-acts { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 6px; }
-.now-a { font-size: var(--t-13); font-weight: var(--w-medium); color: var(--acc-text); background: none; border: 0; padding: 0; min-height: 0; cursor: pointer; font-family: inherit; }
+/* Text actions: the padding is touch height, the negative margin keeps the line where it was. */
+.now-a { font-size: var(--t-13); font-weight: var(--w-medium); color: var(--acc-text); background: none; border: 0; padding: var(--s-2) 0; margin: calc(-1 * var(--s-2)) 0; min-height: 0; cursor: pointer; font-family: inherit; }
 .now-a.quiet { color: var(--ink-3); font-weight: var(--w-regular); }
 .now .charge-track { grid-column: 2; margin-top: 10px; }
 .now.is-live .now-ic { color: var(--acc-text); }
@@ -434,7 +429,7 @@ dialog.sheet.out .sheet-scrim, dialog.sheet.out .sheet-panel { transition-durati
 }
 .qc-foot { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 16px; margin-top: 10px; min-height: 20px; }
 .qc-foot .inline-status { flex: 1 1 auto; min-width: 0; }
-.qc-foot .more { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: var(--t-13); color: var(--ink-2); }
+.qc-foot .more { margin: calc(-1 * var(--s-2)) 0 calc(-1 * var(--s-2)) auto; padding: var(--s-2) 0; display: inline-flex; align-items: center; gap: 4px; font-size: var(--t-13); color: var(--ink-2); }
 
 /* Secondary facts: one hairline-divided plate, not cards. */
 .plate {
@@ -486,10 +481,12 @@ a.pc .pc-v, button.pc .pc-v { display: flex; align-items: center; gap: 4px; }
 /* The setup prompt lives once, in the overview's "now" slot. Here it is
    only a quiet line explaining why the buttons won't answer yet. */
 .ctl-note {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px;
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--s-2); align-items: start;
   margin: calc(-1 * var(--s-2)) 0 var(--s-6); font-size: var(--t-14); color: var(--ink-2);
 }
-.ctl-note > svg { color: var(--wn-text); flex: none; }
+/* the key stays on the first line when the sentence wraps (it was left
+   alone on a line of its own in English) */
+.ctl-note > svg { color: var(--wn-text); margin-top: 2px; }
 .ctl-note a { color: var(--acc-text); font-weight: var(--w-medium); white-space: nowrap; }
 
 .cgrid { columns: 2 440px; column-gap: var(--s-6); }
@@ -509,7 +506,7 @@ a.pc .pc-v, button.pc .pc-v { display: flex; align-items: center; gap: 4px; }
 }
 .cg-sub + .cr { border-top: 0; }
 .cr-l { font-size: var(--t-15); min-width: 0; }
-.cr-l small { display: block; margin-top: 2px; font-size: var(--t-13); color: var(--ink-3); line-height: var(--lead-dense); }
+.cr-l small { display: block; margin-top: 2px; font-size: var(--t-13); color: var(--ink-3); line-height: var(--lead-dense); text-wrap: pretty; }
 .cr-l small.is-warn { color: var(--wn-text); }
 .cr-l small.is-live { color: var(--acc-text); }
 .cr-c { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s-2); }
@@ -529,7 +526,8 @@ a.pc .pc-v, button.pc .pc-v { display: flex; align-items: center; gap: 4px; }
 .stepper .cb { width: var(--target); padding: 0; font-size: var(--t-18); }
 .stepper .val { min-width: 76px; text-align: center; font-size: var(--t-20); font-weight: var(--w-medium); }
 
-.seatgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: var(--s-2); width: 100%; }
+/* auto-fit: the seats share the whole row instead of leaving an empty slot */
+.seatgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: var(--s-2); width: 100%; }
 .seatgrid.two { grid-template-columns: repeat(2, minmax(92px, 140px)); }
 .seat.cb { flex-direction: column; gap: 6px; min-height: 56px; padding: 8px 6px; font-size: var(--t-13); font-weight: var(--w-regular); color: var(--ink-2); }
 .seat .lv { display: flex; gap: 3px; }
@@ -548,6 +546,12 @@ details.cg-more .cg-sub:first-child { border-top: 0; }
 
 @media (max-width: 640px) {
   .cgrid { columns: 1; }
+  /* four seats as 2 × 2, not three and an orphan */
+  .seatgrid:has(> :nth-child(4):last-child) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* a choice on its own line spans it; when English needs two rows, both
+     rows fill the width instead of ending ragged */
+  .cr.stack .segmented { display: flex; width: 100%; }
+  .cr.stack .segmented .cb { flex: 1 1 auto; }
   .cg-h { padding: 14px 16px 12px; }
   .cr { padding: 12px 16px; gap: 8px var(--s-3); }
   .cg-sub { padding: 12px 16px 4px; }
@@ -614,12 +618,16 @@ details.cg-more .cg-sub:first-child { border-top: 0; }
 .inc-top, .inc-what, .inc-meta { grid-column: 2; min-width: 0; }
 .inc-top { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px; font-size: var(--t-13); color: var(--ink-3); }
 .inc-sev { display: inline-flex; align-items: center; gap: 5px; font-weight: var(--w-medium); color: var(--ink-3); }
+/* Time and place share the rest of the line; a long place wraps under the
+   time (a hanging indent), never as a line that starts with the dot. */
+.inc-when { flex: 1 1 0; min-width: 0; }
 .inc.alarm .inc-sev { color: var(--er-text); }
 .inc.activity .inc-sev { color: var(--wn-text); }
 .inc-what { font-size: var(--t-15); }
 .inc-meta { font-size: var(--t-13); color: var(--ink-3); }
 .inc-go { grid-column: 3; grid-row: 1 / span 3; display: inline-flex; align-items: center; gap: 4px; font-size: var(--t-13); font-weight: var(--w-medium); color: var(--acc-text); padding: 6px 0; }
 .inc-more { display: flex; justify-content: center; margin-top: var(--s-6); }
+.inc-more:has(> [hidden]:only-child) { display: none; }   /* no older page: no 24 px of nothing */
 .inc.is-target { background: linear-gradient(var(--acc-tint), var(--acc-tint)) no-repeat; background-size: 100% 100%; box-shadow: inset var(--edge) 0 0 var(--acc); padding-left: var(--s-3); }
 .sec-rules { margin-top: var(--s-12); border-top: 1px solid var(--line); }
 .rule { display: flex; align-items: center; gap: var(--s-3); flex-wrap: wrap; padding: 10px 0; border-top: 1px solid var(--line); }
@@ -639,9 +647,9 @@ details.cg-more .cg-sub:first-child { border-top: 0; }
   .sec-facts { grid-column: 1 / -1; grid-template-columns: minmax(0, 1fr); margin-top: var(--s-3); }
   .sf, .sf + .sf { padding: 10px 0; border-left: 0; }
   .sf + .sf { border-top: 1px solid var(--line); }
-  .sec-acts { grid-column: 1 / -1; flex-direction: row; flex-wrap: wrap; min-width: 0; margin-top: var(--s-3); }
-  .sec-acts .btn { flex: 1 1 140px; }
-  .sec-acts .inline-status { flex-basis: 100%; justify-content: flex-start; }
+  /* stacked in both languages: "Turn on Sentry Mode" doesn't fit beside the
+     test button, and 开启哨兵模式 did, so the two read differently */
+  .sec-acts { grid-column: 1 / -1; min-width: 0; margin-top: var(--s-3); }
   .inc { grid-template-columns: 96px minmax(0, 1fr); }
   .inc-th { width: 96px; grid-row: 1 / span 4; }
   .inc-go { grid-row: auto; grid-column: 2; justify-self: start; padding: 2px 0 0; }
@@ -699,11 +707,9 @@ details.cg-more .cg-sub:first-child { border-top: 0; }
 
 /* --------------------------------------------------- press (all inputs) */
 .qc:not([aria-disabled="true"]):active, .cb:not(:disabled):active, .v3d-btn:active, .bar-btn:active, .carswitch:not(.single):active { transform: scale(.97); }
-.qc.holdable:active, .cb.holdable:active, button.holdable:not(:disabled):active { transform: none; }
 
 /* ------------------------------------------- reduced motion, per component
-   Fewer and softer: fades stay (≤ 200 ms), every move, loop and scale goes.
-   The hold fill stays — it is the progress of the hold, not decoration. */
+   Fewer and softer: fades stay (≤ 200 ms), every move, loop and scale goes. */
 @media (prefers-reduced-motion: reduce) {
   .alert, .alert.leaving, .menu, .menu.in, .sheet-panel, dialog.sheet.in .sheet-panel, dialog.sheet.out .sheet-panel { transform: none !important; }
   @media (max-width: 640px) {
@@ -713,8 +719,6 @@ details.cg-more .cg-sub:first-child { border-top: 0; }
   .radar-sweep { animation: none !important; }
   .sec-inst.is-armed .radar-sweep { opacity: .7; transform: rotate(-30deg); }
   .is-pending .cb-l, .qc.is-pending .qc-s { animation: none !important; background: none; color: var(--ink-2); }
-  .hold-fill { transition-property: transform !important; transition-duration: 200ms !important; }
-  .holding .hold-fill { transition-duration: 2s !important; transition-timing-function: linear !important; }
   .qc:active, .cb:active, .v3d-btn:active, .bar-btn:active, .carswitch:active, .tabbar-a:active .tb-ic { transform: none !important; opacity: .78; }
   .hl { transition: none; }
 }

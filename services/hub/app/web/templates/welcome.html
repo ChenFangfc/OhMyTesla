@@ -20,11 +20,9 @@
       Your password only ever goes to Tesla.
     </p>
     <pre style="background:var(--bg);border:1px solid var(--line);border-radius:var(--r-2);padding:10px 12px;overflow-x:auto;font-size:var(--t-13)"><code>~/Desktop/OhmyTesla/tools/tesla_auth</code></pre>
-    <p class="small muted"><span data-i18n="setup.step1_alt">Or download it here:</span>
-      <a href="https://github.com/adriankumpf/tesla_auth/releases/latest" target="_blank" rel="noopener">tesla_auth</a>
-      ·
-      <a href="https://apps.apple.com/us/app/auth-app-for-tesla/id1552058613" target="_blank" rel="noopener">Auth app for Tesla</a>
-    </p>
+    {# No space after the label in the markup: a Chinese full-width colon
+       carries its own, so the word space is added for Latin text only. #}
+    <p class="small muted"><span data-i18n="setup.step1_alt">Or download it here:</span><span class="dl-links"><a href="https://github.com/adriankumpf/tesla_auth/releases/latest" target="_blank" rel="noopener" class="nowrap">tesla_auth</a> · <a href="https://apps.apple.com/us/app/auth-app-for-tesla/id1552058613" target="_blank" rel="noopener" class="nowrap">Auth app for Tesla</a></span></p>
   </div>
 
   <div class="card mt">
@@ -50,6 +48,10 @@
   </div>
 </div>
 </div>
+<style>
+  .dl-links { margin-inline-start: .3em; }
+  :root:lang(zh) .dl-links { margin-inline-start: 0; }
+</style>
 {% endblock %}
 
 {% block scripts %}
@@ -71,7 +73,7 @@ async function refresh() {
 
   if (st.signed_in && st.cars) {
     el.insertAdjacentHTML("beforeend",
-      `<div class="mt">${t("setup.done")} <a href="/">${t("setup.goto")}</a></div>`);
+      `<div class="mt">${t("setup.done")}${fmt.gap(t("setup.done"))}<a class="tap" href="/">${t("setup.goto")}</a></div>`);
   } else if (st.signed_in) {
     el.insertAdjacentHTML("beforeend",
       `<div class="mt small muted">${t("setup.waiting_vehicle")}</div>`);

@@ -19,7 +19,7 @@
   </header>
   <section id="pick">
     <div class="usb-drop" id="drop" role="button" tabindex="0">
-      <div class="ic"><span class="ico-slot" data-icon="upload" data-size="26"></span></div>
+      <div class="ic"><span class="ico-slot" data-icon="usb" data-size="26"></span></div>
       <div class="t" data-i18n-html="usb.drop.hint"></div>
       <div class="s" data-i18n="usb.drop.privacy"></div>
       <span class="btn primary" data-i18n="usb.drop.choose">Choose folder</span>
@@ -72,7 +72,7 @@
             <div class="pl-track" id="lp-track"></div>
             <input type="range" id="lp-seek" min="0" max="1" step="any" value="0" data-i18n-title="player.seek">
           </div>
-          <select id="lp-rate" class="pl-rate" aria-label="Speed">
+          <select id="lp-rate" class="pl-rate" aria-label="{{ t('player.playback_speed') }}" data-i18n-aria="player.playback_speed">
             <option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option>
           </select>
         </div>
@@ -110,10 +110,11 @@
     background: var(--surface);
     transition: border-color 160ms var(--ease-out), background 160ms var(--ease-out); }
   .usb-drop.over { background: var(--acc-tint); border-color: var(--acc); }
-  .usb-drop .ic { width: 64px; height: 64px; border-radius: var(--r-2); display: grid; place-items: center; background: var(--bg-hover); color: var(--text-secondary); }
-  .usb-drop .t { font-size: var(--t-16); max-width: 52ch; line-height: 1.55; }
+  .usb-drop .ic { display: flex; margin-bottom: var(--s-1); color: var(--ink-3); }
+  /* centred lines break evenly instead of leaving one word on the last line */
+  .usb-drop .t { font-size: var(--t-16); max-width: 52ch; line-height: 1.55; text-wrap: balance; }
   .usb-drop .t code { font-family: var(--font-mono); font-size: var(--t-14); background: var(--bg-hover); padding: 1px 6px; border-radius: var(--r-1); }
-  .usb-drop .s { font-size: var(--t-13); color: var(--text-tertiary); max-width: 60ch; line-height: 1.55; }
+  .usb-drop .s { font-size: var(--t-13); color: var(--text-tertiary); max-width: 60ch; line-height: 1.55; text-wrap: balance; }
   .usb-drop .btn { margin-top: 6px; }
   .usb-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
   .usb-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
@@ -229,7 +230,6 @@
     user_interaction_honk: "dashcam.reason.honk",
   };
   const camName = (c) => { const k = "dashcam.cam." + c; const s = t(k); return s === k ? c : s; };
-  const pauseIcon = (s) => `<svg viewBox="0 0 24 24" width="${s}" height="${s}" fill="currentColor" aria-hidden="true"><rect x="6.5" y="5" width="3.6" height="14" rx="1"/><rect x="13.9" y="5" width="3.6" height="14" rx="1"/></svg>`;
   let localEvents = [], curType = "", fileCount = 0;
 
   /* File names carry the car's local time; see the player for why it is handled as UTC. */
@@ -609,7 +609,7 @@
   }
 
   function paintPlay() {
-    $("lp-play").innerHTML = playing ? pauseIcon(18) : icon("play", 18);
+    $("lp-play").innerHTML = icon(playing ? "pause" : "play", 18);
     $("lp-play").setAttribute("aria-label", playing ? t("player.pause") : t("player.play"));
   }
   function playAll() {

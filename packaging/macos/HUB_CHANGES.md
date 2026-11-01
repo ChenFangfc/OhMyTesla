@@ -2,60 +2,40 @@
 
 The macOS app packages `services/hub/app` exactly as it is checked out — nothing
 in `services/hub/` was modified for it. Everything below works today through a
-workaround in `packaging/macos/`; these are the small hub-side changes that would
-make the app (and other clients) simpler or more correct. Ordered by value.
+workaround in `packaging/macos/` (or not at all, where noted); these are the small
+hub-side changes that would make the app (and other clients) simpler or lighter.
 
-Line numbers refer to the tree as of 2026-10-31 (working tree on top of `93368e0`).
+Line numbers refer to the tree as of 2026-11-01.
 
 ---
 
-## 1. Put the history `id` (and `car_name`, `ts`) on the SSE `alert` event
+## Done
 
-**File:** `app/alerts/engine.py`, `AlertEngine._deliver` (~line 424)
+### Sentry fast poll reads its setting from memory (0.3.0)
 
-**What:** `store.add_alert()` already returns the new row id. Keep it and add it
-to the event you now emit:
+`app/alerts/fastpoll.py` caches `sentry_fast_poll_seconds`: re-read at most once a minute,
+and immediately after **Settings** changes it (`poller.invalidate()`). The loop still
+wakes every second, so Sentry turning on is noticed at once, but an idle pass no longer
+touches SQLite. The note that asked for it follows.
 
-```python
-alert_id = None
-with contextlib.suppress(Exception):
-    alert_id = await store.add_alert(car_id, car_name, rule, level, title, line, delivered,
-                                     channels if push else ["app"])
-live.emit({"type": "alert", "id": alert_id, "ts": time.time(), "car_id": car_id,
-           "car_name": car_name, "rule": rule, "level": level, "title": title,
-           "body": line, "pushed": bool(delivered), "in_app_only": not push, "url": url})
-```
+## Open
 
-**Why:** the app shows a native notification once per alert. History rows have
-an `id`; the SSE event doesn't, so today the app treats the SSE event only as a
-nudge and immediately re-reads `GET /api/alerts/history?limit=20` to find the
-row (and its id) before notifying. With the id (and `in_app_only`, so snoozed /
-quiet-hours alerts are not pushed) on the event, that extra request goes away.
-The app already accepts both shapes, so this can land at any time.
+### 1. Sentry fast poll: don't read SQLite every second (done, above)
 
-## 2. Ignore typed events in the portal's SSE consumer
+**File:** `app/alerts/fastpoll.py`, `_loop()` (~line 122) and `interval()` (~line 82)
 
-**File:** `app/web/static/js/util.js`, `liveConnect()` (`else if (msg.car_id)`)
+**What:** cache the `sentry_fast_poll_seconds` override (refresh it when Settings
+writes it, or at most once a minute), and sleep until the next car is due instead of
+waking every second when no car is eligible (Sentry off, car asleep).
 
-**What:** `} else if (!msg.type && msg.car_id) {`
+**Why:** the loop wakes every second and each pass awaits `store.get_setting()` — an
+aiosqlite round trip through its worker thread — even when no car has Sentry Mode on.
+On an idle Mac the hub is the busiest process of the stack: ~0.11 % CPU and ~24
+wakeups/s (macOS counts idle wakeups against a laptop's battery), while TeslaMate,
+PostgreSQL and Mosquitto together stay under 0.1 %. The fast poll itself must stay
+fast when Sentry is on — this is only about the idle case.
 
-**Why:** the new `{"type": "alert", "car_id": …}` events (and any future typed
-event that carries `car_id`) are treated as a state change and write
-`cars[car_id]["undefined"] = undefined` into the live state on every alert.
-
-## 3. Let "no Grafana" be expressible
-
-**Files:** `app/main.py` `public_config()` (~line 362), `app/web/templates/settings.html` (~line 242/262)
-
-**What:** when `settings.grafana_url` is empty, return `"grafana_url": null` from
-`/api/config` and hide `#lnk-grafana` in Settings.
-
-**Why:** the Mac app ships TeslaMate + hub without Grafana (by design). Today
-`/api/config` always builds `http://<host>:<GRAFANA_PUBLIC_PORT>`, so Settings
-shows an "Open Grafana ↗" button that leads nowhere. The supervisor already
-passes `GRAFANA_URL=` (empty) to the hub so this works as soon as the hub honours it.
-
-## 4. (Optional) a font directory for the overlay renderer
+### 2. (Optional) a font directory for the overlay renderer
 
 **Files:** `app/dashcam/telemetry.py` (`font = "Noto Sans CJK SC"`, ~line 174),
 `app/dashcam/composer.py` (`ass=filename=…`, ~line 208)
@@ -71,32 +51,7 @@ CJK SC fonts (verified: `fontselect: (Noto Sans CJK SC, 700, 0) ->
 independent of how ffmpeg was built (e.g. Homebrew's CoreText-only libass on a
 bare-metal Mac). Not needed for the app.
 
-## 5. (Minor) MQTT reader exception at shutdown
-
-**File:** `app/livestate.py`, `_run()` → `read_messages()` (~line 279)
-
-**What:** when the listener task is cancelled, cancel and await the `reader`
-task inside `contextlib.suppress(aiomqtt.MqttError, asyncio.CancelledError)`
-(or catch `MqttError` in `read_messages` when the client is closing).
-
-**Why:** every clean stop of the hub logs
-`asyncio ERROR Task exception was never retrieved … aiomqtt.exceptions.MqttError:
-Disconnected during message iteration`. Harmless, but it shows up in the app's
-`hub.log` on every restart and looks like a crash.
-
-## 6. (Minor) Serve `/manifest.json` without auth
-
-**File:** `app/main.py`, `_PUBLIC_PATHS` (~line 141)
-
-**What:** add `"/manifest.json"` to `_PUBLIC_PATHS`.
-
-**Why:** `shell.html` already links it with `crossorigin="use-credentials"`, but
-WebKit's manifest loader (WKWebView in the app, and Safari) still requests it
-without answering the Basic-auth challenge, so every page load logs
-`auth failed for GET /manifest.json` twice. The manifest is static (name, icons,
-colours) — nothing in it needs protecting.
-
-## 7. (FYI) Bluetooth from the hub on macOS
+### 3. (FYI) Bluetooth from the hub on macOS
 
 `tesla-fleet-api` pulls in `bleak` + `pyobjc-framework-CoreBluetooth`. In the
 app the hub is a background `python3.13` started by a LaunchAgent, not an app
@@ -104,13 +59,27 @@ bundle with `NSBluetoothAlwaysUsageDescription`, so macOS privacy controls (TCC)
 will not let it use Bluetooth. Signed commands over the Fleet API (HTTPS) are
 unaffected. If BLE commands from the Mac are a goal, tell us and we will look at
 making the app — not the background interpreter — the responsible process.
+(Memory is not an issue here: none of it is imported until a command is sent.)
+
+---
+
+## Done in the hub (kept for reference)
+
+* **History `id`, `ts`, `car_name`, `in_app_only` on the SSE `alert` event** — the app
+  notifies each alert once by its id and no longer pushes snoozed / quiet-hours alerts
+  from the event.
+* **The portal's SSE consumer ignores typed events** (`util.js`, `else if (msg.type)`).
+* **No Grafana is expressible**: `/api/config` returns `"grafana_url": null` when
+  `GRAFANA_URL` is empty (the supervisor passes it empty).
+* **MQTT reader exception at shutdown** is cancelled and awaited (`livestate.py`).
+* **`/manifest.json` is served without auth** (`_PUBLIC_PATHS`).
 
 ---
 
 ### Already fine — no change needed
 
 * **Bind address:** the supervisor runs `python -m uvicorn app.main:app --host 127.0.0.1 --port …`
-  (`HUB_BIND=0.0.0.0` in `config.env` opts into LAN access).
+  (`HUB_BIND=0.0.0.0` in `config.env` opts into LAN access); one worker process.
 * **Writable data:** `DATA_DIR=~/Library/Application Support/OhmyTesla/hub` (3D models,
   `hub.db`, exports, previews all land there).
 * **Postgres over a Unix socket:** `TM_DB_HOST` is the socket directory; asyncpg treats an
@@ -120,3 +89,8 @@ making the app — not the background interpreter — the responsible process.
 * **Signed commands:** done in-process by `tesla-fleet-api`; the app does not bundle Tesla's
   Go `tesla-http-proxy` and never sets `TESLA_COMMAND_PROXY`. `PUBLIC_URL` (needed by the
   Settings › Vehicle commands wizard) is passed through from `config.env`.
+* **Memory:** no single import dominates the hub's ~73 MB (pydantic, FastAPI,
+  cryptography, asyncpg, httpx, Jinja2 share it); nothing to make lazy.
+* **The menu-bar panel** reads only existing endpoints: `/api/overview`, `/api/cars`,
+  `/api/alerts/history?limit=1`, `/api/alerts/snooze` (GET; POST to pause alerts),
+  `/api/health/detail`, `/api/prefs` — and the live stream it already follows.

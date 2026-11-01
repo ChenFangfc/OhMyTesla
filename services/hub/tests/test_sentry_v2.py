@@ -306,6 +306,12 @@ async def main():
         S.settings.sentry_escalate_seconds = real_escalate
         await store.set_setting("home_location", None)
 
+    # The default home name follows the owner's language; a name they chose doesn't.
+    check("home label: 家 / Home follow the language, custom names stay",
+          [S.place_label("家", True, "en"), S.place_label("Home", True, "zh"), S.place_label("", True, "en"),
+           S.place_label("Garage", True, "zh"), S.place_label("家", False, "en")]
+          == ["Home", "家", "Home", "Garage", "家"])
+
     for task in asyncio.all_tasks():
         if task is not asyncio.current_task():
             task.cancel()

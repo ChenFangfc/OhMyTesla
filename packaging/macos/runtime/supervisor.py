@@ -25,6 +25,12 @@ Logs: ~/Library/Logs/OhmyTesla/<service>.log, rotated (10 MB x 5).
 Every listener binds 127.0.0.1 only. Ports default to 47800 (hub), 47801
 (TeslaMate) and 47883 (MQTT); a busy port moves to the next free one and the
 choice is written to state.json. PostgreSQL listens on a Unix socket only.
+
+Light at idle — it runs all day on a laptop: the loop sleeps 5 s once
+everything is up (1 s while something starts or stops) and is woken at once by
+SIGCHLD (a service exited) and SIGUSR1 (the app wrote control.json; state.json
+version >= 2 advertises that). Health checks run every 30 s, state.json is
+rewritten on every change and at least every 30 s as a heartbeat.
 """
 
 from __future__ import annotations
@@ -38,18 +44,18 @@ import logging
 import logging.handlers
 import os
 import resource
-import secrets
 import signal
 import socket
 import subprocess
 import sys
 import threading
 import time
-import urllib.error
-import urllib.request
 from pathlib import Path
 
-STATE_VERSION = 1
+STATE_VERSION = 2          # 2: SIGUSR1 wakes the loop; heartbeat every HEARTBEAT_S
+HEARTBEAT_S = 30
+STEADY_NAP_S = 5.0
+BUSY_NAP_S = 1.0
 DEFAULT_PORTS = {"hub": 47800, "teslamate": 47801, "mqtt": 47883, "postgres": 47432}
 PORT_OVERRIDES = {"hub": "OHMYTESLA_PORT", "teslamate": "TESLAMATE_PORT", "mqtt": "MQTT_PORT",
                   "postgres": "POSTGRES_PORT"}
@@ -60,8 +66,26 @@ PORTAL_USER = "ohmytesla"
 # verbatim (SMTP_*, TELEGRAM_*, NTFY_*, TESLACAM_ROOT, TESLA_API_HOST, ...).
 RESERVED = {"ENCRYPTION_KEY", "TM_DB_PASS", "OHMYTESLA_PASSWORD", "SECRET_KEY_BASE", "SIGNING_SALT",
             "TM_DB_HOST", "TM_DB_PORT", "TM_DB_USER", "TM_DB_NAME", "MQTT_HOST", "DATA_DIR",
-            "TESLAMATE_URL", "TESLAMATE_PUBLIC_PORT", "HUB_BIND", "POSTGRES_TCP",
+            "TESLAMATE_URL", "TESLAMATE_PUBLIC_PORT", "HUB_BIND", "POSTGRES_TCP", "POSTGRES_SHARED_BUFFERS",
             *PORT_OVERRIDES.values()}
+# A desktop-sized TeslaMate: two schedulers that sleep instead of spinning when
+# idle, a smaller process table, and code loaded when first used rather than all
+# at boot (about 120 MB less memory). Overridable with TESLAMATE_ERL_FLAGS /
+# TESLAMATE_RELEASE_MODE / TESLAMATE_DATABASE_POOL_SIZE in config.env.
+TESLAMATE_ERL_FLAGS = "+S 2:2 +SDcpu 2:2 +SDio 2 +sbwt none +sbwtdcpu none +sbwtdio none +P 65536"
+TESLAMATE_POOL_SIZE = "5"
+# PostgreSQL 18 for one user and a handful of connections: synchronous I/O (no
+# I/O worker processes), no logical replication launcher, autovacuum that looks
+# every 5 min instead of every minute, and a smaller buffer cache.
+POSTGRES_SETTINGS = (
+    "max_connections=30",            # TeslaMate 5 + hub 5 + hub read-only 2 + psql, with room to spare
+    "io_method=sync",
+    "max_worker_processes=4",
+    "max_parallel_workers=2",
+    "max_logical_replication_workers=0",
+    "autovacuum_max_workers=2",
+    "autovacuum_naptime=5min",
+)
 _PW_ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789"
 log = logging.getLogger("supervisor")
 
@@ -129,11 +153,15 @@ def load_env_file(path: Path) -> dict[str, str]:
 
 
 def portal_password() -> str:
+    import secrets   # here, not at the top: it pulls in OpenSSL, needed once per install
+
     return "-".join("".join(secrets.choice(_PW_ALPHABET) for _ in range(5)) for _ in range(4))
 
 
 def ensure_config(path: Path) -> tuple[dict[str, str], bool]:
     """Create config.env with fresh secrets on first run; add any missing ones later."""
+    import secrets
+
     generators = {
         "ENCRYPTION_KEY": lambda: secrets.token_urlsafe(48),
         "TM_DB_PASS": lambda: secrets.token_urlsafe(24),
@@ -202,24 +230,30 @@ def tcp_ok(port: int) -> bool:
         return c.connect_ex(("127.0.0.1", port)) == 0
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *a, **k):  # noqa: ANN002, ANN003
-        return None
-
-
-_opener = urllib.request.build_opener(_NoRedirect)
-
-
-def http_status(url: str, auth: str | None = None, timeout: float = 4.0) -> tuple[int, bytes]:
-    req = urllib.request.Request(url)
+def http_status(port: int, path: str, auth: str | None = None, timeout: float = 4.0) -> tuple[int, bytes]:
+    """GET http://127.0.0.1:<port><path> -> (status, body); (0, b"") when nothing
+    answers. HTTP/1.0 on a plain socket (loopback only: no TLS, no redirects), so
+    a process that runs all day never imports urllib, http.client or ssl."""
+    request = f"GET {path} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n"
     if auth:
-        req.add_header("Authorization", "Basic " + base64.b64encode(auth.encode()).decode())
+        request += "Authorization: Basic " + base64.b64encode(auth.encode()).decode() + "\r\n"
+    chunks: list[bytes] = []
     try:
-        with _opener.open(req, timeout=timeout) as r:
-            return r.status, r.read(65536)
-    except urllib.error.HTTPError as e:
-        return e.code, b""
-    except Exception:  # noqa: BLE001 — connection refused, timeout, ...
+        with socket.create_connection(("127.0.0.1", port), timeout=timeout) as s:
+            s.sendall((request + "\r\n").encode())
+            size = 0
+            while size < 1 << 20:
+                b = s.recv(65536)
+                if not b:
+                    break
+                chunks.append(b)
+                size += len(b)
+    except OSError:      # refused, reset, timeout
+        return 0, b""
+    head, _, body = b"".join(chunks).partition(b"\r\n\r\n")
+    try:
+        return int(head.split(b" ", 2)[1]), body
+    except (IndexError, ValueError):
         return 0, b""
 
 
@@ -260,7 +294,7 @@ class Service:
     command, used for TeslaMate's migrations)."""
 
     def __init__(self, sup: Supervisor, name: str, title: str, deps: list[str],
-                 start_timeout: float, health_interval: float = 10.0, stamp: bool = True) -> None:
+                 start_timeout: float, health_interval: float = 30.0, stamp: bool = True) -> None:
         self.sup = sup
         self.name = name
         self.title = title
@@ -443,16 +477,19 @@ class Postgres(Service):
     def argv(self) -> list[str]:
         s = self.sup
         listen = "127.0.0.1" if s.cfg.get("POSTGRES_TCP", "") in ("1", "true", "yes") else ""
-        return [str(s.paths.pg_bin / "postgres"), "-D", str(s.paths.pgdata),
+        argv = [str(s.paths.pg_bin / "postgres"), "-D", str(s.paths.pgdata),
                 "-c", f"listen_addresses={listen}",
                 "-c", f"port={s.ports['postgres']}",
                 "-c", f"unix_socket_directories={s.sockdir}",
                 "-c", "unix_socket_permissions=0700",
                 "-c", "jit=off",
                 "-c", "timezone=UTC", "-c", "log_timezone=UTC",
-                "-c", "max_connections=50",
+                "-c", f"shared_buffers={s.cfg.get('POSTGRES_SHARED_BUFFERS') or '64MB'}",
                 "-c", "logging_collector=off",
                 "-c", "log_line_prefix=%m [%p] "]
+        for setting in POSTGRES_SETTINGS:
+            argv += ["-c", setting]
+        return argv
 
     def prepare_argv(self) -> list[str] | None:
         return None
@@ -526,20 +563,25 @@ class TeslaMate(Service):
             "RELEASE_TMP": str(p.tm_home / "tmp"),
             # No Erlang distribution: no epmd daemon, no extra listening port.
             "RELEASE_DISTRIBUTION": "none",
+            "RELEASE_MODE": "interactive",
+            "ERL_FLAGS": TESLAMATE_ERL_FLAGS,
+            "DATABASE_POOL_SIZE": TESLAMATE_POOL_SIZE,
             "ERL_CRASH_DUMP": str(p.logs / "teslamate_erl_crash.dump"),
             "OPENSSL_CONF": str(p.openssl_cnf),
         })
         for k in ("TESLA_API_HOST", "TESLA_AUTH_HOST", "TESLA_AUTH_PATH", "TESLA_WSS_HOST",
                   "TESLA_WSS_TLS_ACCEPT_INVALID_CERTS", "TESLA_WSS_USE_VIN", "TOKEN",
                   "DEFAULT_GEOFENCE", "MQTT_NAMESPACE", "MQTT_HOME_ASSISTANT_DISCOVERY",
-                  "DATABASE_POOL_SIZE", "DATABASE_TIMEOUT"):
+                  "DATABASE_POOL_SIZE", "DATABASE_TIMEOUT", "ERL_FLAGS", "RELEASE_MODE"):
             if s.cfg.get(f"TESLAMATE_{k}"):
                 e[k] = s.cfg[f"TESLAMATE_{k}"]
         return e
 
     def check(self) -> bool:
-        status, _ = http_status(f"http://127.0.0.1:{self.sup.ports['teslamate']}/")
-        return 0 < status < 500
+        # TeslaMate's own probe: answered by the endpoint itself, no page render
+        # and no database queries (GET / renders the whole car page).
+        status, _ = http_status(self.sup.ports["teslamate"], "/health_check")
+        return status == 200
 
     def stop_proc(self, proc: subprocess.Popen) -> None:
         # The BEAM treats SIGTERM as init:stop() — a clean shutdown.
@@ -591,7 +633,7 @@ class Hub(Service):
         return e
 
     def check(self) -> bool:
-        status, body = http_status(f"http://127.0.0.1:{self.sup.ports['hub']}/healthz")
+        status, body = http_status(self.sup.ports["hub"], "/healthz")
         if status != 200:
             return False
         try:
@@ -836,7 +878,7 @@ class Supervisor:
         if self.keep_awake and self.desired == "running" and self.services["hub"].state == "running":
             if now - self.last_sentry_check >= 30:
                 self.last_sentry_check = now
-                status, body = http_status(f"http://127.0.0.1:{self.ports['hub']}/api/live/state",
+                status, body = http_status(self.ports["hub"], "/api/live/state",
                                            auth=f"{PORTAL_USER}:{self.cfg['OHMYTESLA_PASSWORD']}")
                 if status == 200:
                     try:
@@ -889,8 +931,8 @@ class Supervisor:
             "mode": "child" if self.parent_pid else "agent",
         }
         body = json.dumps(state, sort_keys=True)
-        # rewrite on change, and at least every 5 s so the app can tell we're alive
-        if not force and body == self.last_state and time.time() - self.last_write < 5:
+        # rewrite on change, and at least every HEARTBEAT_S so the app can tell we're alive
+        if not force and body == self.last_state and time.time() - self.last_write < HEARTBEAT_S:
             return
         self.last_state = body
         self.last_write = time.time()
@@ -927,10 +969,24 @@ class Supervisor:
         self.stopping = True
         self.wake.set()
 
+    def nap(self) -> float:
+        """How long the loop may sleep: briefly while anything starts, stops or
+        retries; longer once everything has settled. A signal cuts it short."""
+        settled = ("running", "stopped", "disabled")
+        if self.error or any(x.state not in settled for x in self.services.values()):
+            return BUSY_NAP_S
+        return STEADY_NAP_S
+
+    def poke(self, *_: object) -> None:
+        """SIGCHLD (a service exited) or SIGUSR1 (the app changed control.json)."""
+        self.wake.set()
+
     def run(self) -> int:
         signal.signal(signal.SIGTERM, self.request_stop)
         signal.signal(signal.SIGINT, self.request_stop)
         signal.signal(signal.SIGHUP, self.request_restart)
+        signal.signal(signal.SIGUSR1, self.poke)
+        signal.signal(signal.SIGCHLD, self.poke)
         prepared = False
         active = False
         while not self.stopping:
@@ -979,7 +1035,7 @@ class Supervisor:
                     self.services[name].tick(time.time())
                 self.keep_awake_tick(now)
             self.write_state()
-            self.wake.wait(1.0)
+            self.wake.wait(self.nap())
             self.wake.clear()
         log.info("shutting down")
         self.stop_all()

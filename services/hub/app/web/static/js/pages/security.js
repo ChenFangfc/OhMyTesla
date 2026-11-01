@@ -78,7 +78,7 @@
     if (channels) {
       const ready = channels.channels.filter((x) => x.ready).map((x) => t("ch." + x.name));
       if (channels.webpush_devices) ready.push(t("ch.webpush"));
-      facts.push([t("security.f_where"), ready.length ? ready.join("、")
+      facts.push([t("security.f_where"), ready.length ? fmt.list(ready)
         : `<a href="/settings#notifications">${esc(t("security.no_channel"))}</a>`, ready.length ? "" : "is-warn", !ready.length]);
     }
     if (config) facts.push([t("security.f_home"), config.home ? t("security.home_policy." + ((config.policies || {}).__home__ || "escalated")) : t("security.no_home"), ""]);
@@ -109,7 +109,7 @@
       if (k !== day) { html += `<div class="inc-day">${esc(k)}</div>`; day = k; }
       const sev = severity(r);
       const reasons = reasonText(r);
-      const time = new Date(r.started * 1000).toLocaleTimeString(localeTag(), { hour: "2-digit", minute: "2-digit" });
+      const time = new Date(r.started * 1000).toLocaleTimeString(localeTag(), { hour: fmt.hour(), minute: "2-digit" });
       const dur = r.duration >= 60 ? t("security.lasted_min", { n: Math.round(r.duration / 60) }) : r.duration > 1 ? t("security.lasted_s", { n: Math.round(r.duration) }) : "";
       const clip = r.clip;
       const thumb = clip && clip.thumb
@@ -119,9 +119,9 @@
       html += `<article class="inc ${sev}" id="inc-${r.id}">
         ${thumb}
         <div class="inc-top"><span class="inc-sev">${icon(SEV_ICON[sev], 15)}<span>${esc(t("security.lvl_" + sev))}</span></span>
-          <time datetime="${new Date(r.started * 1000).toISOString()}">${esc(time)}</time>${r.geofence ? `<span>· ${esc(r.geofence)}</span>` : ""}</div>
+          <span class="inc-when"><time datetime="${new Date(r.started * 1000).toISOString()}">${esc(time)}</time>${r.geofence ? `\u00a0· ${esc(r.geofence)}` : ""}</span></div>
         <div class="inc-what">${esc(reasons[0] || t("security.lvl_" + sev))}</div>
-        <div class="inc-meta">${esc([...reasons.slice(1), dur, r.soc ? fmt.pct(Number(r.soc)) : "", t("sentry.source." + (r.source || "polled"))].filter(Boolean).join(" · "))}</div>
+        <div class="inc-meta">${fmt.dots([...reasons.slice(1), dur, r.soc ? fmt.pct(Number(r.soc)) : "", t("sentry.source." + (r.source || "polled"))])}</div>
         ${href ? `<a class="inc-go" href="${href}">${esc(t("security.watch"))}${icon("arrow", 14)}</a>` : ""}
       </article>`;
     }
@@ -194,7 +194,7 @@
     const other = list.filter((a) => !String(a.rule).startsWith("sentry"));
     $("v-other").textContent = other.length ? String(other.length) : "";
     $("other-body").innerHTML = other.length ? other.map((a) => `<div class="rule"><span class="nm">${esc(plain(a.title))}
-        <span class="lv">${esc(new Date(a.ts * 1000).toLocaleString(localeTag()))}${a.delivered ? "" : " · " + esc(t("security.not_delivered"))}</span></span></div>`).join("")
+        <span class="lv">${esc(fmt.dt(new Date(a.ts * 1000).toISOString()))}${a.delivered ? "" : " · " + esc(t("security.not_delivered"))}</span></span></div>`).join("")
       : `<div class="body-sm">${esc(t("security.none_other"))}</div>`;
   }
 
@@ -238,7 +238,7 @@
       try {
         const r = await apiPost("/api/alerts/test");
         st.className = "inline-status " + (r.ok ? "is-done" : "is-fail");
-        st.innerHTML = `${icon(r.ok ? "check" : "warn", 14)}<span>${esc(r.ok ? t("security.test_sent", { list: (r.channels || []).join("、") }) : t("security.test_none"))}</span>`;
+        st.innerHTML = `${icon(r.ok ? "check" : "warn", 14)}<span>${esc(r.ok ? t("security.test_sent", { list: fmt.list(r.channels || []) }) : t("security.test_none"))}</span>`;
       } catch (err) {
         st.className = "inline-status is-fail"; st.innerHTML = `${icon("warn", 14)}<span>${esc(err.message)}</span>`;
       }

@@ -95,6 +95,17 @@ def _haversine_m(a: tuple[float, float], b: tuple[float, float]) -> float:
     return 2 * r * math.asin(math.sqrt(h))
 
 
+_DEFAULT_HOME_NAMES = frozenset({"", "home", "家"})
+
+
+def place_label(label: str, at_home: bool, locale: str) -> str:
+    """The place as the owner reads it. An unnamed home (or the stored default)
+    says 家 or Home in the owner's language; policies keep the stored label."""
+    if at_home and (label or "").strip().lower() in _DEFAULT_HOME_NAMES:
+        return t("sentrycfg.home", locale)
+    return label
+
+
 @dataclass
 class Session:
     car_id: str
@@ -456,7 +467,7 @@ class SentryService:
 
         now = datetime.now(_tz())
         when = now.strftime("%H:%M") if loc == "zh" else now.strftime("%-I:%M %p")
-        body = " · ".join(x for x in (sess.geofence, when) if x)
+        body = " · ".join(x for x in (place_label(sess.geofence, at_home, loc), when) if x)
         delivered = await self._fire(
             sess.car_id, level, title, body,
             rule="sentry_activity", gate="sentry_panic" if alarm else "sentry_aware",

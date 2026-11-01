@@ -22,7 +22,7 @@ from ..config import settings
 from ..i18n.router import t
 from ..livestate import live
 from . import notifier
-from .sentry import car_label
+from .sentry import car_label, place_label
 from .sentry import tracker as sentry_tracker
 from .store import store
 
@@ -484,7 +484,8 @@ class AlertEngine:
         """'Home · 10:41 PM' — the one line a push body needs."""
         place = ""
         with contextlib.suppress(Exception):
-            place, _ = await sentry_tracker.place(live.cars.get(car_id, {}))
+            place, at_home = await sentry_tracker.place(live.cars.get(car_id, {}))
+            place = place_label(place, at_home, loc)
         now = datetime.now(_tz())
         when = now.strftime("%H:%M") if loc == "zh" else now.strftime("%-I:%M %p")
         return " · ".join(x for x in (place, when) if x)

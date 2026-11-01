@@ -35,10 +35,33 @@ struct SupervisorState: Decodable, Equatable {
         return try? d.decode(SupervisorState.self, from: data)
     }
 
-    /// The supervisor rewrites the file at least every 5 s while alive.
-    var isFresh: Bool {
-        guard let pid, let updated else { return false }
-        return kill(pid_t(pid), 0) == 0 && Date().timeIntervalSince1970 - updated < 20
+    /// The supervisor rewrites the file on every change and at least every 30 s
+    /// (version 1 supervisors: every 5 s) while it is alive.
+    static let freshFor: TimeInterval = 95
+
+    /// Same content, whatever the heartbeat time: a heartbeat alone is no change.
+    static func == (a: SupervisorState, b: SupervisorState) -> Bool {
+        a.version == b.version && a.pid == b.pid && a.status == b.status && a.desired == b.desired
+            && a.error == b.error && a.firstRun == b.firstRun && a.ports == b.ports && a.services == b.services
+            && a.keepAwake == b.keepAwake && a.mode == b.mode
+    }
+
+    /// Wake the supervisor so it reads control.json now rather than within 5 s.
+    /// Only a version-2 supervisor of this very app (others would die of SIGUSR1).
+    static func poke() {
+        guard let s = load(), s.version >= 2, let pid = s.pid, pid > 0 else { return }
+        var buffer = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        guard proc_pidpath(pid_t(pid), &buffer, UInt32(buffer.count)) > 0 else { return }
+        let path = URL(fileURLWithPath: String(cString: buffer)).resolvingSymlinksInPath().path
+        let runtime = AppPaths.runtime.resolvingSymlinksInPath().path
+        guard path.hasPrefix(runtime + "/") else { return }
+        // The hub runs the same python3; the supervisor is the one started by
+        // launchd (LaunchAgent) or by this app (fallback child).
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid_t(pid), PROC_PIDTBSDINFO, 0, &info, size) == size,
+              info.pbi_ppid == 1 || info.pbi_ppid == UInt32(getpid()) else { return }
+        kill(pid_t(pid), SIGUSR1)
     }
 
     var hubURL: URL? {
@@ -75,6 +98,7 @@ struct ControlFile: Codable {
         if let data = try? JSONEncoder().encode(self) {
             try? data.write(to: AppPaths.control, options: .atomic)
         }
+        SupervisorState.poke()
     }
 }
 
@@ -87,7 +111,29 @@ final class SupervisorController: ObservableObject {
 
     @Published private(set) var runMode: RunMode = .none
     /// Something the user should know about how the services are being run.
-    @Published private(set) var notice: String?
+    @Published private(set) var notice: Notice?
+
+    enum Notice: Equatable {
+        case translocated, needsApproval, registerFailed(String), startFailed(String)
+
+        var text: String {
+            switch self {
+            case .translocated:
+                return tr("OhmyTesla 正从临时的只读位置运行。请把它移到“应用程序”文件夹再打开，关闭窗口后才能继续监控。",
+                          "OhmyTesla is running from a temporary, read-only location. Move it to Applications and "
+                          + "open it again to keep monitoring with the app closed.")
+            case .needsApproval:
+                return tr("请在“系统设置 › 通用 › 登录项”中允许 OhmyTesla，应用关闭后才能继续监控。在此之前，服务只在应用打开时运行。",
+                          "Allow OhmyTesla under System Settings › General › Login Items to keep monitoring when the "
+                          + "app is closed. Until then the services run only while the app is open.")
+            case .registerFailed(let why):
+                return tr("无法安装后台服务（\(why)）。服务只在应用打开时运行。",
+                          "Could not install the background service (\(why)). The services run only while the app is open.")
+            case .startFailed(let why):
+                return tr("无法启动服务：\(why)", "Could not start the services: \(why)")
+            }
+        }
+    }
 
     private var child: Process?
     private let agent = SMAppService.agent(plistName: AppPaths.agentPlistName)
@@ -108,8 +154,7 @@ final class SupervisorController: ObservableObject {
             return
         }
         if translocated {
-            startChild(reason: "OhmyTesla is running from a temporary, read-only location (App Translocation). "
-                + "Move it to the Applications folder and open it again to keep monitoring with the app closed.")
+            startChild(reason: .translocated)
             return
         }
         switch agent.status {
@@ -117,23 +162,20 @@ final class SupervisorController: ObservableObject {
             runMode = .agent
             notice = nil
         case .requiresApproval:
-            startChild(reason: "Allow OhmyTesla under System Settings › General › Login Items so monitoring "
-                + "continues when the app is closed. Until then the services run only while the app is open.")
+            startChild(reason: .needsApproval)
         case .notRegistered, .notFound:
             fallthrough
         @unknown default:
             do {
                 try agent.register()
                 if agent.status == .requiresApproval {
-                    startChild(reason: "Allow OhmyTesla under System Settings › General › Login Items so "
-                        + "monitoring continues when the app is closed.")
+                    startChild(reason: .needsApproval)
                 } else {
                     runMode = .agent
                     notice = nil
                 }
             } catch {
-                startChild(reason: "Could not install the background service (\(error.localizedDescription)). "
-                    + "The services run only while the app is open.")
+                startChild(reason: .registerFailed(error.localizedDescription))
             }
         }
     }
@@ -159,7 +201,7 @@ final class SupervisorController: ObservableObject {
 
     // MARK: child-process fallback
 
-    private func startChild(reason: String?) {
+    private func startChild(reason: Notice?) {
         notice = reason
         if let child, child.isRunning {
             runMode = .child
@@ -179,7 +221,7 @@ final class SupervisorController: ObservableObject {
             child = p
             runMode = .child
         } catch {
-            notice = "Could not start the services: \(error.localizedDescription)"
+            notice = .startFailed(error.localizedDescription)
             runMode = .none
         }
     }

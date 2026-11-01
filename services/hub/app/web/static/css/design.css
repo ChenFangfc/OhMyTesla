@@ -257,6 +257,9 @@ body {
 
 a { color: inherit; text-decoration: none; text-underline-offset: .18em; text-decoration-thickness: 1px; }
 .link, a.link { color: var(--acc-text); }
+/* A text link that stands on its own line (not inside a sentence) gets
+   touch height; inline padding doesn't move the line it sits on. */
+a.tap, .sf-v a, .ctl-note a { padding-block: var(--s-1); }
 
 /* One visible focus ring everywhere, for keyboard users only. */
 :focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; border-radius: var(--r-1); }
@@ -275,6 +278,10 @@ kbd {
   color: var(--ink-3); font-size: var(--t-11); line-height: 1;
 }
 img, svg, video, canvas { max-width: 100%; }
+/* An icon slot (filled by paintIcons) is exactly its glyph's box. Left
+   inline, the glyph sat on the text baseline with descender room under it,
+   so rows that centre their items drew it 1–3 px high. */
+.ico-slot { display: inline-flex; flex: none; }
 
 /* Visually hidden, still read out. */
 .sr-only {
@@ -508,7 +515,8 @@ input::placeholder, textarea::placeholder { color: var(--ink-3); }
 select {
   appearance: none; -webkit-appearance: none; padding-right: 30px; cursor: pointer;
   color: var(--ink); background-color: var(--surface);
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2390949a' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='m6 9 6 6 6-6'/></svg>");
+  /* Phosphor caret-down (regular), the same glyph as icon("chevdown") */
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 256 256' fill='%2390949a'><path d='M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z'/></svg>");
   background-repeat: no-repeat; background-position: right 10px center;
 }
 select option { background: var(--surface); color: var(--ink); }
@@ -524,11 +532,13 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--acc); }
 .field { display: flex; flex-direction: column; gap: 6px; }
 .field > span { font-size: var(--t-13); color: var(--ink-2); }
 
-/* Toggle. A square-cornered track reads as an instrument switch. */
-.switch { position: relative; display: inline-block; width: 36px; height: 20px; flex: none; }
-.switch input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 1; }
+/* Toggle. A square-cornered track reads as an instrument switch. 36 × 20 to
+   look at, 36 × 44 to hit: the padding is touch height, the negative margin
+   keeps the row where it was. */
+.switch { position: relative; display: inline-block; width: 36px; height: 44px; padding: 12px 0; margin: -12px 0; flex: none; }
+.switch input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; z-index: 1; }
 .switch .slider {
-  position: absolute; inset: 0; border-radius: var(--r-2);
+  position: absolute; inset: 12px 0; border-radius: var(--r-2);
   background: var(--surface-3); box-shadow: inset 0 0 0 1px var(--line-2);
   transition: background-color var(--dur-press) ease;
 }
@@ -553,7 +563,14 @@ label.check input[type="checkbox"] { width: 16px; height: 16px; margin: 0; }
 .setting-row .info { min-width: 0; flex: 1; }
 .setting-row .info .name { font-size: var(--t-15); }
 .setting-row .info .desc { font-size: var(--t-13); color: var(--ink-3); margin-top: 2px; line-height: var(--lead-dense); }
-@media (max-width: 640px) { .setting-row { flex-wrap: wrap; } }
+/* On a phone the label keeps at least 9rem; a control too wide to sit beside
+   that (a segmented choice, a pair of buttons) takes its own line instead of
+   squeezing the description to one word per line. Selects and switches still
+   fit beside it. */
+@media (max-width: 640px) {
+  .setting-row { flex-wrap: wrap; row-gap: var(--s-2); }
+  .setting-row .info { min-width: 9rem; }
+}
 
 .rule-row {
   display: flex; align-items: center; gap: var(--s-4);
@@ -900,6 +917,6 @@ details.disclose.has-issues > summary .value { color: var(--wn-text); }
 }
 
 @media print {
-  .bar, .tabbar, .alerts, .skip { display: none !important; }
+  header.bar, .tabbar, .alerts, .skip { display: none !important; }
   body { background: #fbfcfd; color: #161a1f; }
 }
