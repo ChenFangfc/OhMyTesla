@@ -41,7 +41,8 @@ openssl rand -base64 32 | tr -d '/+=' | cut -c1-28
 Open **http://localhost:8800** — username `ohmytesla`, password as generated above.
 
 **On a Mac without Docker**, the native app runs the same stack (TeslaMate, Postgres, Mosquitto
-and the hub) from one DMG: see [packaging/macos/README.md](packaging/macos/README.md).
+and the hub) from one DMG: [download it from Releases](https://github.com/ChenFangfc/OhMyTesla/releases/latest)
+(Apple Silicon, macOS 13+). Building it yourself: [packaging/macos/README.md](packaging/macos/README.md).
 
 > [!WARNING]
 > This UI can unlock your doors, disable Sentry, and replay everywhere you have been, so with an

@@ -43,7 +43,8 @@ openssl rand -base64 32 | tr -d '/+=' | cut -c1-28
 打开 **http://localhost:8800** —— 用户名 `ohmytesla`，密码就是刚才生成的那串。
 
 **Mac 上不想装 Docker**：原生 App 用一个 DMG 跑起整套（TeslaMate、Postgres、Mosquitto 和 hub），
-见 [packaging/macos/README.md](packaging/macos/README.md)。
+[到 Releases 下载](https://github.com/ChenFangfc/OhMyTesla/releases/latest)（Apple 芯片，macOS 13 以上）。
+自己打包见 [packaging/macos/README.md](packaging/macos/README.md)。
 
 > [!WARNING]
 > 这个界面能解锁车门、关哨兵、看你去过的每一个地方，所以 `OHMYTESLA_PASSWORD`
