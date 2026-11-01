@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Per-user LaunchAgent, registered by the app through
+     SMAppService.agent(plistName:). BundleProgram is relative to the .app, so
+     the job follows the app wherever it is installed. Started with the
+     supervisor argument, the app binary replaces itself (execv) with the
+     bundled Python running Contents/Resources/runtime/supervisor/supervisor.py. -->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>io.github.ohmytesla.supervisor</string>
+	<key>BundleProgram</key>
+	<string>Contents/MacOS/OhmyTesla</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>Contents/MacOS/OhmyTesla</string>
+		<string>--supervisor</string>
+	</array>
+	<key>AssociatedBundleIdentifiers</key>
+	<array>
+		<string>@BUNDLE_ID@</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<!-- Restart after a crash, but not after a clean exit (e.g. another
+	     supervisor already holds the lock). -->
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>15</integer>
+	<!-- PostgreSQL's fast shutdown + TeslaMate + hub may need more than the
+	     default 20 s before launchd sends SIGKILL. -->
+	<key>ExitTimeOut</key>
+	<integer>120</integer>
+	<key>LimitLoadToSessionType</key>
+	<string>Aqua</string>
+	<key>ProcessType</key>
+	<string>Standard</string>
+</dict>
+</plist>
