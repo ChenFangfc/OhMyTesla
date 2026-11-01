@@ -109,13 +109,16 @@
 
   // 1 · the idea
   scene(0, 5.2, (el) => {
+    const brand = h("div", "brand", el, `<img src="assets/icon.svg" alt=""><b>Ohmy<span>Tesla</span></b>`);
     const t1 = words(el, S.open, "", LANG === "en" ? 112 : 104);
-    t1.el.style.left = "160px"; t1.el.style.top = "250px";
+    t1.el.style.left = "160px"; t1.el.style.top = "270px";
     const sub = h("div", "sub", el, esc(S.openSub));
-    Object.assign(sub.style, { left: "164px", top: LANG === "en" ? "650px" : "640px", width: "1180px", fontSize: "32px" });
+    Object.assign(sub.style, { left: "164px", top: LANG === "en" ? "670px" : "660px", width: "1180px", fontSize: "32px" });
     return {
       seek(t) {
         // English rises word by word; Chinese line by line, a touch slower.
+        const bp = ease.out(seg(t, 0.05, 0.6));
+        put(brand, { y: (1 - bp) * 10, o: bp });
         rise(t1.ws, t, 0.35, LANG === "en" ? 0.16 : 0.42, 0.7);
         const p = ease.out(seg(t, 2.3, 3.1));
         put(sub, { y: (1 - p) * 16, o: p });

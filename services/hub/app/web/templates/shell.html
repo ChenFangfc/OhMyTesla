@@ -3,14 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <script>/* 主题在首帧之前定：默认浅色；设置里可改深色或跟随系统（存在这台设备上） */
+  (function () { var p = "light"; try { p = localStorage.getItem("omt.theme") || "light"; } catch (e) {}
+    var d = p === "dark" || (p === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+    document.documentElement.setAttribute("data-theme", d ? "dark" : "light"); })();</script>
   <title>{% block title %}OhmyTesla{% endblock %}</title>
   <link rel="stylesheet" href="/static/css/design.css">
   <link rel="stylesheet" href="/static/css/app.css">
   <link rel="icon" href="/static/icon.svg">
   <link rel="manifest" href="/manifest.json" crossorigin="use-credentials">
   <meta name="color-scheme" content="dark light">
-  <meta name="theme-color" content="#0d0e11" media="(prefers-color-scheme: dark)">
-  <meta name="theme-color" content="#f1f3f5" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#f1f3f5">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <script type="importmap">{"imports":{"three":"/static/vendor/three/three.module.min.js","three/addons/":"/static/vendor/three/addons/"}}</script>

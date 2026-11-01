@@ -6,7 +6,8 @@
 layer) made with the BUNDLED model — never a private one: these frames are
 published. It is served locally; nothing leaves this machine.
 
-Each screen: 1440×900 CSS px at 2× pixels, dark theme, saved as JPEG.
+Each screen: 1440×900 CSS px at 3× pixels (sharp when the film moves in), the app's
+default light theme, saved as JPEG.
 Needs Python 3.10+, playwright (chromium) and Pillow.
 """
 import argparse
@@ -49,8 +50,8 @@ async def main(site: Path, out: Path):
                                                     "--ignore-gpu-blocklist"])
             for lang in ("en", "zh"):
                 (out / lang).mkdir(parents=True, exist_ok=True)
-                ctx = await browser.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=2,
-                                                color_scheme="dark", locale="en-US" if lang == "en" else "zh-CN",
+                ctx = await browser.new_context(viewport={"width": 1440, "height": 900}, device_scale_factor=3,
+                                                color_scheme="light", locale="en-US" if lang == "en" else "zh-CN",
                                                 timezone_id="America/Los_Angeles")
 
                 async def wrap(route, request):
