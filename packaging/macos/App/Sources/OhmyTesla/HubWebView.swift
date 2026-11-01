@@ -3,6 +3,11 @@ import SwiftUI
 import WebKit
 
 /// Owns the WKWebView that shows the hub, so the toolbar can drive it.
+///
+/// The web view exists only while the window is open: closing the window tears it
+/// down, which ends its WebKit content process (the page's scripts, live stream
+/// and 3D view) — the menu-bar app then costs next to nothing. Reopening loads
+/// the page that was showing.
 @MainActor
 final class WebController: NSObject, ObservableObject {
     @Published var canGoBack = false
@@ -11,36 +16,67 @@ final class WebController: NSObject, ObservableObject {
     @Published var authFailed = false
     @Published var loadError: String?
 
-    let webView: WKWebView
+    private(set) var webView: WKWebView?
     private(set) var base: URL?
     private var password = ""
+    private var pendingPath: String?
+    private var lastURL: URL?
     private var observers: [NSKeyValueObservation] = []
 
-    override init() {
+    /// Called by HubWebView when the window shows the hub.
+    func makeWebView() -> WKWebView {
+        if let webView { return webView }
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
         config.applicationNameForUserAgent = "OhmyTeslaMac/\(Bundle.main.shortVersion)"
         config.preferences.isElementFullscreenEnabled = true
-        webView = WKWebView(frame: .zero, configuration: config)
-        super.init()
-        webView.navigationDelegate = self
-        webView.uiDelegate = self
-        webView.allowsBackForwardNavigationGestures = true
-        webView.allowsMagnification = true
-        if #available(macOS 13.3, *) { webView.isInspectable = true }
+        let wv = WKWebView(frame: .zero, configuration: config)
+        wv.navigationDelegate = self
+        wv.uiDelegate = self
+        wv.allowsBackForwardNavigationGestures = true
+        wv.allowsMagnification = true
+        if #available(macOS 13.3, *) { wv.isInspectable = true }
         observers = [
-            webView.observe(\.canGoBack) { [weak self] wv, _ in Task { @MainActor in self?.canGoBack = wv.canGoBack } },
-            webView.observe(\.canGoForward) { [weak self] wv, _ in Task { @MainActor in self?.canGoForward = wv.canGoForward } },
-            webView.observe(\.isLoading) { [weak self] wv, _ in Task { @MainActor in self?.isLoading = wv.isLoading } },
+            wv.observe(\.canGoBack) { [weak self] wv, _ in Task { @MainActor in self?.canGoBack = wv.canGoBack } },
+            wv.observe(\.canGoForward) { [weak self] wv, _ in Task { @MainActor in self?.canGoForward = wv.canGoForward } },
+            wv.observe(\.isLoading) { [weak self] wv, _ in Task { @MainActor in self?.isLoading = wv.isLoading } },
         ]
+        webView = wv
+        if let base {
+            let start = pendingPath.flatMap { URL(string: $0, relativeTo: base) } ?? lastURL ?? base
+            pendingPath = nil
+            wv.load(URLRequest(url: start))
+        }
+        return wv
+    }
+
+    /// The window closed: drop the web view and with it its content process.
+    func tearDown() {
+        guard let wv = webView else { return }
+        if sameOrigin(wv.url) { lastURL = wv.url }
+        observers.forEach { $0.invalidate() }
+        observers = []
+        wv.stopLoading()
+        wv.navigationDelegate = nil
+        wv.uiDelegate = nil
+        wv.removeFromSuperview()
+        webView = nil
+        canGoBack = false
+        canGoForward = false
+        isLoading = false
     }
 
     func load(base: URL, password: String, path: String? = nil) {
         let changed = base != self.base || password != self.password
+        if base != self.base { lastURL = nil }
         self.base = base
         self.password = password
         authFailed = false
-        if changed || webView.url == nil {
+        guard let webView else {
+            if let path { pendingPath = path }
+            return
+        }
+        if changed || (webView.url == nil && !webView.isLoading) {
             webView.load(URLRequest(url: path.flatMap { URL(string: $0, relativeTo: base) } ?? base))
         } else if let path, let url = URL(string: path, relativeTo: base) {
             webView.load(URLRequest(url: url))
@@ -50,10 +86,13 @@ final class WebController: NSObject, ObservableObject {
     func reload() {
         authFailed = false
         loadError = nil
+        guard let webView else { return }
         if webView.url == nil, let base { webView.load(URLRequest(url: base)) } else { webView.reload() }
     }
 
-    func goHome() { if let base { webView.load(URLRequest(url: base)) } }
+    func goHome() { if let base { webView?.load(URLRequest(url: base)) } }
+    func goBack() { webView?.goBack() }
+    func goForward() { webView?.goForward() }
 
     private func sameOrigin(_ url: URL?) -> Bool {
         guard let url, let base else { return false }
@@ -149,7 +188,7 @@ extension WebController: WKUIDelegate {
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         let alert = NSAlert()
         alert.messageText = message
-        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: tr("好", "OK"))
         present(alert, in: webView) { _ in completionHandler() }
     }
 
@@ -157,8 +196,8 @@ extension WebController: WKUIDelegate {
                  initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
         let alert = NSAlert()
         alert.messageText = message
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: tr("好", "OK"))
+        alert.addButton(withTitle: tr("取消", "Cancel"))
         present(alert, in: webView) { completionHandler($0 == .alertFirstButtonReturn) }
     }
 
@@ -170,8 +209,8 @@ extension WebController: WKUIDelegate {
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
         field.stringValue = defaultText ?? ""
         alert.accessoryView = field
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: tr("好", "OK"))
+        alert.addButton(withTitle: tr("取消", "Cancel"))
         present(alert, in: webView) { completionHandler($0 == .alertFirstButtonReturn ? field.stringValue : nil) }
     }
 
@@ -222,13 +261,13 @@ extension WebController: WKDownloadDelegate {
     }
 
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
-        loadError = "Download failed: \(error.localizedDescription)"
+        loadError = tr("下载失败：\(error.localizedDescription)", "Download failed: \(error.localizedDescription)")
     }
 }
 
 struct HubWebView: NSViewRepresentable {
     let controller: WebController
-    func makeNSView(context: Context) -> WKWebView { controller.webView }
+    func makeNSView(context: Context) -> WKWebView { controller.makeWebView() }
     func updateNSView(_ nsView: WKWebView, context: Context) {}
 }
 

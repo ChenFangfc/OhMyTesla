@@ -4,12 +4,16 @@ A native Mac app (Apple Silicon, macOS 13+) that runs the whole OhmyTesla stack
 — PostgreSQL, Mosquitto, TeslaMate and the OhmyTesla hub — **without Docker or a
 terminal**, or connects to an OhmyTesla server you already run elsewhere.
 
-* menu-bar app with service status, start / stop / restart, logs, and a main
-  window that shows the hub (it answers the portal's password prompt for you);
+* a menu-bar panel with the car at a glance (battery, range, charging, doors, Sentry Mode,
+  climate, where it is, how fresh the data is, the latest alert) and a few quick settings,
+  and a main window that shows the hub (it answers the portal's password prompt for you);
+* Simplified Chinese and English throughout, following the hub's language setting;
+* light at idle — see [Resource use](#resource-use); connecting to a server you already
+  run costs this Mac next to nothing;
 * a per-user background service (LaunchAgent) keeps logging and Sentry alerts
   going with the window closed, and starts at login;
 * native notifications for critical / warning alerts (Sentry and other major events);
-* optional "Keep Mac Awake While Sentry Mode Is On".
+* optional "Keep Mac awake during Sentry".
 
 ---
 
@@ -34,7 +38,7 @@ app with throwaway data, probes every service and shuts it down again.
 | `--relock` | re-resolve `services/hub/requirements.txt` into `python-requirements.lock` (run after the hub's dependencies change; the build stops and tells you when it is needed) |
 | `--no-dmg` | stop after `build/OhmyTesla.app` |
 | `--clean` | start from scratch, downloads included |
-| `OHMYTESLA_VERSION=0.2.0 ./build.sh` | version shown in Finder and in the DMG name |
+| `OHMYTESLA_VERSION=0.3.0 ./build.sh` | version shown in Finder and in the DMG name |
 
 What the build does (each step is a script in `scripts/`, logs in `build/logs/`):
 
@@ -63,7 +67,8 @@ What the build does (each step is a script in `scripts/`, logs in `build/logs/`)
    anything outside the bundle or `/usr/lib` / `/System` (absolute paths, `LC_RPATH`s,
    unresolvable `@loader_path`/`@rpath`), has an invalid signature, or declares a minimum
    macOS newer than 13.0.
-9. **DMG** — app + `Applications` link + "First launch.txt", compressed (ULMO).
+9. **DMG** — app + `Applications` link + "首次启动 First launch.txt" (Chinese and English),
+   compressed (ULMO).
 
 **Pinning.** Every download is pinned in `versions.sh` by version and SHA-256 (git clones
 by commit; a moved tag fails the build). Transitive inputs are verified by their own lock
@@ -80,6 +85,7 @@ Downloads live one-per-directory under `build/downloads/`.
 
 ```
 MacOS/OhmyTesla                          Swift menu-bar app (also the LaunchAgent's program)
+Resources/en.lproj  zh-Hans.lproj        macOS prompts and the About panel in both languages
 Library/LaunchAgents/io.github.ohmytesla.supervisor.plist   registered via SMAppService.agent
 Resources/runtime/
   supervisor/supervisor.py               starts and watches everything (bundled Python)
@@ -92,6 +98,7 @@ Resources/runtime/
 | Component | Version | Licence |
 |---|---|---|
 | OhmyTesla app, supervisor, hub | this repo | AGPL-3.0 |
+| Phosphor Icons (the hub's interface icons) | @phosphor-icons/core 2.1.1 | MIT (`hub/app/web/static/vendor/phosphor/LICENSE`) |
 | TeslaMate | v4.4.0 | AGPL-3.0-or-later (`licenses/teslamate`) |
 | Erlang/OTP runtime (ERTS) | 29.1.2, built from source | Apache-2.0 |
 | Elixir (standard library in the release) | 1.20 (Homebrew) | Apache-2.0 |
@@ -119,6 +126,10 @@ sources are the pinned upstream releases listed in `versions.sh`.
      **Open Anyway**.
    * Or, any version: `xattr -dr com.apple.quarantine /Applications/OhmyTesla.app`
 3. Choose:
+   * **Connect to a server** — if you already run OhmyTesla (Docker on a NAS or a home
+     server), this is the lightest choice: enter its URL and portal password (stored in the
+     login keychain) and the app is just a native window, the menu-bar panel and
+     notifications.
    * **Run on this Mac.** The app registers its LaunchAgent (macOS shows a "Background
      Items Added" notice; if it asks for approval, allow OhmyTesla under System Settings ›
      General › Login Items). The supervisor then, on first run:
@@ -129,13 +140,42 @@ sources are the pinned upstream releases listed in `versions.sh`.
      **PostgreSQL → Mosquitto → TeslaMate** (which runs its migrations first, like the
      container entrypoint) **→ hub**. A first start took ~10 s on an M-series Mac. The window then
      shows the hub's welcome page, where you sign in with your Tesla account.
-   * **Connect to an existing OhmyTesla server.** Enter its URL and portal password (stored
-     in the login keychain). The app is then just a native window + notifications.
 4. The app asks once for permission to show notifications.
 
 If the LaunchAgent cannot be registered (or the app runs translocated from the DMG), the
 app runs the supervisor as its own child process instead and says so: monitoring then
-stops when you quit the app. **Install Background Service** in the menu retries.
+stops when you quit the app. **More › Install Background Service** in the menu-bar panel retries.
+
+### The menu-bar panel
+
+Click the icon in the menu bar:
+
+* **The car** — its name (a picker when the account has more than one car), what it is
+  doing and where, cabin temperature, battery and range, charging power and time to the
+  limit, doors, Sentry Mode and climate, and how fresh the data is: *Live* while the car is
+  awake and reporting, otherwise *Updated 5 min ago* — or *Data stopped …* when the hub's
+  watchdog says so. A state the car has not reported is left out, never guessed.
+* **Latest alert** — time and one line; click it to open the page in the window.
+* **Pause alerts** for 1, 8 or 24 hours (the hub's own snooze: non-critical pushes stop
+  everywhere; intrusion alerts still come through), **Mac notifications**, **Keep Mac
+  awake during Sentry** (Run on this Mac only), **Open at login**.
+* **Services** (Run on this Mac) — one line; click it for the four services, restart, stop
+  and logs. It opens by itself when something needs attention.
+* **Open OhmyTesla**, **More** (copy the portal password, open TeslaMate / logs / data /
+  `config.env`, change server or setup, stop services and quit) and **Quit**.
+
+It reads the hub's existing endpoints when it opens and stays current while open (the
+live event stream, and every 30 s); nothing is fetched while it is closed. No vehicle
+commands. Colour means *live*: the accent colour marks charging, Sentry Mode watching and
+climate running; orange marks an unlocked parked car and problems.
+
+### Language
+
+Everything the app says — panel, window, menus, onboarding, notifications, dialogs —
+exists in Simplified Chinese and English, with the hub's own vocabulary. The app follows
+the hub's language setting (`GET /api/prefs` → `locale`), remembers it for the next
+launch, and uses the Mac's preferred language until a hub has answered. macOS's own
+prompts and the About panel follow the Mac's language.
 
 ### Ports and network exposure
 
@@ -164,6 +204,8 @@ hub setting from `docker-compose.yml`/`.env.example` (`SMTP_*`, `TELEGRAM_*`, `N
 | `HUB_BIND=0.0.0.0` | let phones on your LAN open the portal (password-protected) |
 | `POSTGRES_TCP=1` | also listen on 127.0.0.1 (for e.g. a Grafana you run yourself) |
 | `TESLAMATE_<VAR>` | passes `<VAR>` to TeslaMate (`TESLAMATE_TESLA_API_HOST`, `TESLAMATE_MQTT_NAMESPACE`, …) |
+| `TESLAMATE_DATABASE_POOL_SIZE`, `TESLAMATE_ERL_FLAGS`, `TESLAMATE_RELEASE_MODE` | override the light defaults (pool of 5; `+S 2:2 +SDcpu 2:2 +SDio 2 +sbwt none +sbwtdcpu none +sbwtdio none +P 65536`; `interactive`) |
+| `POSTGRES_SHARED_BUFFERS` | PostgreSQL's buffer cache (default `64MB`) |
 | `TZ` | time zone for TeslaMate and the hub (default: the Mac's) |
 
 Never change `ENCRYPTION_KEY` after signing in: it encrypts the Tesla tokens in the database.
@@ -175,10 +217,57 @@ serves `/.well-known/appspecific/com.tesla.3p.public-key.pem` from this hub (e.g
 
 ### Keeping the Mac awake
 
-Monitoring needs the Mac awake. With **Keep Mac Awake While Sentry Mode Is On**, the
+Monitoring needs the Mac awake. With **Keep Mac awake during Sentry** (menu-bar panel), the
 supervisor checks the hub every 30 s and, while any car reports `sentry_mode=true`, holds
 an idle-sleep power assertion (`caffeinate -i`, i.e. `PreventUserIdleSystemSleep`). The
 display may still sleep; closing a MacBook's lid without an external display still sleeps.
+
+---
+
+## Resource use
+
+Idle, measured the way `scripts/smoke_test.sh` runs the stack (fresh install, throwaway
+data, no car signed in) on an M2 Max with macOS 26: CPU is percent of *one* core over
+3 minutes after a 2-minute settle, including short-lived children (autovacuum workers,
+`pg_isready`); memory is `phys_footprint` (Activity Monitor's "Memory"), RSS is resident size.
+Before = v0.2.1, after = this version.
+
+| Run on this Mac (services) | Before: CPU · memory · RSS | After: CPU · memory · RSS |
+|---|---|---|
+| TeslaMate (Erlang VM; 40 → 12 threads) | 0.10 % · 246 MB · 258 MB | 0.05 % · 126 MB · 139 MB |
+| PostgreSQL 18 (20 → 11 processes) | 0.06 % · 117 MB · 176 MB | 0.02 % · 64 MB · 98 MB |
+| OhmyTesla hub (Python) | 0.12 % · 72 MB · 95 MB | 0.11 % · 71 MB · 97 MB |
+| Supervisor (Python) | 0.12 % · 30 MB · 44 MB | 0.03 % · 21 MB · 37 MB |
+| Mosquitto | 0.02 % · 9 MB · 10 MB | 0.02 % · 9 MB · 10 MB |
+| **Total** (27 → 18 processes; 50 → 44 wakeups/s) | **0.42 % · 474 MB · 583 MB** | **0.23 % · 291 MB · 381 MB** |
+
+RSS counts PostgreSQL's shared buffers once per process that touched them, so its sum
+overstates; "memory" is what Activity Monitor shows.
+
+What changed: TeslaMate runs two schedulers that sleep instead of spinning when idle
+(`+S 2:2 +SDcpu 2:2 +SDio 2 +sbwt none …`), a smaller process table (`+P 65536`), code
+loaded on first use (`RELEASE_MODE=interactive`, the biggest single saving) and a pool of
+5 database connections; PostgreSQL uses synchronous I/O (no I/O workers), no logical
+replication launcher, a 64 MB buffer cache, 30 connections and autovacuum every 5 min;
+the supervisor checks health every 30 s (TeslaMate via its own `/health_check` rather
+than rendering its home page), sleeps 5 s once everything is up and is woken by signals.
+Alerts are as fast as before: an MQTT message through the hub's alert engine to the alert
+on its live stream (the path a Sentry alert takes after the hub has decided) took a median
+4.1 ms before and 3.4 ms after (12 samples each, max 6.3 ms both). A real install with years of data uses more
+(PostgreSQL's cache fills, TeslaMate holds the car's state) — roughly 300–400 MB.
+
+The app itself, connected to a hub (its home page includes the 3D car):
+
+| The app (+ the WebKit processes it owns) | Before: CPU · memory | After: CPU · memory |
+|---|---|---|
+| Main window open | 0.74 % · 484 MB | 0.28 % · 432 MB |
+| Window closed, 2–3 min later (menu bar only) | 0.36 % · 425 MB, 9 wakeups/s — the page kept running | 0.11 % · 40 MB, 0.7 wakeups/s — web view released |
+| Menu-bar panel open | — | ≈ 0 % · 43 MB (refreshes every 30 s) |
+
+Closing the window now releases the web view and with it WebKit's content and GPU
+processes; reopening loads the page that was showing. The app runs no timers while idle:
+it follows the hub's live event stream (a keepalive every 25 s) and, on this Mac, the
+supervisor's `state.json` (rewritten on change and every 30 s). The panel fetches only while open.
 
 ---
 
@@ -197,7 +286,7 @@ your history; `config.env` is needed to read the Tesla tokens in it.
 
 ## Uninstall
 
-1. Menu bar › **Stop Services and Quit** (or `Quit` after **Stop Services**).
+1. Menu-bar panel › **More › Stop Services and Quit** (or **Quit** after stopping the services).
 2. Remove the background service and login item:
    `/Applications/OhmyTesla.app/Contents/MacOS/OhmyTesla --unregister-agent`
    (or System Settings › General › Login Items: remove OhmyTesla).

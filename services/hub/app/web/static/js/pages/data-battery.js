@@ -64,7 +64,7 @@
         [t("analytics.battery.cycles"), DH.vu(b.cycles, "", 0),
           b.kwh_added_total ? esc(t("data.bat.lifetime_kwh", { kwh: DH.nf(b.kwh_added_total, 0) })) : ""],
         [t("data.bat.soc_now"), DH.vu(b.soc_now, "%", 0),
-          esc([b.stored_kwh_now != null ? `${DH.nf(b.stored_kwh_now, 1)} kWh` : "", seen ? t("data.bat.as_of", { when: DH.when(seen) }) : ""].filter(Boolean).join(" · "))],
+          DH.dots([b.stored_kwh_now != null ? `${DH.nf(b.stored_kwh_now, 1)} kWh` : "", seen ? t("data.bat.as_of", { when: DH.when(seen) }) : ""])],
       ];
       body.innerHTML = `<div class="dh-kpis" style="--cols:5">${items.map(([l, v, s], i) => DH.kpi(i, l, v, s)).join("")}</div>
         <p class="dh-note" style="margin-top:16px">${esc(t("data.bat.method"))}</p>`;

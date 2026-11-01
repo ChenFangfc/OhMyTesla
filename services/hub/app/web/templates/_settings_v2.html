@@ -25,9 +25,10 @@
   .steps > li::before { content: counter(step); position: absolute; left: 0; top: 2px; width: 24px; height: 24px; border-radius: var(--r-2);
     display: grid; place-items: center; font-size: var(--t-13); font-weight: var(--w-semi); background: var(--surface-2); color: var(--ink-2);
     border: 1px solid var(--line-2); }
-  #commands { --ok-check: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2379cd91' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='m5 13 4 4L19 7'/></svg>"); }
-  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) #commands { --ok-check: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231a763f' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='m5 13 4 4L19 7'/></svg>"); } }
-  :root[data-theme="light"] #commands { --ok-check: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%231a763f' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='m5 13 4 4L19 7'/></svg>"); }
+  /* Phosphor check (regular), the glyph icon("check") draws; a CSS background can't take currentColor, hence one per theme. */
+  #commands { --ok-check: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='%2379cd91'><path d='M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z'/></svg>"); }
+  @media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) #commands { --ok-check: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='%231a763f'><path d='M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z'/></svg>"); } }
+  :root[data-theme="light"] #commands { --ok-check: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256' fill='%231a763f'><path d='M229.66,77.66l-128,128a8,8,0,0,1-11.32,0l-56-56a8,8,0,0,1,11.32-11.32L96,188.69,218.34,66.34a8,8,0,0,1,11.32,11.32Z'/></svg>"); }
   .steps > li.done::before { content: ""; background: var(--ok-tint) var(--ok-check) no-repeat center / 14px; border-color: var(--ok-line); }
   .steps > li::after { content: ""; position: absolute; left: 11.5px; top: 32px; bottom: 6px; width: 1px; background: var(--line); }
   .steps > li:last-child::after { display: none; }

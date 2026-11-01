@@ -320,6 +320,8 @@ const Menu = (() => {
       const html = `<div class="menu-list" role="menu">${items.map(itemHtml).join("")}</div>`;
       const p = Sheet.open({ title: opts.title, html });
       Sheet.el?.querySelectorAll(".menu-i").forEach((b) => b.addEventListener("click", () => Sheet.close(items[Number(b.dataset.i)].value)));
+      // start on the current choice, as the popover does (not on the first row)
+      Sheet.el?.querySelector('.menu-i[aria-checked="true"]')?.focus({ preventScroll: true });
       return p;
     }
     trigger = anchor;
@@ -511,9 +513,10 @@ const Odo = (() => {
    the real operation) → sent → confirmed when the live state matches what
    the command promised → or failed, inline, with the next step.
 
-   Risk: tap for reversible commands; HOLD 2 s for unlock, frunk and
-   windows (Cmd.hold); a confirm sheet for every other risk ≥ 1 command.
-   The server still answers 428 without `confirm`, and Cmd honours it. */
+   Risk (tesla/catalog.py): 0 runs on a tap; 1 asks once in a sheet that
+   says what will happen (unlock, frunk, trunk, windows, Sentry off …); 2 asks
+   the same way with a danger button (remote start, HomeLink). The server
+   still answers 428 without `confirm`, and Cmd honours it. */
 const Cmd = (() => {
   const caps = {};          // car_id -> capabilities
   async function capabilities(carId, force) {
@@ -683,56 +686,7 @@ const Cmd = (() => {
     };
   }
 
-  /* Hold-to-confirm: a 2 s linear fill on the control; releasing early
-     snaps it back in 200 ms. Pointer, Space and Enter all work. A plain
-     tap explains itself instead of doing anything. */
-  function hold(button, { ms = 2000, onComplete, onHint, when } = {}) {
-    if (button._hold) return;
-    const active = () => !when || when();
-    button._hold = true;
-    button.classList.add("holdable");
-    let fill = button.querySelector(".hold-fill");
-    if (!fill) { fill = document.createElement("span"); fill.className = "hold-fill"; fill.setAttribute("aria-hidden", "true"); button.prepend(fill); }
-    // The fill's 2 s and 200 ms live in CSS (.holding .hold-fill), so the
-    // reduced-motion rules can keep this progress visible.
-    let timer = null, done = false, t0 = 0, keyDown = false;
-    const start = () => {
-      if (!active() || button.disabled || button.getAttribute("aria-disabled") === "true" || timer) return;
-      done = false; t0 = performance.now();
-      button.classList.add("holding");
-      timer = setTimeout(() => {
-        timer = null; done = true;
-        button.classList.remove("holding");
-        try { navigator.vibrate && navigator.vibrate(12); } catch (e) { /* not supported */ }
-        onComplete && onComplete();
-      }, ms);
-    };
-    const cancel = () => {
-      if (!timer) return;
-      clearTimeout(timer); timer = null;
-      button.classList.remove("holding");
-      if (!done && performance.now() - t0 < 350 && onHint) onHint();
-    };
-    // The click that follows a pointer hold belongs to the hold: swallow it
-    // before the page's own click handlers see it (capture, same target).
-    let engaged = false;
-    button.addEventListener("click", (e) => { if (engaged) { engaged = false; e.stopImmediatePropagation(); e.preventDefault(); } }, true);
-    button.addEventListener("pointerdown", (e) => {
-      engaged = false;
-      if (e.button === 0 && active()) { e.preventDefault(); engaged = true; start(); }
-    });
-    button.addEventListener("pointerup", cancel);
-    button.addEventListener("pointerleave", cancel);
-    button.addEventListener("pointercancel", cancel);
-    button.addEventListener("contextmenu", (e) => { if (active()) e.preventDefault(); });
-    button.addEventListener("keydown", (e) => {
-      if ((e.key === " " || e.key === "Enter") && !e.repeat && active()) { e.preventDefault(); keyDown = true; start(); }
-    });
-    button.addEventListener("keyup", (e) => { if ((e.key === " " || e.key === "Enter") && keyDown) { e.preventDefault(); keyDown = false; cancel(); } });
-    button.addEventListener("blur", cancel);
-  }
-
-  return { run, capabilities, setupSheet, risk, spec, watch, bindStatus, hold, confirmSheet: (c, o = {}) => confirmSheet(c, Car.current, o) };
+  return { run, capabilities, setupSheet, risk, spec, watch, bindStatus, confirmSheet: (c, o = {}) => confirmSheet(c, Car.current, o) };
 })();
 
 /* ---------------------------------------------------------- app shell */

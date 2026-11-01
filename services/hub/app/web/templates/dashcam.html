@@ -22,7 +22,7 @@
     </div>
     <span class="spacer"></span>
     <button id="rescan" class="btn ghost" type="button"><span class="ico-slot" data-icon="refresh" data-size="15"></span><span data-i18n="common.rescan">Rescan</span></button>
-    <a class="btn" href="/dashcam/usb"><span class="ico-slot" data-icon="upload" data-size="15"></span><span data-i18n="dashcam.usb">Browse USB drive</span></a>
+    <a class="btn" href="/dashcam/usb"><span class="ico-slot" data-icon="usb" data-size="15"></span><span data-i18n="dashcam.usb">Browse USB drive</span></a>
   </div>
 
   <div id="notes" class="dc-notes"></div>
@@ -67,10 +67,10 @@
 
   {# 没解析过素材时给一个明确的入口，而不是让这一块凭空消失 #}
   <div id="fsd-cta" class="dc-cta" hidden>
-    <div class="ic"><span class="ico-slot" data-icon="chart" data-size="22"></span></div>
+    <span class="ic"><span class="ico-slot" data-icon="chart" data-size="18"></span></span>
     <div class="grow">
       <div class="name" data-i18n="fsd.cta_title">Analyse your footage</div>
-      <div class="body-sm mt" style="max-width:68ch;margin-top:6px" data-i18n="fsd.cta_body"></div>
+      <div class="body-sm" data-i18n="fsd.cta_body"></div>
     </div>
     <button class="btn" id="fsd-index" type="button" data-i18n="fsd.cta_btn">Build index</button>
   </div>
@@ -99,11 +99,15 @@
   .dc-note details summary::-webkit-details-marker { display: none; }
   .dc-note ul { margin: 8px 0 0; padding-left: 18px; font-size: var(--t-13); color: var(--ink-3); }
   .dc-note li { margin: 3px 0; word-break: break-all; }
-  .dc-cta { display: flex; gap: var(--s-4); align-items: center; padding: 18px 20px; border-radius: var(--r-3); margin-bottom: var(--s-6);
+  /* A note with an action: same anatomy as .dc-note (plain icon on the title
+     line), the button beside the text, or under it on a phone. */
+  .dc-cta { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: var(--s-3) 14px; align-items: start;
+    padding: 14px 16px; border-radius: var(--r-3); margin-bottom: var(--s-6);
     background: var(--surface); border: 1px solid var(--line); }
-  .dc-cta .ic { width: 40px; height: 40px; border-radius: var(--r-2); display: grid; place-items: center; flex: none; background: var(--surface-2); color: var(--ink-2); }
-  .dc-cta .grow { flex: 1 1 220px; min-width: 0; }
+  .dc-cta .ic { display: flex; margin-top: 1px; color: var(--ink-3); }
   .dc-cta .name { font-size: var(--t-15); font-weight: var(--w-semi); }
+  .dc-cta .body-sm { margin-top: 4px; max-width: 68ch; line-height: var(--lead-prose); }
+  .dc-cta .btn { align-self: center; }
   #fsd-section { margin-top: 0; margin-bottom: var(--s-12); }
   .dc-grid { display: grid; gap: var(--s-4); grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
   .clip { display: block; border-radius: var(--r-3); overflow: hidden; background: var(--surface); border: 1px solid var(--line);
@@ -123,8 +127,11 @@
   @media (max-width: 640px) {
     .dc-bar .seg2 { order: 3; flex-basis: 100%; display: flex; }
     .dc-bar .seg2 button { flex: 1 1 auto; padding: 0 4px; white-space: nowrap; }
-    .dc-cta { flex-wrap: wrap; }
+    .dc-cta { grid-template-columns: auto minmax(0, 1fr); padding: 12px 14px; }
+    .dc-cta .btn { grid-column: 2; justify-self: start; }
     .dc-note { padding: 12px 14px; }
+    /* the explanation lines up with the cards above it, not 24 px inside */
+    .dc-empty { padding-left: 0; padding-right: 0; }
   }
 </style>
 {% endblock %}

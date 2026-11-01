@@ -62,29 +62,29 @@
     const du = DH.u.dist();
     if (e.kind === "drive") {
       return [e.distance != null ? `${DH.nf(DH.cv.dist(e.distance), 1)} ${du}` : "", e.duration_min != null ? DH.dur(e.duration_min) : "",
-              e.start_soc != null && e.end_soc != null ? `${e.start_soc}% → ${e.end_soc}%` : ""].filter(Boolean).join(" · ");
+              e.start_soc != null && e.end_soc != null ? `${e.start_soc}% → ${e.end_soc}%` : ""];
     }
     if (e.kind === "charge") {
       return [e.energy != null ? `${DH.nf(e.energy, 1)} kWh` : "", e.start_soc != null && e.end_soc != null ? `${e.start_soc}% → ${e.end_soc}%` : "",
-              e.duration_min != null ? DH.dur(e.duration_min) : "", e.cost ? DH.money(e.cost) : ""].filter(Boolean).join(" · ");
+              e.duration_min != null ? DH.dur(e.duration_min) : "", e.cost ? DH.money(e.cost) : ""];
     }
     if (e.kind === "gap") {
       const bits = [DH.dur(e.duration_min), t("timeline.gap_km", { km: `${DH.nf(DH.cv.dist(e.unlogged_km), 1)} ${du}` })];
       if (e.start_soc != null && e.end_soc != null && e.start_soc > e.end_soc) bits.push(t("timeline.gap_soc", { pct: e.start_soc - e.end_soc }));
-      return bits.join(" · ");
+      return bits;
     }
     if (e.kind === "idle") {
       const bits = [DH.dur(e.duration_min)];
       if (e.start_soc != null && e.end_soc != null && e.start_soc > e.end_soc) bits.push(t("timeline.idle_drop", { pct: e.start_soc - e.end_soc }));
-      return bits.join(" · ");
+      return bits;
     }
-    return t("data.tl.software");
+    return [t("data.tl.software")];
   }
   function title(e) {
     if (e.kind === "drive") return e.from && e.to && e.from !== e.to ? `${e.from} → ${e.to}` : e.to || e.from || t("data.tl.a_drive");
     if (e.kind === "charge") return e.to || t("data.tl.a_charge");
-    if (e.kind === "gap") return e.from ? t("timeline.gap_at", { place: e.from }) : t("timeline.k_gap");
-    if (e.kind === "idle") return e.from ? t("timeline.idle_at", { place: e.from }) : t("timeline.k_idle");
+    if (e.kind === "gap") return e.from ? t("timeline.gap_at", { place: zhPlace(e.from) }).trim() : t("timeline.k_gap");
+    if (e.kind === "idle") return e.from ? t("timeline.idle_at", { place: zhPlace(e.from) }).trim() : t("timeline.k_idle");
     return t("timeline.update_to", { version: e.version || "" });
   }
 
@@ -112,7 +112,7 @@
       const href = e.kind === "drive" && e.id ? `/data/driving?days=${p}&drive=${e.id}`
         : e.kind === "charge" && e.id ? `/data/charging?days=${p}&charge=${e.id}` : null;
       const inner = `<span class="tm">${esc(DH.time(e.start))}</span><span class="ic">${icon(ICON[e.kind] || "pin", 15)}</span>
-        <span class="bd"><span class="tt">${esc(title(e))}</span><span class="sb">${esc(line(e))}</span></span>
+        <span class="bd"><span class="tt">${esc(title(e))}</span><span class="sb">${DH.dots(line(e))}</span></span>
         <span class="go">${href ? icon("chevron", 14) : ""}</span>`;
       return head + `<li class="tl-row k-${e.kind}">${href ? `<a href="${href}">${inner}</a>` : `<div>${inner}</div>`}</li>`;
     }).join("")}</ol>${list.length > page.length ? `<div class="dh-tfoot"><span>${esc(t("data.drv.showing", { a: 1, b: DH.nf(page.length, 0), n: DH.nf(list.length, 0) }))}</span>

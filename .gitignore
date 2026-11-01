@@ -23,3 +23,8 @@ services/hub/app/web/static/vehicle/
 
 # per-host compose overrides (e.g. loopback DB ports for dev tunnels)
 docker-compose.override.yml
+
+# film: renders and captured screens are rebuilt by promo/scripts (README media live in docs/readme)
+promo/out/
+promo/src/shots/en/
+promo/src/shots/zh/

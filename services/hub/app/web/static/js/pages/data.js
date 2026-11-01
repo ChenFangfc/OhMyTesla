@@ -134,14 +134,11 @@
     paintPeriod();
     root.querySelectorAll(".dh-per button").forEach((b) => b.addEventListener("click", () => setPeriod(b.dataset.days)));
     const btn = root.querySelector(".dh-per-btn");
-    if (btn) btn.addEventListener("click", () => {
-      const html = `<div class="dh-per-sheet" role="group">${PERIODS.map((p) =>
-        `<button type="button" data-days="${p}" aria-pressed="${p === DH.period}">${esc(t("data.period.long_" + p))}</button>`).join("")}</div>`;
-      Sheet.open({ title: t("data.period.label"), html });
-      document.querySelectorAll(".dh-per-sheet button").forEach((b) => b.addEventListener("click", () => {
-        Sheet.close();
-        setPeriod(b.dataset.days);
-      }));
+    // the shared picker (rows, the current one checked), like 视角 on the overview
+    if (btn) btn.addEventListener("click", async () => {
+      const v = await Menu.open(btn, PERIODS.map((p) => ({ label: t("data.period.long_" + p), value: p, checked: p === DH.period })),
+        { title: t("data.period.label") });
+      if (v) setPeriod(v);
     });
   }
 
@@ -307,6 +304,9 @@
     if (!f) { f = new Intl.NumberFormat(localeTag(), { minimumFractionDigits: dd, maximumFractionDigits: dd }); nfs.set(k, f); }
     return f.format(v);
   };
+  /* "a · b · c" that wraps between the parts, never inside a short one
+     ("As of Oct 31, 10:23 PM") and never with the dot starting a line. */
+  DH.dots = (parts) => fmt.dots(parts);
   /* Number with fixed decimals; a grey dash when missing (never "null"). */
   DH.n = (v, d) => { const s = DH.nf(v, d); return s == null ? '<span class="dash">–</span>' : esc(s); };
   /* Value + grey unit. */

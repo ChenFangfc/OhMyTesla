@@ -78,14 +78,26 @@ class FastPoll:
         self._due: dict[str, float] = {}
         self._eid: dict[str, int] = {}
         self.stats: dict[str, dict] = {}
+        self._every: int | None = None
+        self._every_at = 0.0
 
     async def interval(self) -> int:
-        override = await store.get_setting("sentry_fast_poll_seconds", None)
-        v = settings.sentry_fast_poll_seconds if override is None else override
-        try:
-            return max(0, int(v))
-        except (TypeError, ValueError):
-            return 0
+        # Read at most once a minute, and again right after Settings changes it: the
+        # loop wakes every second, and an SQLite round trip on each pass made the hub
+        # the busiest idle process of the Mac app's whole stack.
+        now = time.monotonic()
+        if self._every is None or now - self._every_at > 60:
+            override = await store.get_setting("sentry_fast_poll_seconds", None)
+            v = settings.sentry_fast_poll_seconds if override is None else override
+            try:
+                self._every = max(0, int(v))
+            except (TypeError, ValueError):
+                self._every = 0
+            self._every_at = now
+        return self._every
+
+    def invalidate(self) -> None:
+        self._every = None
 
     def start(self) -> None:
         self._task = asyncio.create_task(self._loop(), name="sentry-fast-poll")

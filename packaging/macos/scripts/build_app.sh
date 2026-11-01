@@ -6,6 +6,7 @@
 #     MacOS/OhmyTesla                         Swift menu-bar app (also `--supervisor`)
 #     Library/LaunchAgents/io.github.ohmytesla.supervisor.plist   (SMAppService.agent)
 #     Resources/AppIcon.icns
+#     Resources/en.lproj zh-Hans.lproj        InfoPlist.strings (macOS prompts, About panel)
 #     Resources/runtime/                      from stage_runtime.sh
 source "$(dirname "$0")/lib.sh"
 
@@ -49,6 +50,11 @@ otool -l "$EXE" | awk '/cmd LC_RPATH/{getline; getline; print $2}' | while read 
   case $rp in /usr/lib/*|@*) ;; *) install_name_tool -delete_rpath "$rp" "$EXE" ;; esac
 done
 cp "$BUILD/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+# zh-Hans / en strings for macOS's own prompts and the About panel
+for lproj in "$MACOS_DIR"/App/Resources/*.lproj; do
+  ditto "$lproj" "$APP/Contents/Resources/$(basename "$lproj")"
+done
+plutil -lint -s "$APP"/Contents/Resources/*.lproj/*.strings
 ditto "$RUNTIME_STAGE" "$APP/Contents/Resources/runtime"
 
 # ---- sign ------------------------------------------------------------------

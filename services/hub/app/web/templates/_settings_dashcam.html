@@ -64,10 +64,12 @@
   .sdc-row code, .sdc-p code, .sdc-local code { font-family: var(--font-mono); font-size: var(--t-12); background: var(--surface-2); padding: 1px 5px; border-radius: var(--r-1); word-break: break-all; }
   .sdc-warn { color: var(--amber-ink); }
   .sdc-state { display: flex; gap: var(--s-3); align-items: flex-start; padding: 14px 16px; border-radius: var(--r-3); background: var(--surface); border: 1px solid var(--line); }
-  .sdc-state .ic { flex: none; width: 32px; height: 32px; border-radius: var(--r-2); display: grid; place-items: center; background: var(--surface-2); color: var(--ink-2); }
-  .sdc-state.ok .ic { background: var(--ok-tint); color: var(--ok-text); }
+  /* A plain glyph on the title line, as in the dashcam notes; its colour is
+     the state (archived fine / failed). */
+  .sdc-state .ic { flex: none; display: flex; margin-top: 2px; color: var(--ink-3); }
+  .sdc-state.ok .ic { color: var(--ok-text); }
   .sdc-state.bad { border-color: var(--wn-line); }
-  .sdc-state.bad .ic { background: var(--wn-tint); color: var(--wn-text); }
+  .sdc-state.bad .ic { color: var(--wn-text); }
   .sdc-state .grow { flex: 1; min-width: 0; }
   .sdc-state .tt { font-size: var(--t-15); font-weight: var(--w-semi); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .sdc-state .sb { margin-top: 3px; font-size: var(--t-13); color: var(--ink-2); line-height: var(--lead-prose); }

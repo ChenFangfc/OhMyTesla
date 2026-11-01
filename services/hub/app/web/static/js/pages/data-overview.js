@@ -104,11 +104,11 @@
         rec(t("data.ov.r_longest"), r.longest_drive_km ? DH.vu(DH.cv.dist(r.longest_drive_km.value), DH.u.dist(), 0) : null,
             r.longest_drive_km ? DH.date(r.longest_drive_km.date) : ""),
         rec(t("data.ov.r_fastest_charge"), fastest ? DH.vu(fastest.peak_kw, "kW", 0) : null,
-            fastest ? [DH.date(fastest.start), fastest.location].filter(Boolean).join(" · ") : "",
+            fastest ? [DH.date(fastest.start), fastest.location] : "",
             fastest ? `/data/charging?days=all&charge=${fastest.id}` : null),
         rec(t("data.ov.r_best_eff"), r.best_efficiency_wh_km ? DH.vu(DH.cv.cons(r.best_efficiency_wh_km.value), DH.u.cons(), 0) : null,
             r.best_efficiency_wh_km ? [DH.date(r.best_efficiency_wh_km.date),
-              r.best_efficiency_wh_km.km ? t("data.ov.over_dist", { dist: `${DH.nf(DH.cv.dist(r.best_efficiency_wh_km.km), 0)} ${DH.u.dist()}` }) : ""].filter(Boolean).join(" · ") : ""),
+              r.best_efficiency_wh_km.km ? t("data.ov.over_dist", { dist: `${DH.nf(DH.cv.dist(r.best_efficiency_wh_km.km), 0)} ${DH.u.dist()}` }) : ""] : ""),
         rec(t("data.ov.r_top_speed"), r.top_speed_kmh ? DH.vu(DH.cv.speed(r.top_speed_kmh.value), DH.u.speed(), 0) : null,
             r.top_speed_kmh ? DH.date(r.top_speed_kmh.date) : ""),
         rec(t("data.ov.r_busiest_day"), r.busiest_day_km ? DH.vu(DH.cv.dist(r.busiest_day_km.value), DH.u.dist(), 0) : null,
@@ -119,7 +119,8 @@
       if (list.every((x) => x.valHtml == null)) { body.innerHTML = DH.empty(t("data.ov.records_none")); return; }
       body.innerHTML = `<div class="dh-kpis small rec">${list.map((x, i) => {
         const v = x.valHtml || '<span class="dash">–</span>';
-        const sub = x.href ? `<a href="${esc(x.href)}">${esc(x.sub)}</a>` : esc(x.sub);
+        const parts = DH.dots(Array.isArray(x.sub) ? x.sub : [x.sub]);
+        const sub = x.href ? `<a href="${esc(x.href)}">${parts}</a>` : parts;
         return DH.kpi(i, x.label, v, sub);
       }).join("")}</div>`;
     },
@@ -208,10 +209,9 @@
         onDay: (key) => { location.href = `/data/timeline?days=${DH.period}#day-${key}`; },
       });
       const lg = $("#ov-cal-lg");
-      lg.innerHTML = `<span>${esc(t("data.ov.cal_less"))}</span>${[0, 1, 2, 3, 4].map((l) =>
-        `<svg width="11" height="11" aria-hidden="true"><rect width="11" height="11" rx="2" class="dc-cell l${l}"/></svg>`).join("")}<span>${esc(t("data.ov.cal_more"))}</span>
-        <span style="margin-left:auto">${esc(t("data.ov.cal_dim"))}</span>`;
-      lg.style.gap = "6px";
+      lg.innerHTML = `<span class="dh-ramp">${esc(t("data.ov.cal_less"))}${[0, 1, 2, 3, 4].map((l) =>
+        `<svg width="11" height="11" aria-hidden="true"><rect width="11" height="11" rx="2" class="dc-cell l${l}"/></svg>`).join("")}${esc(t("data.ov.cal_more"))}</span>
+        <span class="dh-legend-note">${esc(t("data.ov.cal_dim"))}</span>`;
     },
   });
 })();

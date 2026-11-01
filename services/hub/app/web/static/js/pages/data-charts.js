@@ -406,12 +406,20 @@
     if (o.xAxis !== false && o.labels) {
       const lw = Math.max(...o.labels.map((s) => tw(s || ""))) + 10;
       const every = Math.max(1, Math.ceil(lw / slot));
+      let prevLeft = Infinity;              // left edge of the label drawn just to the right
       for (let i = n - 1; i >= 0; i -= every) {
         const x = cx(i);
         const t = T(f.svg, x, f.H - 6, o.labels[i] || "", "dc-lab mid");
         const w = tw(o.labels[i] || "");
-        if (x + w / 2 > f.W) { t.setAttribute("x", f.W); t.setAttribute("class", "dc-lab end"); }
-        if (x - w / 2 < f.pad.l - 4 && i !== n - 1) t.remove();
+        let left = x - w / 2;
+        if (x + w / 2 > f.W) { t.setAttribute("x", f.W); t.setAttribute("class", "dc-lab end"); left = f.W - w; }
+        if (left < f.pad.l - 4 && i !== n - 1) {
+          // The oldest label would hang off the left edge: pin it there if it still
+          // clears its neighbour, rather than leave the axis without a start.
+          if (f.pad.l + w + 6 > prevLeft) { t.remove(); continue; }
+          t.setAttribute("x", f.pad.l); t.setAttribute("class", "dc-lab start"); left = f.pad.l;
+        }
+        prevLeft = left;
       }
     }
     // interaction

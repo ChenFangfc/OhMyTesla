@@ -91,10 +91,10 @@ _pricing_lock = asyncio.Lock()
 TEMPLATES = [
     {
         "id": "cn_peak_valley",
-        "name_zh": "中国 峰谷平（常见三段）", "name_en": "China peak / shoulder / valley",
+        "name_zh": "中国 峰谷平（常见三段）", "name_en": "China peak / mid-peak / off-peak",
         "periods": [
-            {"from": "22:00", "to": "08:00", "name_zh": "谷", "name_en": "Valley"},
-            {"from": "08:00", "to": "17:00", "name_zh": "平", "name_en": "Shoulder"},
+            {"from": "22:00", "to": "08:00", "name_zh": "谷", "name_en": "Off-peak"},
+            {"from": "08:00", "to": "17:00", "name_zh": "平", "name_en": "Mid-peak"},
             {"from": "17:00", "to": "22:00", "name_zh": "峰", "name_en": "Peak"},
         ],
     },

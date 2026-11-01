@@ -69,7 +69,12 @@ async def main():
     for cid in ("door_unlock", "frunk", "trunk", "sentry_off", "vent_windows", "tonneau_open",
                 "remote_start", "suspension_level", "powershare_on"):
         check(f"{cid} needs confirmation", cid in risky)
-    check("remote_start is the strongest tier", catalog.COMMANDS["remote_start"].risk == 2)
+    check("remote_start and homelink are the strongest tier",
+          catalog.COMMANDS["remote_start"].risk == 2 and catalog.COMMANDS["homelink"].risk == 2)
+    # Reversible, harmless commands run on a tap — confirming them would only teach people to click through.
+    for cid in ("door_lock", "sentry_on", "flash_lights", "honk_horn", "climate_on", "climate_off",
+                "charge_port_open", "charge_port_close", "close_windows", "tonneau_close"):
+        check(f"{cid} runs without confirmation", cid not in risky)
 
     # model applicability
     ct = {c.id for c in catalog.for_model("cybertruck")}

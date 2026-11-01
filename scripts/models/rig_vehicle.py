@@ -24,8 +24,10 @@ bottom edge for the tailgate) rather than trusted from the file.
 
 import argparse
 import sys
+import tempfile
 
 import bpy
+import numpy as np
 from mathutils import Matrix, Vector
 
 # Each profile maps canonical part -> object-name prefixes in the source file,
@@ -57,8 +59,26 @@ PROFILES = {
             "CBTruck_Base": ("CBTruck_Base.png", "CBTruck_Base_met.png", "CBTruck_Base_rog.png", None, "OPAQUE"),
             "CBTruck_Glass": ("CBTruck_Glass.tga", None, None, None, "BLEND"),
             "CBTruck_Interior": ("CBTruck_Interior.png", None, None, None, "OPAQUE"),
-            "CBTruck_Lights1": ("CBTruck_Lights.png", None, None, "CBTruck_Lights_ilum3.png", "OPAQUE"),
+            "CBTruck_Lights1": ("CBTruck_Lights.png", None, None, "CBTruck_Lights_emissive.png", "OPAQUE"),
             "CBTruck_wheels": ("CBTruck_wheels1.png", "CBTruck_Wheels_met.png", "CBTruck_Wheels_rog.png", None, "OPAQUE"),
+        },
+        # The lights atlas also skins the black trim: wheel-well liners, the wiper,
+        # mirrors and cameras. Its self-illumination map (CBTruck_Lights_ilum3.png)
+        # is white almost everywhere, so all of that glowed white with the lamps.
+        # Boxes are atlas pixels, origin top-left: (x0, y0, x1, y1), end-exclusive.
+        "texture_fixes": {
+            # Mirrors and cameras sample a near-white swatch; give them the black
+            # swatch beside it.
+            "CBTruck_Lights.png": {"fill": [((976, 110, 998, 212), (1007, 150))]},
+        },
+        "emissive_masks": {
+            # Only the lamps glow: the front light bar in its own white, the rear
+            # bar and corner lamps red (the rear bar is drawn dark in the atlas).
+            "CBTruck_Lights_emissive.png": {
+                "from": "CBTruck_Lights.png",
+                "copy": [(6, 5, 920, 97), (0, 105, 320, 155), (665, 188, 865, 292)],
+                "fill": [((0, 158, 910, 187), (0.86, 0.1, 0.1)), ((0, 188, 155, 285), (0.86, 0.1, 0.1))],
+            },
         },
         # Canonical material names the viewer looks for (paint tint, light glow, glass).
         "rename_materials": {
@@ -89,7 +109,54 @@ def hinge_point(rule, lo, hi):
     raise ValueError(rule)
 
 
-def rebuild_material(mat, spec, base_dir):
+def edit_textures(prof, base_dir, out_dir):
+    """Write the profile's texture fixes and emissive masks to out_dir.
+
+    Returns {file name: path}; rebuild_material prefers these over the originals.
+    """
+    written = {}
+
+    def load(name):
+        img = bpy.data.images.load(f"{base_dir}/{name}", check_existing=False)
+        w, h = img.size
+        px = np.empty(w * h * 4, np.float32)
+        img.pixels.foreach_get(px)
+        bpy.data.images.remove(img)
+        return px.reshape(h, w, 4)              # Blender rows run bottom-up
+
+    def box(px, b):
+        h = px.shape[0]
+        x0, y0, x1, y1 = b
+        return np.s_[h - y1:h - y0, x0:x1]
+
+    def save(name, px):
+        h, w = px.shape[:2]
+        img = bpy.data.images.new(name, w, h, alpha=True)
+        img.pixels.foreach_set(px.ravel())
+        img.filepath_raw = f"{out_dir}/{name}"
+        img.file_format = "PNG"
+        img.save()
+        bpy.data.images.remove(img)
+        written[name] = f"{out_dir}/{name}"
+
+    for name, spec in prof.get("texture_fixes", {}).items():
+        px = load(name)
+        for b, (sx, sy) in spec.get("fill", []):
+            px[box(px, b)] = px[px.shape[0] - 1 - sy, sx]
+        save(name, px)
+    for name, spec in prof.get("emissive_masks", {}).items():
+        src = load(spec["from"])
+        px = np.zeros_like(src)
+        px[..., 3] = 1.0
+        for b in spec.get("copy", []):
+            px[box(px, b)] = src[box(src, b)]
+        for b, rgb in spec.get("fill", []):
+            px[box(px, b)][..., :3] = rgb
+        save(name, px)
+    return written
+
+
+def rebuild_material(mat, spec, base_dir, edited):
     base, metal, rough, emissive, alpha_mode = spec
     mat.use_nodes = True
     nt = mat.node_tree
@@ -100,7 +167,7 @@ def rebuild_material(mat, spec, base_dir):
 
     def tex(name, non_color=False):
         node = nt.nodes.new("ShaderNodeTexImage")
-        node.image = bpy.data.images.load(f"{base_dir}/{name}", check_existing=True)
+        node.image = bpy.data.images.load(edited.get(name, f"{base_dir}/{name}"), check_existing=True)
         if non_color:
             node.image.colorspace_settings.name = "Non-Color"
         return node
@@ -142,9 +209,10 @@ def main():
     prof = PROFILES[args.profile]
     base_dir = bpy.path.abspath("//").rstrip("/")
 
+    edited = edit_textures(prof, base_dir, tempfile.mkdtemp(prefix="rig-textures-"))
     for name, spec in prof["materials"].items():
         if name in bpy.data.materials:
-            rebuild_material(bpy.data.materials[name], spec, base_dir)
+            rebuild_material(bpy.data.materials[name], spec, base_dir, edited)
 
     meshes = [o for o in bpy.data.objects if o.type == "MESH"]
     # Bake every object's world transform into its vertices, then drop all

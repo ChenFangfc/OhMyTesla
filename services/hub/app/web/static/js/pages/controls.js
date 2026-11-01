@@ -7,8 +7,9 @@
  * is shown as unknown rather than guessed.
  *
  * Every command goes pressed → pending (on the button, aria-busy, naming the
- * operation) → done / failed, written inline in its row. Unlock, frunk and
- * windows are hold-to-confirm; the other risky commands ask in a sheet.
+ * operation) → done / failed, written inline in its row. Risky commands
+ * (catalogue risk ≥ 1: unlock, frunk, trunk, windows, Sentry off …) ask once
+ * in a sheet that says what will happen; the rest run on a tap.
  */
 (function () {
   const $ = (id) => document.getElementById(id);
@@ -22,7 +23,6 @@
 
   const SEATS = [["fl", 0], ["fr", 1], ["rl", 2], ["rc", 4], ["rr", 5]];
   const SUSPENSION = [[1, "entry"], [2, "low"], [3, "medium"], [4, "high"], [5, "very_high"], [6, "extract"]];
-  const HOLD = new Set(["door_unlock", "frunk", "vent_windows"]);
 
   function has(cmd) {
     return !caps || !caps.commands || !caps.commands.length || caps.commands.some((c) => c.id === cmd);
@@ -31,12 +31,11 @@
   /* --------------------------------------------------------- markup */
   function btn(cmd, label, o = {}) {
     if (!has(cmd)) return "";
-    const hold = HOLD.has(cmd);
-    const text = hold ? t("controls.hold." + cmd) : (label || t("cmd." + cmd));
-    return `<button type="button" class="cb${hold ? " hold" : ""}${o.danger ? " danger" : ""}" data-cmd="${cmd}"
+    const text = label || t("cmd." + cmd);
+    return `<button type="button" class="cb${o.danger ? " danger" : ""}" data-cmd="${cmd}"
       ${o.params ? `data-params='${esc(JSON.stringify(o.params))}'` : ""}
       ${o.on != null ? `aria-pressed="${o.on ? "true" : "false"}"` : ""}
-      ${hold ? `aria-describedby="hold-hint"` : ""}${o.icon ? ` aria-label="${esc(text)}"` : ""}>${o.icon ? icon(o.icon, 16) : `<span class="cb-l">${esc(text)}</span>`}</button>`;
+      ${o.icon ? ` aria-label="${esc(text)}"` : ""}>${o.icon ? icon(o.icon, 16) : `<span class="cb-l">${esc(text)}</span>`}</button>`;
   }
   const seg = (inner) => (inner.trim() ? `<div class="segmented" role="group">${inner}</div>` : "");
   function row(key, label, sub, controls, o = {}) {
@@ -59,7 +58,7 @@
 
   /* --------------------------------------------------------- render */
   function render(force) {
-    if (!force && (pending || document.querySelector("#grid .holding"))) { dirty = true; return; }
+    if (!force && pending) { dirty = true; return; }
     dirty = false;
     const live = Live.car();
     const ct = (caps && caps.model === "cybertruck") || (Car.info() && /cyber/i.test(Car.label(Car.info())));
@@ -132,7 +131,7 @@
     const openList = [frunk && t("home.q.frunk"), trunk && (ct ? t("controls.tailgate") : t("home.q.trunk")), winOpen && t("controls.windows"), doorsOpen && t("home.hud.doors")].filter(Boolean);
     const p = (S && S.cybertruck) || {};
     html.push(group("closures", "box", t("controls.closures"),
-      openList.length ? t("home.now.open", { what: openList.join("、") }) : (frunk === false ? t("controls.all_closed") : ""),
+      openList.length ? t("home.now.open", { what: fmt.list(openList) }) : (frunk === false ? t("controls.all_closed") : ""),
       {},
       row("frunk", t("home.q.frunk"), yesno(frunk, t("controls.open"), t("controls.closed")),
           frunk ? `<span class="cr-note">${esc(t("home.hint.frunk_close"))}</span>` : btn("frunk"), { subCls: frunk ? "is-warn" : "" })
@@ -173,7 +172,7 @@
         + row("bed", t("controls.bed_lights"), "", seg(btn("bed_light_auto_on", t("controls.auto")) + [["0", "off"], ["50", "med"], ["100", "high"]].map(([v, k]) =>
             btn("bed_light_brightness", t("controls.level_" + k), { params: { brightness: Number(v) } })).join("")), { stack: true })
         + row("tent", t("controls.tent"), t("controls.tent_sub"), btn("tent_mode_on", t("controls.on")) + btn("tent_mode_off", t("controls.off")))
-        + sub(t("controls.ride_height"))
+        + sub(t("controls.suspension"))
         + row("ride", t("controls.ride_height"), t("controls.ride_note"), seg(SUSPENSION.map(([lvl, k]) =>
             btn("suspension_level", t("controls.ride_" + k), { params: { level: lvl } })).join("")), { stack: true })));
     }
@@ -188,7 +187,7 @@
       + row("volume", t("controls.volume"), m.volume != null ? `${fmt.num(m.volume, 1)} / ${fmt.num(m.volume_max || 11, 0)}` : "",
           btn("volume_down", t("cmd.volume_down"), { icon: "minus" }) + btn("volume_up", t("cmd.volume_up"), { icon: "plus" }))
       + sub(t("controls.navigation"))
-      + (has("navigate_to") ? row("nav", t("controls.navigation"), "",
+      + (has("navigate_to") ? row("nav", t("cmd.navigate_to"), "",
           `<input type="text" id="dest" placeholder="${esc(t("controls.dest_ph"))}" autocomplete="street-address" aria-label="${esc(t("controls.dest_ph"))}">
            <button type="button" class="cb" id="dest-send"><span class="cb-l">${esc(t("controls.send"))}</span></button>`, { stack: true }) : "")
       + `<div id="software">${sub(t("home.card.software"))}</div>`
@@ -200,8 +199,6 @@
       <div class="body">${more}</div></details>`);
 
     $("grid").innerHTML = html.join("");
-    // the hint read out for every hold-to-confirm control
-    if (!$("hold-hint")) $("grid").insertAdjacentHTML("afterend", `<span class="sr-only" id="hold-hint">${esc(t("controls.hold_hint"))}</span>`);
     bind();
     // transient row messages survive a re-render
     for (const [key, s] of status) {
@@ -247,18 +244,6 @@
     document.querySelectorAll("#grid [data-cmd]").forEach((b) => {
       const cmd = b.dataset.cmd;
       const params = b.dataset.params ? JSON.parse(b.dataset.params) : null;
-      if (HOLD.has(cmd)) {
-        Cmd.hold(b, {
-          when: () => !(caps && caps.ready === false),
-          onComplete: () => send(b, cmd, params, { confirmed: true }),
-          onHint: () => {
-            const { el } = rowStatus(b);
-            if (el) { el.className = "inline-status is-wait"; el.innerHTML = `${icon("info", 14)}<span>${esc(t("controls.hold_hint"))}</span>`; }
-          },
-        });
-        b.addEventListener("click", () => { if (caps && caps.ready === false) send(b, cmd, params); });
-        return;
-      }
       b.addEventListener("click", () => send(b, cmd, params));
     });
 
@@ -327,8 +312,8 @@
     const ready = !caps || caps.ready !== false || caps.reason === "error";
     note.hidden = ready || (Car.info() && Car.info().active === false);
     if (!note.hidden) {
-      note.innerHTML = `${icon("key", 16)}<span>${esc(caps.reason === "not_paired" ? t("controls.setup_pair") : t("controls.setup_short"))}</span>
-        <a href="/settings#commands">${esc(t("cmd.setup.go"))}</a>`;
+      const why = caps.reason === "not_paired" ? t("controls.setup_pair") : t("controls.setup_short");
+      note.innerHTML = `${icon("key", 16)}<span>${esc(why)}${fmt.gap(why)}<a href="/settings#commands">${esc(t("cmd.setup.go"))}</a></span>`;
     }
   }
 

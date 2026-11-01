@@ -47,7 +47,7 @@
           <div class="pl-track" id="track"></div>
           <input type="range" id="seek" min="0" max="1" step="any" value="0" data-i18n-title="player.seek">
         </div>
-        <select id="rate" class="pl-rate" aria-label="Speed">
+        <select id="rate" class="pl-rate" aria-label="{{ t('player.playback_speed') }}" data-i18n-aria="player.playback_speed">
           <option value="0.5">0.5×</option>
           <option value="1" selected>1×</option>
           <option value="2">2×</option>
@@ -269,10 +269,12 @@
   .pl-side details.disclose > summary .value { white-space: nowrap; }
 
   /* encrypted event */
-  .pl-lock { margin-bottom: 22px; padding: 22px 24px; border-radius: var(--radius-lg); border: 1px solid rgba(255, 179, 64, .32);
+  /* The panel's amber is the state (encrypted); the lock is a plain glyph on
+     the first line, as in the dashcam notes. */
+  .pl-lock { margin-bottom: 22px; padding: 22px 24px; border-radius: var(--radius-lg); border: 1px solid var(--wn-line);
     background: var(--wn-tint); }
-  .pl-lock .top { display: flex; gap: 18px; align-items: flex-start; }
-  .pl-lock .ic { width: 52px; height: 52px; border-radius: var(--r-2); display: grid; place-items: center; flex: none; background: var(--amber-soft); color: var(--amber); }
+  .pl-lock .top { display: flex; gap: 14px; align-items: flex-start; }
+  .pl-lock .ic { flex: none; display: flex; margin-top: 1px; color: var(--wn-text); }
   .pl-lock .eyebrow { color: var(--amber-ink); }
   .pl-lock h2 { font-size: var(--t-20); font-weight: 600; letter-spacing: -.3px; margin-top: 4px; }
   .pl-lock .lead { margin: 8px 0 0; max-width: 70ch; line-height: 1.6; }
@@ -307,8 +309,7 @@
     .pl-page .hud .clock { flex-basis: 100%; text-align: left; margin-left: 0; font-size: var(--t-12); }
     .pl-page .pip-row { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
     .pl-lock { padding: 18px; }
-    .pl-lock .top { flex-direction: column; gap: 12px; }
-    .pl-lock .ic { width: 44px; height: 44px; border-radius: var(--r-3); }
+    .pl-lock .top { gap: 12px; }
   }
   @media (hover: hover) and (pointer: fine) {
     .pl-play:hover { background: var(--text-primary); opacity: .9; }
@@ -352,7 +353,6 @@
   const camName = (c) => { const k = "dashcam.cam." + c; const s = t(k); return s === k ? c : s; };
   const mediaUrl = (rel) => "/media/" + rel.split("/").map(encodeURIComponent).join("/");
   const rate = () => +$("rate").value;
-  const pauseIcon = (s) => `<svg viewBox="0 0 24 24" width="${s}" height="${s}" fill="currentColor" aria-hidden="true"><rect x="6.5" y="5" width="3.6" height="14" rx="1"/><rect x="13.9" y="5" width="3.6" height="14" rx="1"/></svg>`;
 
   /* Clip names carry the car's local time with no zone. Treat them as UTC
      internally and format with timeZone "UTC": differences come out right
@@ -456,7 +456,7 @@
   }
 
   function paintPlay() {
-    $("btn-play").innerHTML = playing ? pauseIcon(18) : icon("play", 18);
+    $("btn-play").innerHTML = icon(playing ? "pause" : "play", 18);
     $("btn-play").setAttribute("aria-label", playing ? t("player.pause") : t("player.play"));
   }
   function playAll() {
@@ -999,7 +999,7 @@
       if (n) body += `<div class="row"><button class="btn accent" type="button" id="dc-open">${esc(t("decrypt.retry"))}</button></div>`;
     }
     const headTitle = lockUi === "running" ? t("decrypt.title_running") : (lockUi === "done" && !n) ? t("decrypt.title_done") : title;
-    box.innerHTML = `<div class="top"><div class="ic">${icon("lock", 24)}</div><div class="grow">
+    box.innerHTML = `<div class="top"><div class="ic">${icon("lock", 18)}</div><div class="grow">
         <div class="eyebrow">${esc(t("decrypt.eyebrow"))}</div>
         <h2>${esc(headTitle)}</h2>
         ${lockUi === "intro" || lockUi === "form" ? `<p class="body-sm lead">${esc(t("decrypt.body"))}</p>` : ""}

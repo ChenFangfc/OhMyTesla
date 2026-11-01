@@ -150,9 +150,12 @@ async def _place_name(cid: int, c: dict) -> str | None:
     if c.get("geofence"):
         return c["geofence"]
     try:
+        from ..alerts.sentry import place_label
         from ..alerts.sentry import tracker as sentry_tracker
+        from ..i18n.prefs import get as get_prefs
 
-        label = (await sentry_tracker.place(c))[0]
+        label, at_home = await sentry_tracker.place(c)
+        label = place_label(label, at_home, (await get_prefs())["locale"])
         if label:
             return label
     except Exception:

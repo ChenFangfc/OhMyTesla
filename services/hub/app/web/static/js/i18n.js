@@ -113,6 +113,10 @@
     document.querySelectorAll("[data-i18n-title]").forEach((el) => {
       el.setAttribute("title", t(el.getAttribute("data-i18n-title")));
     });
+    // 只给读屏用的名字（没有可见文字的控件，如倍速下拉框）
+    document.querySelectorAll("[data-i18n-aria]").forEach((el) => {
+      el.setAttribute("aria-label", t(el.getAttribute("data-i18n-aria")));
+    });
     window.dispatchEvent(new CustomEvent("omt:locale", { detail: { ...state } }));
   }
 

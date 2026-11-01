@@ -1,26 +1,36 @@
 import Foundation
 
-/// Follows a hub: its SSE stream `GET /api/live/stream` for live car state, and
-/// its alert history for native notifications.
+/// Follows a hub: its SSE stream `GET /api/live/stream`, and its alert history
+/// for native notifications.
 ///
 /// Alerts: the hub records every alert in its history (`GET /api/alerts/history`,
-/// rows carry an `id`) and — in current hubs — also emits `{"type": "alert", ...}`
-/// on the SSE stream (without an id). The client
+/// rows carry an `id`) and also emits `{"type": "alert", ...}` on the SSE stream.
+/// The client
 ///   * treats an SSE alert as a nudge to read the history right away, so each
 ///     alert is notified exactly once, keyed by its history id;
-///   * still polls the history every 30 s (older hubs, missed frames);
+///   * reads the history when the stream (re)connects, so nothing missed while
+///     disconnected is lost, and at most every 10 min on a keepalive (older hubs
+///     that emit no alert events) — no timer of its own;
 ///   * remembers the highest id per server, so nothing is repeated across
 ///     launches, and the first contact with a server notifies nothing;
 ///   * skips rows the hub itself kept in-app (channels == ["app"]: snoozed or
 ///     quiet hours), and falls back to the SSE payload only if the history has
 ///     no new row for it.
+///
+/// Car events are not kept or published: the menu-bar panel asks for a nudge
+/// (`onActivity`) only while it is open, so a driving car costs the app nothing.
 @MainActor
 final class LiveEvents: ObservableObject {
     @Published private(set) var connected = false
-    @Published private(set) var cars: [String: [String: String]] = [:]
     @Published private(set) var lastError: String?
 
     var onAlert: ((Alert) -> Void)?
+    /// Called on every (re)connection.
+    var onConnect: (() -> Void)?
+    /// Set while someone wants to know that a car's data or an alert just arrived.
+    var onActivity: ((Activity) -> Void)?
+
+    enum Activity { case car(String), alert }
 
     struct Alert {
         let id: String
@@ -34,8 +44,9 @@ final class LiveEvents: ObservableObject {
     private var base: URL?
     private var password = ""
     private var streamTask: Task<Void, Never>?
-    private var pollTask: Task<Void, Never>?
     private var notified: [String] = []
+    private var lastPoll = Date.distantPast
+    private static let safetyPoll: TimeInterval = 600
     private let session: URLSession = {
         let c = URLSessionConfiguration.ephemeral
         c.timeoutIntervalForRequest = 90          // the hub sends a keepalive every 25 s
@@ -44,33 +55,23 @@ final class LiveEvents: ObservableObject {
         return URLSession(configuration: c)
     }()
 
-    var sentryOn: Bool {
-        cars.values.contains { $0["sentry_mode"]?.lowercased() == "true" }
-    }
-
     func start(base: URL, password: String) {
         if self.base == base, self.password == password, streamTask != nil { return }
         stop()
         self.base = base
         self.password = password
         streamTask = Task { [weak self] in await self?.streamLoop() }
-        pollTask = Task { [weak self] in await self?.pollLoop() }
     }
 
     func stop() {
         streamTask?.cancel()
-        pollTask?.cancel()
         streamTask = nil
-        pollTask = nil
         connected = false
     }
 
     private func request(_ path: String) -> URLRequest? {
-        guard let base, let url = URL(string: path, relativeTo: base) else { return nil }
-        var r = URLRequest(url: url)
-        let token = Data("\(AppPaths.portalUser):\(password)".utf8).base64EncodedString()
-        r.setValue("Basic \(token)", forHTTPHeaderField: "Authorization")
-        return r
+        guard let base else { return nil }
+        return HubEndpoint(base: base, password: password).request(path, timeout: 90)
     }
 
     // MARK: SSE
@@ -89,6 +90,8 @@ final class LiveEvents: ObservableObject {
                 connected = true
                 lastError = nil
                 backoff = 1
+                onConnect?()
+                await pollOnce()                      // whatever happened while we were away
                 var line = Data()
                 var eventName = ""
                 var dataLines: [String] = []
@@ -105,7 +108,8 @@ final class LiveEvents: ObservableObject {
                         eventName = ""
                         dataLines.removeAll()
                     } else if text.hasPrefix(":") {
-                        continue                      // keepalive comment
+                        // keepalive comment (every 25 s while nothing happens)
+                        if Date().timeIntervalSince(lastPoll) > Self.safetyPoll { await pollOnce() }
                     } else if text.hasPrefix("data:") {
                         dataLines.append(String(text.dropFirst(5)).trimmingLeadingSpace())
                     } else if text.hasPrefix("event:") {
@@ -126,36 +130,40 @@ final class LiveEvents: ObservableObject {
     }
 
     private func handle(event: String, data: String) {
+        // Most events are one car value: {"car_id": "1", "key": ..., "value": ...}.
+        // Only parse them when someone listens.
+        if event != "alert", !data.contains("\"type\"") {
+            guard let onActivity,
+                  let obj = try? JSONSerialization.jsonObject(with: Data(data.utf8)) as? [String: Any],
+                  let car = obj["car_id"].map({ "\($0)" }) else { return }
+            onActivity(.car(car))
+            return
+        }
         guard let obj = try? JSONSerialization.jsonObject(with: Data(data.utf8)) as? [String: Any] else { return }
         let type = obj["type"] as? String
         if event == "alert" || type == "alert" {
             let payload = (obj["alert"] as? [String: Any]) ?? obj
+            onActivity?(.alert)
             Task { [weak self] in
                 guard let self else { return }
                 let delivered = await self.pollOnce()
-                if delivered == 0, !self.recentlyDelivered(payload) { self.deliver(payload) }
+                if delivered == 0, !self.recentlyDelivered(payload), !self.keptInApp(payload) {
+                    self.deliver(payload)
+                }
             }
-        } else if type == "snapshot", let snap = obj["cars"] as? [String: [String: Any]] {
-            cars = snap.mapValues { $0.compactMapValues { "\($0)" } }
-        } else if type == nil, let car = obj["car_id"].map({ "\($0)" }), let key = obj["key"] as? String {
-            cars[car, default: [:]][key] = obj["value"].map { "\($0)" } ?? ""
+        } else if type == nil, let car = obj["car_id"].map({ "\($0)" }) {
+            onActivity?(.car(car))
         }
     }
 
-    // MARK: alert history polling
+    // MARK: alert history
 
     private var watermarkKey: String { "alertWatermark:\(base?.absoluteString ?? "")" }
-
-    private func pollLoop() async {
-        while !Task.isCancelled {
-            await pollOnce()
-            try? await Task.sleep(nanoseconds: 30 * 1_000_000_000)
-        }
-    }
 
     /// Returns how many alerts were delivered.
     @discardableResult
     private func pollOnce() async -> Int {
+        lastPoll = Date()
         guard let req = request("api/alerts/history?limit=20"),
               let (data, response) = try? await session.data(for: req),
               (response as? HTTPURLResponse)?.statusCode == 200,
@@ -180,7 +188,9 @@ final class LiveEvents: ObservableObject {
     }
 
     /// The hub stores `channels` as a JSON list; ["app"] means it chose not to push.
+    /// The live event says the same with `in_app_only`.
     private func keptInApp(_ row: [String: Any]) -> Bool {
+        if let inApp = row["in_app_only"] as? Bool { return inApp }
         guard let raw = row["channels"] as? String, let data = raw.data(using: .utf8),
               let list = try? JSONSerialization.jsonObject(with: data) as? [String] else { return false }
         return list == ["app"]
@@ -205,7 +215,7 @@ final class LiveEvents: ObservableObject {
 
     @discardableResult
     private func deliver(_ row: [String: Any]) -> Bool {
-        let id = row["id"].map { "\($0)" } ?? UUID().uuidString
+        let id = row["id"].flatMap { $0 is NSNull ? nil : "\($0)" } ?? UUID().uuidString
         guard !notified.contains(id) else { return false }
         notified.append(id)
         remember(row)
