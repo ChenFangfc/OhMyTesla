@@ -1,4 +1,6 @@
 # Everything build.sh produces: download cache, sources, staged runtime, the .app
 build/
+# SwiftPM's own build directory, when App/ is compiled by hand (`swift build`)
+.build/
 # The finished DMG
 dist/

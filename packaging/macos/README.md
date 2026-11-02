@@ -146,6 +146,12 @@ If the LaunchAgent cannot be registered (or the app runs translocated from the D
 app runs the supervisor as its own child process instead and says so: monitoring then
 stops when you quit the app. **More › Install Background Service** in the menu-bar panel retries.
 
+To switch between the two later, use **OhmyTesla › Connect to a Server Instead…** (or
+**Change Server…**) in the menu bar while the window is open, **More** in the menu-bar panel,
+the same button on the startup screen, or — while the hub runs on this Mac — the line under
+the setup guide's title. Leaving **Run on this Mac** stops its services and removes its
+background item; its data stays, so choosing it again carries on where it left off.
+
 ### The menu-bar panel
 
 Click the icon in the menu bar:

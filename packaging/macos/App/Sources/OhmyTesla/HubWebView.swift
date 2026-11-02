@@ -23,13 +23,19 @@ final class WebController: NSObject, ObservableObject {
     private var lastURL: URL?
     private var observers: [NSKeyValueObservation] = []
 
-    /// Called by HubWebView when the window shows the hub.
-    func makeWebView() -> WKWebView {
+    /// Called by HubWebView when the window shows the hub. The page learns how the app
+    /// runs (`window.ohmyteslaApp.mode`): with the hub on this Mac, the setup guide offers
+    /// to connect to a server instead. Changing the mode tears the web view down first,
+    /// so a web view keeps one mode for its life.
+    func makeWebView(appMode: AppModel.Mode) -> WKWebView {
         if let webView { return webView }
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .default()
         config.applicationNameForUserAgent = "OhmyTeslaMac/\(Bundle.main.shortVersion)"
         config.preferences.isElementFullscreenEnabled = true
+        config.userContentController.addUserScript(WKUserScript(
+            source: "window.ohmyteslaApp = Object.freeze({ mode: \"\(appMode.rawValue)\" });",
+            injectionTime: .atDocumentStart, forMainFrameOnly: true))
         let wv = WKWebView(frame: .zero, configuration: config)
         wv.navigationDelegate = self
         wv.uiDelegate = self
@@ -125,6 +131,15 @@ extension WebController: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        // The setup guide's "connect to it instead" (ohmytesla-app://change-mode). Only a
+        // click counts; the app then leaves this page for its setup screen.
+        if let url = action.request.url, url.scheme == "ohmytesla-app" {
+            decisionHandler(.cancel)
+            if url.host == "change-mode", action.navigationType == .linkActivated {
+                Task { @MainActor in AppDelegate.shared?.changeMode() }
+            }
+            return
+        }
         if action.shouldPerformDownload {
             decisionHandler(.download)
             return
@@ -267,7 +282,8 @@ extension WebController: WKDownloadDelegate {
 
 struct HubWebView: NSViewRepresentable {
     let controller: WebController
-    func makeNSView(context: Context) -> WKWebView { controller.makeWebView() }
+    let appMode: AppModel.Mode
+    func makeNSView(context: Context) -> WKWebView { controller.makeWebView(appMode: appMode) }
     func updateNSView(_ nsView: WKWebView, context: Context) {}
 }
 

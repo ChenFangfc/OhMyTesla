@@ -56,7 +56,7 @@
 
 1. [下载 DMG](https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/OhmyTesla-arm64.dmg)（Apple 芯片，macOS 13 以上），把 **OhmyTesla** 拖进「应用程序」。
 2. 首次打开：右键 → **打开**（macOS 15 以上：系统设置 → 隐私与安全性 → **仍要打开**）。应用暂未经过 Apple 公证。
-3. 家里已有服务器就选 **连接已有服务器**（关掉窗口后只占约 40 MB 内存），否则选 **在这台 Mac 上运行**。然后[完成设置](#设置)。
+3. 家里已有服务器就选 **连接已有服务器**（关掉窗口后只占约 40 MB 内存），否则选 **在这台 Mac 上运行**。之后可以在 **OhmyTesla** 菜单里切换。然后[完成设置](#设置)。
 
 在 Mac 上运行不需要 Docker：整套服务空闲时只占约 0.2% 单核 CPU、约 300 MB 内存。
 

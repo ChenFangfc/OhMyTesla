@@ -25,11 +25,13 @@ struct MenuBarLabel: View {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
     static weak var shared: AppDelegate?
     let model = AppModel()
     let web = WebController()
     private var window: NSWindow?
+    private weak var changeModeItem: NSMenuItem?
+    private weak var changeModeSeparator: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
@@ -83,6 +85,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    /// Back to the setup screen — from the app menu, the panel, the startup screen or the
+    /// setup guide. Leaving "Run on this Mac" stops its services; its data stays, so
+    /// choosing it again carries on where it left off.
+    @objc func changeMode() {
+        web.tearDown()      // the next page is built for the next mode (see makeWebView)
+        model.resetMode()
+        showMainWindow()
+    }
+
     func windowWillClose(_ notification: Notification) {
         // Back to a menu-bar-only app; the services keep running. The window, its
         // SwiftUI tree and the web view (with its WebKit process) are released;
@@ -110,6 +121,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         appMenu.addItem(withTitle: tr("关于 OhmyTesla", "About OhmyTesla"),
                         action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
+        // Run on this Mac ⇄ a server; named, or hidden, per mode in menuNeedsUpdate
+        let change = appMenu.addItem(withTitle: "", action: #selector(changeMode), keyEquivalent: "")
+        change.target = self
+        let changeSeparator = NSMenuItem.separator()
+        appMenu.addItem(changeSeparator)
+        changeModeItem = change
+        changeModeSeparator = changeSeparator
+        appMenu.delegate = self
+        menuNeedsUpdate(appMenu)
         appMenu.addItem(withTitle: tr("隐藏 OhmyTesla", "Hide OhmyTesla"), action: #selector(NSApplication.hide(_:)),
                         keyEquivalent: "h")
         appMenu.addItem(withTitle: tr("关闭窗口", "Close Window"), action: #selector(NSWindow.performClose(_:)),
@@ -160,4 +180,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc private func goForward() { web.goForward() }
     @objc private func goHome() { web.goHome() }
     @objc private func openInBrowser() { model.openInBrowser() }
+
+    /// The mode changes while the menu is installed, so its item is named on opening.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let title = model.changeModeTitle
+        changeModeItem?.title = title ?? ""
+        changeModeItem?.isHidden = title == nil
+        changeModeSeparator?.isHidden = title == nil
+    }
 }

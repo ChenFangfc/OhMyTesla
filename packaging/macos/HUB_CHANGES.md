@@ -11,6 +11,14 @@ Line numbers refer to the tree as of 2026-11-01.
 
 ## Done
 
+### The setup guide offers to connect to a server instead (0.3.4)
+
+`app/web/templates/welcome.html` shows one line under the title — *Already run OhmyTesla
+on a server? Connect to it instead* — only inside the macOS app with the hub on this Mac.
+The app tells its pages how it runs with a script injected at document start
+(`window.ohmyteslaApp = { mode }`) and handles the link (`ohmytesla-app://change-mode`)
+itself; in a browser, and in the app connected to a server, the line stays hidden.
+
 ### Sentry fast poll reads its setting from memory (0.3.0)
 
 `app/alerts/fastpoll.py` caches `sentry_fast_poll_seconds`: re-read at most once a minute,
