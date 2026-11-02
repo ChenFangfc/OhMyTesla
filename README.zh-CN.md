@@ -14,9 +14,18 @@
 
 **[下载 Mac 版](https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/OhmyTesla-arm64.dmg) · [用 Docker 部署](#docker) · [手机提醒](#手机提醒) · [文档](#文档)**
 
-<img src="docs/readme/film.zh.webp" alt="30 秒看懂 OhmyTesla：总览、哨兵推送到手机、行程与充电、一生足迹、先确认再执行的远程控制、Mac 状态栏" width="100%">
+<img src="docs/readme/film.zh.webp" alt="32 秒看懂 OhmyTesla：Cybertruck 灯条亮起、哨兵推送到手机、一年的行程与充电、一生足迹、先确认再执行的控制、Mac 状态栏" width="100%">
 
-<sub><a href="https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/ohmytesla-film.zh.mp4"><b>▶ 观看高清完整版（0:31）</b></a></sub>
+<sub><a href="https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/ohmytesla-film.zh.mp4"><b>▶ 观看高清完整版（有声，0:32）</b></a></sub>
+
+<table>
+<tr>
+<td align="center" width="25%"><h3>≈5 秒</h3><sub>哨兵触发<br>到手机收到提醒</sub></td>
+<td align="center" width="25%"><h3>0.2%</h3><sub>Mac 上整套服务空闲时<br>只占单核 CPU 的比例</sub></td>
+<td align="center" width="25%"><h3>本地</h3><sub>行程、充电和位置<br>都留在你自己的设备上</sub></td>
+<td align="center" width="25%"><h3>免费</h3><sub>开源（AGPL-3.0）<br>没有订阅</sub></td>
+</tr>
+</table>
 
 </div>
 
@@ -27,7 +36,7 @@
 <table>
 <tr>
 <td width="50%"><img src="docs/readme/overview.zh.webp" alt="总览"><br><b>总览。</b>等比例 3D Cybertruck，哪里开着、锁没锁、是否在充电一眼可见，位置直接写成地名。</td>
-<td width="50%"><img src="docs/readme/security.zh.webp" alt="安全"><br><b>哨兵。</b>有人动车，几秒内推到手机；日常琐事只留在应用里。</td>
+<td width="50%"><img src="docs/readme/security.zh.webp" alt="安全"><br><b>哨兵。</b>有人靠近，约 5 秒推到手机；iPhone 上推送带 OhmyTesla 图标。日常琐事只留在应用里。</td>
 </tr>
 <tr>
 <td><img src="docs/readme/charging.zh.webp" alt="充电数据"><br><b>数据。</b>每段行程、每次充电，按你的电价算费用，电池健康长期可查。</td>

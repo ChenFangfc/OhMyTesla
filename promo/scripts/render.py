@@ -6,6 +6,8 @@
 
 Frames are drawn at twice the pixels (3840×2160) and scaled down with lanczos to
 2560×1440, so small UI text stays sharp; the soundtrack is muxed in at −16 LUFS.
+The truck is WebGL (src/car3d.js): on a Mac, Chromium draws it on the GPU through
+Metal; elsewhere it falls back to software rendering, which is slower but the same.
 Nothing is captured in real time, so a slow machine renders the same film.
 Needs Python 3.10+, playwright (chromium), Pillow, and ffmpeg with libx264.
 """
@@ -35,7 +37,10 @@ async def render(lang: str, fps: int, out: Path, webp: Path | None, webp_width: 
     w, h = size.split("x")
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "image2pipe", "-framerate", str(fps), "-c:v", "mjpeg", "-i", "-"]
     if audio and audio.exists():
-        cmd += ["-i", str(audio), "-map", "0:v", "-map", "1:a", "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+        # loudnorm alone let the AAC encoder overshoot to +2 dBFS on the drums;
+        # a limiter at −4 dB after it keeps the decoded peak near −3.6 dBFS.
+        cmd += ["-i", str(audio), "-map", "0:v", "-map", "1:a",
+                "-af", "loudnorm=I=-16:TP=-3:LRA=11,alimiter=limit=0.63:attack=1:release=50:level=false",
                 "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-shortest"]
     cmd += ["-vf", f"scale={w}:{h}:flags=lanczos", "-c:v", "libx264", "-preset", "slow", "-crf", crf,
             "-pix_fmt", "yuv420p", "-profile:v", "high", "-colorspace", "bt709",
@@ -44,7 +49,8 @@ async def render(lang: str, fps: int, out: Path, webp: Path | None, webp_width: 
     frames_for_webp = []
     try:
         async with async_playwright() as p:
-            browser = await p.chromium.launch()
+            gpu = ["--use-angle=metal", "--enable-gpu", "--ignore-gpu-blocklist"] if sys.platform == "darwin" else []
+            browser = await p.chromium.launch(args=gpu)
             page = await browser.new_page(viewport={"width": 1920, "height": 1080}, device_scale_factor=dsf)
             await page.goto(f"http://127.0.0.1:{port}/film.html?render&lang={lang}", wait_until="load")
             await page.evaluate("FILM.ready.then(() => true)")
@@ -81,7 +87,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--lang", choices=("en", "zh"), default="en")
     ap.add_argument("--fps", type=int, default=30)
-    ap.add_argument("--crf", default="18")
+    ap.add_argument("--crf", default="20")
     ap.add_argument("--out", type=Path)
     ap.add_argument("--webp", action="store_true", help="also write a looping WebP for the README")
     ap.add_argument("--webp-width", type=int, default=1280)

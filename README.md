@@ -14,9 +14,18 @@ Live status and controls, Sentry alerts on your phone, every drive and charge, a
 
 **[Download for Mac](https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/OhmyTesla-arm64.dmg) · [Run with Docker](#docker) · [Phone alerts](#phone-alerts) · [Docs](#docs)**
 
-<img src="docs/readme/film.en.webp" alt="OhmyTesla in 30 seconds: the overview, a Sentry push on a phone, drives and charging, the lifetime footprint, controls that ask first, and the Mac menu bar" width="100%">
+<img src="docs/readme/film.en.webp" alt="OhmyTesla in 32 seconds: the Cybertruck's light bar comes on, a Sentry push lands on a phone, a year of drives and charges, the lifetime footprint, controls that ask first, and the Mac menu bar" width="100%">
 
-<sub><a href="https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/ohmytesla-film.en.mp4"><b>▶ The film in full quality (0:31)</b></a></sub>
+<sub><a href="https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/ohmytesla-film.en.mp4"><b>▶ The film in full quality, with sound (0:32)</b></a></sub>
+
+<table>
+<tr>
+<td align="center" width="25%"><h3>≈5 s</h3><sub>from a Sentry trigger<br>to your phone</sub></td>
+<td align="center" width="25%"><h3>0.2%</h3><sub>of one CPU core: the whole<br>stack, idle, on a Mac</sub></td>
+<td align="center" width="25%"><h3>Local</h3><sub>drives, charges and places<br>stay on your machine</sub></td>
+<td align="center" width="25%"><h3>Free</h3><sub>open source (AGPL-3.0),<br>no subscription</sub></td>
+</tr>
+</table>
 
 </div>
 
@@ -27,7 +36,7 @@ Live status and controls, Sentry alerts on your phone, every drive and charge, a
 <table>
 <tr>
 <td width="50%"><img src="docs/readme/overview.en.webp" alt="Overview"><br><b>Overview.</b> A true-scale 3D Cybertruck that shows what is open, locked or charging, with the place in words.</td>
-<td width="50%"><img src="docs/readme/security.en.webp" alt="Security"><br><b>Sentry.</b> An intrusion reaches your phone in seconds. Routine events stay in the app.</td>
+<td width="50%"><img src="docs/readme/security.en.webp" alt="Security"><br><b>Sentry.</b> Someone at the car reaches your phone in about 5 seconds; on iPhone the push carries the OhmyTesla icon. Routine events stay in the app.</td>
 </tr>
 <tr>
 <td><img src="docs/readme/charging.en.webp" alt="Charging data"><br><b>Data.</b> Every drive and charge, costs from your own tariff, battery health over time.</td>

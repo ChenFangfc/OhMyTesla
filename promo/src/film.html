@@ -5,12 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OhmyTesla — film</title>
 <link rel="stylesheet" href="film.css">
+<script type="importmap">{"imports":{"three":"./vendor/three/three.module.min.js","three/addons/":"./vendor/three/addons/"}}</script>
 </head>
 <body>
 <!-- 1920×1080, every frame a pure function of time: FILM.seek(t). Open it in
-     a browser to preview (?lang=zh, ?t=12); scripts/render.py records it. -->
+     a browser to preview (?lang=zh, ?t=12, ?still); scripts/render.py records it.
+     vendor/ and assets/cybertruck.glb link to the app's own copies. -->
 <div id="stage"></div>
 <script src="strings.js"></script>
 <script src="film.js"></script>
+<script type="module" src="car3d.js"></script>
 </body>
 </html>
