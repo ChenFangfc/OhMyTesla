@@ -79,9 +79,12 @@ async def render(lang: str, fps: int, out: Path, webp: Path | None, webp_width: 
     print(f"\r  {lang}: {out} ({out.stat().st_size / 1e6:.1f} MB)              ")
     if webp:
         webp.parent.mkdir(parents=True, exist_ok=True)
+        # each kept frame stands for `step` film frames; rounding the running total keeps the
+        # loop exactly as long as the film (a flat 1000 / webp_fps once played it at 80% speed)
+        ms = [round((k + 1) * step * 1000 / fps) - round(k * step * 1000 / fps) for k in range(len(frames_for_webp))]
         frames_for_webp[0].save(webp, save_all=True, append_images=frames_for_webp[1:],
-                                duration=round(1000 / webp_fps), loop=0, quality=80, method=6)
-        print(f"  {lang}: {webp} ({webp.stat().st_size / 1e6:.1f} MB, {len(frames_for_webp)} frames)")
+                                duration=ms, loop=0, quality=80, method=6)
+        print(f"  {lang}: {webp} ({webp.stat().st_size / 1e6:.1f} MB, {len(frames_for_webp)} frames, {sum(ms) / 1000:.1f} s)")
 
 
 if __name__ == "__main__":
@@ -92,7 +95,7 @@ if __name__ == "__main__":
     ap.add_argument("--out", type=Path)
     ap.add_argument("--webp", action="store_true", help="also write a looping WebP for the README")
     ap.add_argument("--webp-width", type=int, default=1280)
-    ap.add_argument("--webp-fps", type=int, default=12)
+    ap.add_argument("--webp-fps", type=int, default=15, help="WebP frame rate, rounded to a divisor of --fps")
     ap.add_argument("--dsf", type=int, default=3, help="pixels drawn per CSS pixel before scaling down")
     ap.add_argument("--size", default="3840x2160", help="output video size")
     ap.add_argument("--audio", type=Path, default=ROOT / "out" / "soundtrack.wav", help="soundtrack (none if missing)")
