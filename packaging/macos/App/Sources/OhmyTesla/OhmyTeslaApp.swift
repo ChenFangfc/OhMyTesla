@@ -36,10 +36,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
         installMainMenu()
+        if AppPaths.runsFromDiskImage { askToInstall(); return }
         Notifier.shared.setUp()
         Notifier.shared.onOpen = { [weak self] path in self?.showMainWindow(path: path) }
         model.start()
         if !launchedAsLoginItem || model.mode == .unset { showMainWindow() }
+    }
+
+    /// Opened straight from the DMG: start nothing, say how to install, quit. Whatever mode
+    /// was chosen before, its background service or login item would point into the disk
+    /// image and stop working once it is ejected.
+    private func askToInstall() {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = tr("先把 OhmyTesla 拖到「应用程序」", "Move OhmyTesla to Applications First")
+        alert.informativeText = tr("它现在是从磁盘映像里打开的。退出后，在访达里把它拖到「应用程序」文件夹，再从那里打开。",
+                                   "It is running from the disk image. Quit, drag it to the Applications folder in "
+                                   + "Finder, then open it from there.")
+        alert.addButton(withTitle: tr("退出", "Quit"))
+        alert.runModal()
+        NSApp.terminate(nil)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }

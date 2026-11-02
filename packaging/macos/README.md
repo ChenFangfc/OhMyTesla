@@ -67,8 +67,10 @@ What the build does (each step is a script in `scripts/`, logs in `build/logs/`)
    anything outside the bundle or `/usr/lib` / `/System` (absolute paths, `LC_RPATH`s,
    unresolvable `@loader_path`/`@rpath`), has an invalid signature, or declares a minimum
    macOS newer than 13.0.
-9. **DMG** — app + `Applications` link + "首次启动 First launch.txt" (Chinese and English),
-   compressed (ULMO).
+9. **DMG** — one window: the app, an `Applications` link and an arrow between them, with a
+   line on allowing the first launch (Chinese and English); compressed (ULMO). The layout is
+   written by dmgbuild (pinned in `dmg/requirements.txt`); the background is
+   `dmg/background.html`, rendered by `scripts/render_dmg_background.py`.
 
 **Pinning.** Every download is pinned in `versions.sh` by version and SHA-256 (git clones
 by commit; a moved tag fails the build). Transitive inputs are verified by their own lock
@@ -119,7 +121,9 @@ sources are the pinned upstream releases listed in `versions.sh`.
 
 ## First launch
 
-1. Open the DMG and drag **OhmyTesla** to **Applications**.
+1. Open the DMG and drag **OhmyTesla** onto **Applications**, as its window shows. Opened
+   straight from the disk image instead, the app asks you to quit and do this first:
+   whatever is set up from a disk image stops working once it is ejected.
 2. The app is ad-hoc signed (no Developer ID), so Gatekeeper blocks the first launch once:
    * macOS 13–14: Control-click (right-click) the app › **Open** › **Open**.
    * macOS 15+: open it, dismiss the warning, then System Settings › Privacy & Security ›

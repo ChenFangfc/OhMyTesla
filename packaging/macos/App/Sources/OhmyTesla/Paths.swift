@@ -8,6 +8,14 @@ enum AppPaths {
     static let agentPlistName = "io.github.ohmytesla.supervisor.plist"
     static let portalUser = "ohmytesla"
 
+    /// Opened straight from the DMG (or from the read-only copy macOS runs of a downloaded
+    /// app that wasn't moved with Finder): a background service or login item set up from
+    /// here would point into the disk image and stop working once it is ejected, so the
+    /// app starts nothing and says how to install (AppDelegate.askToInstall).
+    static var runsFromDiskImage: Bool {
+        (try? Bundle.main.bundleURL.resourceValues(forKeys: [.volumeIsReadOnlyKey]))?.volumeIsReadOnly ?? false
+    }
+
     private static func override(_ key: String) -> URL? {
         guard let v = ProcessInfo.processInfo.environment[key], !v.isEmpty else { return nil }
         return URL(fileURLWithPath: v, isDirectory: true)
