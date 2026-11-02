@@ -1,38 +1,47 @@
-"""The film's soundtrack, synthesised: scored to the picture's scene cues.
+"""The film's score, synthesised and cut to the picture: 120 BPM, a bar is 2 s.
 
-    python3 promo/scripts/music.py            # → promo/out/soundtrack.wav (31 s, 48 kHz stereo)
+    python3 promo/scripts/music.py            # → promo/out/soundtrack.wav (32 s, 48 kHz stereo)
 
-One chord per scene, changing on the cut; a bell on each title line; a chime
-when the push lands on the phone; a low swell into the end card. Warm, quiet
-and unhurried, under the words rather than on top of them. Loudness is set
-afterwards by ffmpeg's loudnorm (EBU R128) when the film is muxed.
-Needs numpy and scipy.
+  0–4 s    a pulse and a sub under the three words; a hit on each word; a riser
+  4 s      the drop, on the light bar: crash, sub, a bright stab; the groove starts
+  8–12 s   two notification pings land with the pushes on the phone
+  12–25 s  the groove under the product (a 16th arp joins for the data)
+  20.6 s   a tap on the confirm button
+  25–28 s  stop-time: a hit and a stab on each of the three words, a riser
+  28 s     the last hit for the end card, then the chord rings out
+
+D minor, one chord a bar: Dm – B♭ – F – C. Drums, bass and pads are made
+here from oscillators and noise; nothing is sampled. Loudness is set when the
+film is muxed (ffmpeg loudnorm, EBU R128). Needs numpy and scipy.
 """
 from pathlib import Path
 
 import numpy as np
 from scipy.io import wavfile
-from scipy.signal import butter, sosfilt, fftconvolve
+from scipy.signal import butter, fftconvolve, sosfilt
 
 SR = 48000
-DUR = 31.0
+DUR = 32.0
+BEAT = 0.5
 OUT = Path(__file__).resolve().parent.parent / "out" / "soundtrack.wav"
-RNG = np.random.default_rng(7)
+RNG = np.random.default_rng(11)
 N = int(DUR * SR)
 
-# Scene starts (seconds) — the same cut points as src/film.js.
-CUTS = [0.0, 4.8, 9.2, 13.8, 18.2, 21.4, 24.8, 27.8]
-# One chord per scene (MIDI notes), in D major: home, lift, a question, motion,
-# open space, settle, lean, home again.
-CHORDS = [
-    [50, 57, 62, 66, 69, 76],     # Dmaj9      the idea
-    [47, 54, 59, 62, 66, 73],     # Bm9        overview
-    [43, 50, 55, 59, 62, 69],     # Gmaj9      Sentry
-    [40, 47, 52, 55, 62, 66],     # Em9        data
-    [42, 50, 54, 57, 62, 69],     # D/F#       footprint
-    [43, 50, 55, 59, 64, 71],     # G6/9       controls
-    [45, 52, 57, 62, 64, 69],     # Asus4      the Mac
-    [38, 50, 57, 62, 66, 76],     # Dmaj9 low  end card
+# Cues from src/film.js
+WORDS = (1.0, 2.0, 3.0)          # the three opening words
+DROP = 4.0                       # the light bar
+PINGS = (8.6, 9.6)               # the two pushes
+TAP = 20.6                       # the confirm button
+STOPS = (25.0, 26.0, 27.0)       # self-hosted, open source, free
+END = 28.0                       # the end card
+GROOVE = (DROP, STOPS[0])        # where the drums play
+
+# one chord a bar, as MIDI notes (root, then the voicing)
+PROG = [
+    (38, [62, 65, 69, 74]),      # Dm
+    (34, [62, 65, 70, 74]),      # B♭
+    (41, [60, 65, 69, 72]),      # F
+    (36, [60, 64, 67, 72]),      # C
 ]
 
 
@@ -41,180 +50,277 @@ def hz(m):
 
 
 def lp(x, f, order=2):
-    return sosfilt(butter(order, f / (SR / 2), "low", output="sos"), x)
+    return sosfilt(butter(order, min(f, SR / 2 - 100) / (SR / 2), "low", output="sos"), x)
 
 
 def hp(x, f, order=2):
     return sosfilt(butter(order, f / (SR / 2), "high", output="sos"), x)
 
 
-def env(n, a, r, sustain=1.0):
-    """Attack/release envelope over n samples (a, r in seconds)."""
-    t = np.arange(n) / SR
-    e = np.minimum(1.0, t / max(a, 1e-3)) * sustain
-    rel = np.clip((t - (n / SR - r)) / max(r, 1e-3), 0, 1)
-    return e * (1 - rel) ** 2
+def bp(x, lo, hi, order=2):
+    return sosfilt(butter(order, [lo / (SR / 2), min(hi, SR / 2 - 100) / (SR / 2)], "band", output="sos"), x)
 
 
-class Mix:
+def ts(dur):
+    return np.arange(int(dur * SR)) / SR
+
+
+def chord_at(t):
+    return PROG[int(t // 2.0) % len(PROG)]
+
+
+class Bus:
     def __init__(self):
         self.l = np.zeros(N)
         self.r = np.zeros(N)
 
-    def add(self, t0, sig_l, sig_r=None, gain=1.0):
-        i = int(t0 * SR)
-        if i >= N:
+    def add(self, t0, sig, gain=1.0, pan=0.0, sig_r=None):
+        i = int(round(t0 * SR))
+        if i >= N or i + len(sig) <= 0:
             return
-        sig_r = sig_l if sig_r is None else sig_r
-        n = min(len(sig_l), N - i)
-        self.l[i:i + n] += gain * sig_l[:n]
-        self.r[i:i + n] += gain * sig_r[:n]
+        sr = sig if sig_r is None else sig_r
+        a = max(0, -i)
+        n = min(len(sig) - a, N - max(i, 0))
+        gl, gr = gain * np.sqrt(0.5 * (1 - pan)), gain * np.sqrt(0.5 * (1 + pan))
+        self.l[max(i, 0):max(i, 0) + n] += gl * sig[a:a + n]
+        self.r[max(i, 0):max(i, 0) + n] += gr * sr[a:a + n]
 
 
-def pad(chord, dur, gain=0.11):
-    """Soft detuned saws through a low-pass: a warm string-like bed."""
-    n = int(dur * SR)
-    t = np.arange(n) / SR
-    out_l, out_r = np.zeros(n), np.zeros(n)
-    for k, m in enumerate(chord):
-        f = hz(m)
-        for det, side in ((-0.06, 0), (0.0, 1), (0.06, 2)):
-            ff = f * 2 ** (det / 12)
-            ph = RNG.uniform(0, 2 * np.pi)
-            saw = 2 * ((ff * t + ph / (2 * np.pi)) % 1.0) - 1
-            tri = 2 * np.abs(saw) - 1
-            v = 0.55 * saw + 0.45 * tri
-            if side != 2:
-                out_l += v
-            if side != 0:
-                out_r += v
-    sl = lp(out_l, 1200, 4)
-    sr = lp(out_r, 1200, 4)
-    mod = 0.85 + 0.15 * np.sin(2 * np.pi * 0.25 * t)
-    e = env(n, 0.9, 1.2)
-    scale = gain / len(chord) / 2.0
-    return sl * e * mod * scale, sr * e * mod * scale
+# ── instruments ──────────────────────────────────────────────────────────
+def kick():
+    t = ts(0.42)
+    f = 46 + 110 * np.exp(-t * 34)
+    body = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t * 7)
+    click = hp(RNG.standard_normal(len(t)), 2500) * np.exp(-t * 400) * 0.35
+    return np.tanh(1.6 * (body + click)) * 0.9
 
 
-def pluck(m, dur=0.9, gain=0.12, bright=3000):
-    """A soft plucked note: a decaying saw through a falling filter."""
-    n = int(dur * SR)
-    t = np.arange(n) / SR
+def clap():
+    t = ts(0.35)
+    n = RNG.standard_normal(len(t))
+    e = np.zeros(len(t))
+    for d in (0.0, 0.011, 0.023):
+        e += np.where(t >= d, np.exp(-(t - d) * (90 if d < 0.02 else 16)), 0)
+    return bp(n, 900, 5200) * e * 0.55
+
+
+def hat(open_=False):
+    t = ts(0.25 if open_ else 0.06)
+    return hp(RNG.standard_normal(len(t)), 7500, 4) * np.exp(-t * (14 if open_ else 70)) * 0.22
+
+
+def bass(m, dur):
+    t = ts(dur)
     f = hz(m)
     saw = 2 * ((f * t) % 1.0) - 1
-    x = lp(saw * np.exp(-t * 6.5), bright, 2)
-    return x * env(n, 0.004, 0.25) * gain
+    sub = np.sin(2 * np.pi * f * t)
+    cut = 260 + 900 * np.exp(-t * 14)
+    x = np.zeros_like(t)
+    # a falling low-pass, done in short blocks
+    blk = 512
+    for i in range(0, len(t), blk):
+        x[i:i + blk] = lp(saw[i:i + blk], cut[i], 2)
+    e = np.minimum(1, t / 0.004) * np.exp(-t * 2.2)
+    return np.tanh(1.4 * (0.55 * x + 0.75 * sub)) * e * 0.5
 
 
-def bell(m, dur=2.2, gain=0.10):
-    """A clear bell: inharmonic partials with long, staggered decays."""
-    n = int(dur * SR)
-    t = np.arange(n) / SR
+def pad(notes, dur):
+    t = ts(dur)
+    l, r = np.zeros_like(t), np.zeros_like(t)
+    for m in notes:
+        for det, side in ((-0.09, -1), (0.0, 0), (0.09, 1)):
+            f = hz(m) * 2 ** (det / 12)
+            ph = RNG.uniform(0, 1)
+            v = 2 * ((f * t + ph) % 1.0) - 1
+            if side <= 0:
+                l += v
+            if side >= 0:
+                r += v
+    e = np.minimum(1, t / 0.35) * np.minimum(1, np.maximum(0, (dur - t) / 0.4))
+    k = 0.06 / len(notes)
+    return lp(l, 1600, 2) * e * k, lp(r, 1600, 2) * e * k
+
+
+def stab(notes, dur=0.9, bright=5200):
+    t = ts(dur)
+    x = np.zeros_like(t)
+    for m in notes:
+        for det in (-0.12, 0.0, 0.12):
+            f = hz(m + 12) * 2 ** (det / 12)
+            x += 2 * ((f * t + RNG.uniform(0, 1)) % 1.0) - 1
+    return lp(x, bright, 2) * np.exp(-t * 5.5) * np.minimum(1, t / 0.003) * (0.11 / len(notes))
+
+
+def pluck(m, dur=0.3):
+    t = ts(dur)
     f = hz(m)
-    x = (np.sin(2 * np.pi * f * t) * np.exp(-t * 2.2)
-         + 0.45 * np.sin(2 * np.pi * f * 2.76 * t) * np.exp(-t * 4.0)
-         + 0.20 * np.sin(2 * np.pi * f * 5.40 * t) * np.exp(-t * 7.0))
-    return x * env(n, 0.002, 0.4) * gain
+    saw = 2 * ((f * t) % 1.0) - 1
+    return lp(saw * np.exp(-t * 16), 3600, 2) * np.minimum(1, t / 0.002) * 0.12
 
 
-def sub(m, dur, gain=0.16):
-    n = int(dur * SR)
-    t = np.arange(n) / SR
-    return np.sin(2 * np.pi * hz(m) * t) * env(n, 0.35, 0.9) * gain
+def impact(big=1.0):
+    t = ts(2.6)
+    f = 30 + 60 * np.exp(-t * 6)
+    boom = np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t * 2.4)
+    crash = hp(RNG.standard_normal(len(t)), 3000) * np.exp(-t * 2.8) * 0.28
+    body = lp(RNG.standard_normal(len(t)), 900) * np.exp(-t * 9) * 0.6
+    return np.tanh(1.3 * big * (boom + crash + body)) * 0.8
 
 
-def swell(dur=0.9, gain=0.05):
-    """A soft rising air sweep into a cut."""
-    n = int(dur * SR)
-    x = RNG.standard_normal(n)
-    out = np.zeros(n)
-    # rising band-pass, done in short blocks
-    blocks = 24
+def thump():
+    t = ts(0.9)
+    f = 38 + 70 * np.exp(-t * 20)
+    return np.sin(2 * np.pi * np.cumsum(f) / SR) * np.exp(-t * 5) * 0.9
+
+
+def riser(dur):
+    t = ts(dur)
+    n = RNG.standard_normal(len(t))
+    out = np.zeros_like(t)
+    blocks = 32
     for b in range(blocks):
-        a, z = b * n // blocks, (b + 1) * n // blocks
-        fc = 400 * (2 ** (3.2 * b / blocks))
-        sos = butter(2, [fc / 1.4 / (SR / 2), min(fc * 1.4, 18000) / (SR / 2)], "band", output="sos")
-        out[a:z] = sosfilt(sos, x[a:z])
-    e = np.linspace(0, 1, n) ** 2.2
-    e[-int(0.05 * SR):] *= np.linspace(1, 0, int(0.05 * SR))
-    return out * e * gain
+        a, z = b * len(t) // blocks, (b + 1) * len(t) // blocks
+        fc = 300 * 2 ** (5.2 * b / blocks)
+        out[a:z] = bp(n[a:z], fc / 1.5, fc * 1.5)
+    tone = np.sin(2 * np.pi * np.cumsum(180 * 2 ** (2.5 * t / dur)) / SR) * 0.25
+    e = (t / dur) ** 2.4
+    return (out + tone) * e * 0.4
 
 
-def kick(gain=0.20):
-    n = int(0.35 * SR)
-    t = np.arange(n) / SR
-    f = 42 + 70 * np.exp(-t * 28)
-    ph = 2 * np.pi * np.cumsum(f) / SR
-    return np.sin(ph) * np.exp(-t * 11) * gain
+def ping(notes, dur=1.4, gain=0.22):
+    t = ts(dur)
+    x = np.zeros_like(t)
+    for k, m in enumerate(notes):
+        tt = t - 0.09 * k
+        on = tt >= 0
+        f = hz(m)
+        x += on * (np.sin(2 * np.pi * f * tt) * np.exp(-np.maximum(tt, 0) * 5)
+                   + 0.3 * np.sin(2 * np.pi * f * 2.0 * tt) * np.exp(-np.maximum(tt, 0) * 9))
+    return x * gain
 
 
-def reverb(l, r, seconds=2.4, wet=0.22):
-    n = int(seconds * SR)
-    t = np.arange(n) / SR
-    decay = np.exp(-t * 3.0 / seconds)
-    irl = lp(RNG.standard_normal(n), 6000) * decay
-    irr = lp(RNG.standard_normal(n), 6000) * decay
+def tap():
+    t = ts(0.08)
+    return (np.sin(2 * np.pi * 1900 * t) * np.exp(-t * 90) + hp(RNG.standard_normal(len(t)), 4000) * np.exp(-t * 300) * 0.5) * 0.35
+
+
+def reverb(l, r, seconds=2.2, wet=0.3):
+    t = ts(seconds)
+    d = np.exp(-t * 3.2 / seconds)
+    irl = lp(RNG.standard_normal(len(t)), 7000) * d
+    irr = lp(RNG.standard_normal(len(t)), 7000) * d
     irl /= np.sqrt(np.sum(irl ** 2))
     irr /= np.sqrt(np.sum(irr ** 2))
-    wl = fftconvolve(l, irl)[:len(l)]
-    wr = fftconvolve(r, irr)[:len(r)]
-    return (1 - wet) * l + wet * wl, (1 - wet) * r + wet * wr
+    return l + wet * fftconvolve(l, irl)[:N], r + wet * fftconvolve(r, irr)[:N]
+
+
+# ── the arrangement ──────────────────────────────────────────────────────
+def arrange():
+    drums, music, fx = Bus(), Bus(), Bus()
+    kicks = []
+
+    # intro: a sub on D and a filtered 16th pulse that opens up toward the drop
+    t = ts(DROP)
+    sub = np.sin(2 * np.pi * hz(38) * t) * np.minimum(1, t / 0.8) * 0.12
+    music.add(0, sub)
+    for k in range(int(DROP / 0.125)):
+        at = k * 0.125
+        m = (50, 57, 62, 57)[k % 4]
+        p = pluck(m, 0.18) * (0.35 + 0.65 * at / DROP)
+        music.add(at, lp(p, 600 + 2600 * at / DROP), gain=0.55, pan=0.25 * np.sin(k))
+    for w in WORDS:
+        fx.add(w, thump(), gain=0.8)
+        fx.add(w, stab(PROG[0][1], 0.6, 2400), gain=0.6)
+    fx.add(DROP - 1.0, riser(1.0), gain=0.9)
+
+    # the drop
+    fx.add(DROP, impact(1.0), gain=1.0)
+    fx.add(DROP, stab(PROG[0][1], 1.4), gain=1.1)
+
+    # the groove: four on the floor, claps on 2 and 4, offbeat hats
+    a, b = GROOVE
+    beat = a
+    while beat < b - 1e-6:
+        k = int(round((beat - a) / BEAT))
+        drums.add(beat, kick(), gain=0.95)
+        kicks.append(beat)
+        if k % 2 == 1:
+            drums.add(beat, clap(), gain=0.7)
+        drums.add(beat + BEAT / 2, hat(open_=(k % 4 == 3)), gain=0.9, pan=0.3)
+        if beat >= 12.0:
+            drums.add(beat + BEAT / 4, hat(), gain=0.35, pan=-0.3)
+            drums.add(beat + 3 * BEAT / 4, hat(), gain=0.35, pan=-0.3)
+        beat += BEAT
+
+    # bass in eighths and a pad, one chord a bar, from the drop to the stops
+    bar = DROP
+    while bar < STOPS[0] - 1e-6:
+        root, notes = chord_at(bar)
+        for e in range(8):
+            at = bar + e * 0.25
+            if at >= STOPS[0]:
+                break
+            music.add(at, bass(root + (12 if e % 4 == 3 else 0), 0.24), gain=1.3)
+        l, r = pad(notes, min(2.0, STOPS[0] - bar) + 0.3)
+        music.add(bar, l, sig_r=r, gain=2.6)
+        bar += 2.0
+
+    # a 16th arp over the data and the map
+    for k in range(int((19.0 - 12.0) / 0.125)):
+        at = 12.0 + k * 0.125
+        _, notes = chord_at(at)
+        m = [notes[0] + 12, notes[2], notes[1] + 12, notes[3]][k % 4]
+        music.add(at, pluck(m, 0.25), gain=0.9, pan=0.4 * np.sin(k * 0.9))
+
+    # the phone, the tap
+    fx.add(PINGS[0], ping([88, 95]), gain=0.9)
+    fx.add(PINGS[1], ping([93, 100, 93]), gain=1.1)
+    fx.add(TAP, tap(), gain=1.0)
+
+    # stop-time: a hit and a stab per word, then a riser into the end card
+    for i, s in enumerate(STOPS):
+        root, notes = PROG[(0, 1, 3)[i]]
+        fx.add(s, thump(), gain=0.9)
+        fx.add(s, stab(notes, 0.8), gain=1.0)
+        music.add(s, bass(root, 0.9), gain=0.9)
+        kicks.append(s)
+    fx.add(END - 1.0, riser(1.0), gain=1.0)
+
+    # the end card: the last hit, the chord rings out
+    fx.add(END, impact(1.1), gain=1.0)
+    fx.add(END, stab(PROG[0][1], 2.2, 3800), gain=1.0)
+    l, r = pad(PROG[0][1] + [69 + 12], DUR - END)
+    music.add(END, l, sig_r=r, gain=1.6)
+    t = ts(DUR - END)
+    music.add(END, np.sin(2 * np.pi * hz(38) * t) * np.exp(-t * 0.6) * 0.5)
+
+    # sidechain: the bass and pads duck under every kick
+    duck = np.ones(N)
+    tt = np.arange(N) / SR
+    for k in kicks:
+        i = int(k * SR)
+        j = min(N, i + int(0.3 * SR))
+        duck[i:j] = np.minimum(duck[i:j], 1 - 0.65 * np.exp(-(tt[i:j] - k) / 0.09))
+    music.l *= duck
+    music.r *= duck
+    return drums, music, fx
 
 
 def main():
-    mx = Mix()
-    bounds = CUTS + [DUR]
-    for i, ch in enumerate(CHORDS):
-        a, b = bounds[i], bounds[i + 1]
-        # each pad overlaps the next a little: no gap at the cut
-        dur = (b - a) + 1.4 if i < len(CHORDS) - 1 else DUR - a
-        pl, pr = pad(ch, dur, gain=0.13 if i < 7 else 0.15)
-        mx.add(a, pl, pr)
-        mx.add(a, sub(ch[0] - 12 if ch[0] > 45 else ch[0], dur, gain=0.10 if i else 0.06))
-        if i > 0:
-            mx.add(max(0, a - 0.9), swell(0.9, gain=0.035))
-        # a plucked figure from the second scene on: chord tones in eighths (120 BPM)
-        if 1 <= i <= 6:
-            fig = [ch[2] + 12, ch[3] + 12, ch[4] + 12, ch[3] + 12, ch[5], ch[4] + 12, ch[3] + 12, ch[2] + 12]
-            step = 0.25
-            k, t = 0, a
-            while t < b - 0.05:
-                note = fig[k % len(fig)]
-                pan = 0.5 + 0.35 * np.sin(k * 1.3)
-                p = pluck(note, 0.9, gain=0.075 if i in (3, 4) else 0.06)
-                mx.add(t, p * (1.2 - pan), p * (0.2 + pan))
-                k += 1
-                t += step
-            # a quiet pulse under the busier middle
-            if i in (3, 4, 5, 6):
-                t = a
-                while t < b - 0.05:
-                    mx.add(t, kick(0.08))
-                    t += 1.0
-    # bells on the title lines (scene 1) and the end card's words
-    for j, t in enumerate((0.35, 0.77, 1.19)):
-        mx.add(t, bell([78, 81, 86][j], 2.4, gain=0.07))
-    mx.add(2.35, bell(74, 2.0, gain=0.045))
-    # the push lands on the phone: a two-note chime
-    mx.add(11.0, bell(88, 1.6, gain=0.13))
-    mx.add(11.12, bell(93, 1.8, gain=0.11))
-    # the end card: a low swell, the mark, the words
-    mx.add(27.4, swell(0.6, gain=0.045))
-    mx.add(28.0, kick(0.26))
-    for j, t in enumerate((28.3, 28.8, 29.2)):
-        mx.add(t, bell([81, 85, 90][j], 2.6, gain=0.06))
-    l, r = mx.l, mx.r
-    l, r = hp(l, 30), hp(r, 30)
-    l, r = reverb(l, r)
-    # fades and a gentle master curve
-    fade_in = np.minimum(1, np.arange(N) / (0.6 * SR))
-    fade_out = np.clip((DUR - np.arange(N) / SR) / 2.2, 0, 1) ** 1.5
-    l, r = l * fade_in * fade_out, r * fade_in * fade_out
+    drums, music, fx = arrange()
+    tt = np.arange(N) / SR
+    fx.l, fx.r = reverb(fx.l, fx.r, 2.6, 0.45)
+    music.l, music.r = reverb(music.l, music.r, 1.8, 0.18)
+    l = drums.l + music.l + fx.l
+    r = drums.r + music.r + fx.r
+    l, r = hp(l, 28), hp(r, 28)
+    fade_out = np.clip((DUR - tt) / 1.4, 0, 1) ** 1.3
+    l, r = l * fade_out, r * fade_out
     peak = max(np.max(np.abs(l)), np.max(np.abs(r)), 1e-9)
-    l, r = np.tanh(l / peak * 1.1) * 0.89, np.tanh(r / peak * 1.1) * 0.89
+    l, r = np.tanh(l / peak * 1.25) * 0.92, np.tanh(r / peak * 1.25) * 0.92
     OUT.parent.mkdir(parents=True, exist_ok=True)
     wavfile.write(OUT, SR, (np.stack([l, r], axis=1) * 32767).astype(np.int16))
-    print(f"wrote {OUT} ({DUR:.0f} s, peak {max(np.max(np.abs(l)), np.max(np.abs(r))):.2f})")
+    print(f"wrote {OUT} ({DUR:.0f} s)")
 
 
 if __name__ == "__main__":
