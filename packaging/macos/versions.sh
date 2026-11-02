@@ -14,7 +14,7 @@
 #   .sha256 file published next to it on ftp.postgresql.org.
 
 # ---- the app itself --------------------------------------------------------
-: "${OHMYTESLA_VERSION:=0.3.2}"
+: "${OHMYTESLA_VERSION:=0.3.3}"
 BUNDLE_ID="io.github.ohmytesla.app"
 MACOS_MIN="13.0"
 

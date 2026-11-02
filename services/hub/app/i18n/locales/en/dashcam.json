@@ -1,8 +1,8 @@
 {
   "watcher.latest": "Latest {time}",
-  "watcher.sentry_clip": "Sentry clip saved · {place}",
-  "watcher.sentry_clip_noplace": "Sentry clip saved",
-  "watcher.sentry_clips": "{n} Sentry clips saved",
+  "watcher.sentry_clip": "Sentry Clip Saved · {place}",
+  "watcher.sentry_clip_noplace": "Sentry Clip Saved",
+  "watcher.sentry_clips": "{n} Sentry Clips Saved",
   "player.hud.speed": "Speed",
   "player.seek": "Playback position",
   "player.playback_speed": "Playback speed",

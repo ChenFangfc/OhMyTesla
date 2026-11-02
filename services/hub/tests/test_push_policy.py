@@ -78,15 +78,17 @@ async def main():
 
     # major events push, with a short specific title
     SENT.clear()
-    await eng._fire("tpms_warning", "1", extra="front left")
+    from app.i18n.router import title_case
+
+    await eng._fire("tpms_warning", "1", extra=title_case("Front left", "en"))   # as the MQTT handler passes it
     check("low tire pressure pushes", len(SENT) == 1, str(SENT))
     title, body = SENT[0] if SENT else ("", "")
-    check("title names the event in one line", title == "⚠️ Cybertruck — Low tire pressure · front left", title)
+    check("title names the event in one line", title == "⚠️ Cybertruck — Low Tire Pressure · Front Left", title)
     check("body is one short line (place · time)", "\n" not in body and len(body) <= 40 and "http" not in body, repr(body))
 
     SENT.clear()
     await eng._fire("charging_interrupted", "1")
-    check("charging losing power pushes", SENT and SENT[0][0] == "⚠️ Cybertruck — Charging lost power", str(SENT))
+    check("charging losing power pushes", SENT and SENT[0][0] == "⚠️ Cybertruck — Charging Lost Power", str(SENT))
 
     SENT.clear()
     await eng.fire_custom("1", "critical", "🔇 Cybertruck — Sentry alerts paused", "No data for 45 min — check the server",
@@ -100,12 +102,12 @@ async def main():
     await t._signal("1", "Cybertruck", "state", "panic", "sentry.reason.forced_door")
     check("forced door → one push", len(SENT) == 1, str(SENT))
     if SENT:
-        check("sentry title: '🚨 Cybertruck — Door opened while locked'",
-              SENT[0][0] == "🚨 Cybertruck — Door opened while locked", SENT[0][0])
+        check("sentry title: '🚨 Cybertruck — Door Opened While Locked'",
+              SENT[0][0] == "🚨 Cybertruck — Door Opened While Locked", SENT[0][0])
         check("sentry body is one short line", "\n" not in SENT[0][1] and len(SENT[0][1]) <= 40, repr(SENT[0][1]))
     check("someone at the car is sent time-sensitive; a tire warning isn't",
-          URGENT.get("🚨 Cybertruck — Door opened while locked") is True
-          and URGENT.get("⚠️ Cybertruck — Low tire pressure · front left") is False, str(URGENT))
+          URGENT.get("🚨 Cybertruck — Door Opened While Locked") is True
+          and URGENT.get("⚠️ Cybertruck — Low Tire Pressure · Front Left") is False, str(URGENT))
 
     # what time-sensitive means on each channel; the level still sets the wording
     import httpx
@@ -137,10 +139,25 @@ async def main():
           all(s.get("icon") == notifier._ICON_URL for s in seen[:5]), str([s.get("icon") for s in seen[:5]]))
     en = json.loads(open(os.path.join(os.path.dirname(notifier.__file__), "..", "i18n", "locales", "en", "push.json"),
                          encoding="utf-8").read())
+    from app.i18n.router import MINOR_WORDS
+
     events = [v.split(" — ", 1)[1] if " — " in v else v for k, v in en.items()
               if k.startswith("sentry.short.") or (k.startswith("push.") and " — " in v)]
-    lower = [e for e in events if e[:1].islower()]
-    check("every English push event starts with a capital letter", not lower, str(lower))
+    # Title Case up to the first " · "; what follows is a measurement ("5 min ago").
+    def untitled(e):
+        words = e.split(" · ")[0].replace(",", "").split()
+        return [w for i, w in enumerate(words)
+                if w[:1].isalpha() and w[:1].islower() and (i == 0 or w not in MINOR_WORDS)
+                and not (i and words[i - 1][:1] in "{0123456789")]     # a unit after a number
+
+    lower = [e for e in events if untitled(e)]
+    check("English push titles are in Title Case ('Someone Came Close')", not lower, str(lower))
+    from app.alerts.channels import bark_address
+
+    check("Bark: the address the app shows is split into server and key",
+          bark_address({"key": "https://api.day.app/AbC123xyz/Push%20content"})
+          == {"key": "AbC123xyz", "server": "https://api.day.app"}
+          and bark_address({"key": "AbC123xyz"}) == {"key": "AbC123xyz"}, "")
     from app.alerts import webpush
 
     check("Web Push: someone at the car → Urgency high; routine info stays normal",

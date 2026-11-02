@@ -47,7 +47,7 @@
 
 1. [下载 DMG](https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/OhmyTesla-arm64.dmg)（Apple 芯片，macOS 13 以上），把 **OhmyTesla** 拖进「应用程序」。
 2. 首次打开：右键 → **打开**（macOS 15 以上：系统设置 → 隐私与安全性 → **仍要打开**）。应用暂未经过 Apple 公证。
-3. 家里已有服务器就选 **连接已有服务器**（关掉窗口后只占约 40 MB 内存），否则选 **在这台 Mac 上运行**。然后[连上你的车](#连上你的车)。
+3. 家里已有服务器就选 **连接已有服务器**（关掉窗口后只占约 40 MB 内存），否则选 **在这台 Mac 上运行**。然后[完成设置](#设置)。
 
 在 Mac 上运行不需要 Docker：整套服务空闲时只占约 0.2% 单核 CPU、约 300 MB 内存。
 
@@ -60,7 +60,7 @@ git clone https://github.com/ChenFangfc/OhMyTesla && cd OhMyTesla
 ./omt up                  # 第一次会生成 .env 和随机密钥，并打印登录密码
 ```
 
-打开 `http://<这台机器>:8800`（用户名 `ohmytesla`），然后[连上你的车](#连上你的车)。
+打开 `http://<这台机器>:8800`（用户名 `ohmytesla`），然后[完成设置](#设置)。
 
 <details>
 <summary>常用命令</summary>
@@ -75,13 +75,16 @@ git clone https://github.com/ChenFangfc/OhMyTesla && cd OhMyTesla
 
 </details>
 
-## 连上你的车
+## 设置
 
-| 想要 | 怎么做 | 用时 |
+第一次打开应用时会一步步带你做完。之后在 **设置 → 设置向导** 可以再打开。
+
+| 步骤 | 怎么做 | 用时 |
 |---|---|---|
-| 车况、行程、充电、哨兵提醒 | **登录 Tesla 账号**：用 [tesla_auth](https://github.com/adriankumpf/tesla_auth/releases/latest)（电脑）或 [Auth app for Tesla](https://apps.apple.com/us/app/auth-app-for-tesla/id1552058613)（iPhone）打开 Tesla 官方登录页，把拿到的两个令牌贴进应用 | 2 分钟 |
-| 远程控制（可选） | **批准一把钥匙**：在 [developer.tesla.com](https://developer.tesla.com) 建个应用（要绑卡，一辆车的用量在每月免费额度内），按 **设置 → 车辆控制** 走完，最后在手机 Tesla App 里批准（[说明](docs/COMMANDS.md)） | 约 10 分钟 |
-| 1–3 秒的哨兵提醒（可选） | **接入 Fleet Telemetry**：付费中转最省事；自建免费，但要公网 IP、域名和证书（[说明](docs/FLEET-TELEMETRY.md)） | 中转约 10 分钟 |
+| 1. 连上你的车 | 用 [tesla_auth](https://github.com/adriankumpf/tesla_auth/releases/latest)（电脑）或 [Auth app for Tesla](https://apps.apple.com/us/app/auth-app-for-tesla/id1552058613)（iPhone）登录 Tesla，把拿到的两个令牌贴进应用 | 2 分钟 |
+| 2. 手机提醒 | **iPhone**：安装 [Bark](https://apps.apple.com/app/id1403753865)，复制它显示的地址（`https://api.day.app/…`），贴进应用，点 **保存并测试**。**安卓**：用 [ntfy](https://ntfy.sh)，在 **设置 → 通知** 里设置 | 2 分钟 |
+| 可选：车辆控制 | 锁车、空调、开前备箱等。在 [developer.tesla.com](https://developer.tesla.com) 建个应用（要绑卡，一辆车的用量在每月免费额度内），按 **设置 → 车辆控制** 走完（[说明](docs/COMMANDS.md)） | 约 10 分钟 |
+| 可选：1–3 秒的哨兵提醒 | 接入 Fleet Telemetry。付费中转最省事；自建免费，但要公网 IP、域名和证书（[说明](docs/FLEET-TELEMETRY.md)） | 中转约 10 分钟 |
 
 密码只交给 Tesla；令牌加密保存在你自己的设备上。
 
@@ -100,7 +103,7 @@ git clone https://github.com/ChenFangfc/OhMyTesla && cd OhMyTesla
 | 停着的车被移动（拖走或开走） | 数据恢复、采集器状态 |
 | 胎压低、充电功率异常下降 | 哨兵录像已同步、例行检查 |
 
-渠道：ntfy（推荐）、Bark（iOS 可穿透勿扰）、Telegram、邮件、Web Push。在 **设置 → 通知** 里配置，再到 **安全 → 发送测试提醒** 试一下。哨兵开启时通常 5 秒左右到达，接入 [Fleet Telemetry](docs/FLEET-TELEMETRY.md) 后 1–3 秒。
+渠道：iPhone 用 **Bark**（推荐：推送显示 OhmyTesla 图标，警报在静音时也会响），安卓用 **ntfy**，另有 Telegram、邮件、Web Push。在 **设置 → 通知** 里配置，点 **发送测试** 试一下。哨兵开启时通常 5 秒左右到达，接入 [Fleet Telemetry](docs/FLEET-TELEMETRY.md) 后 1–3 秒。
 
 ## 安全
 

@@ -19,7 +19,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from ..config import settings
-from ..i18n.router import t
+from ..i18n.router import t, title_case
 from ..livestate import live
 from . import notifier
 from .sentry import car_label, place_label
@@ -349,7 +349,7 @@ class AlertEngine:
                     await self._fire("idle_fee_risk", car_id)
 
         if key in _TPMS_KEYS and new == "true":
-            return await self._fire("tpms_warning", car_id, extra=t(_TPMS_KEYS[key], loc0).lower())
+            return await self._fire("tpms_warning", car_id, extra=title_case(t(_TPMS_KEYS[key], loc0), loc0))
 
         if key == "charging_state" and old == "Charging":
             if new == "NoPower" and _is_true(car.get("plugged_in")):
@@ -522,7 +522,7 @@ class AlertEngine:
 
         loc = (await user_prefs.get())["locale"]
         car_name = await car_label(car_id)
-        # Short, specific titles: "⚠️ Cybertruck — low tire pressure · front left".
+        # Short, specific titles: "⚠️ Cybertruck — Low Tire Pressure · Front Left".
         key = f"push.{rule_id}"
         if key in _CATALOG_KEYS:
             title = t(key, loc, car=car_name, detail=extra or "").rstrip(" ·")

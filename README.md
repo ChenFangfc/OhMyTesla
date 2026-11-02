@@ -47,7 +47,7 @@ Also: dashcam clips read straight off the USB drive and matched to drives and Se
 
 1. [Download the DMG](https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/OhmyTesla-arm64.dmg) (Apple silicon, macOS 13+) and drag **OhmyTesla** to Applications.
 2. First launch: right-click → **Open** (macOS 15+: System Settings → Privacy & Security → **Open Anyway**). The app isn't notarized yet.
-3. Pick **Connect to my server** if one already runs at home (the app then needs about 40 MB with its window closed), or **Run on this Mac**. Then [connect your car](#connect-your-car).
+3. Pick **Connect to a server** if one already runs at home (the app then needs about 40 MB with its window closed), or **Run on this Mac**. Then [set it up](#set-up).
 
 Running on the Mac needs no Docker: the whole stack idles at about 0.2% of one CPU core and 300 MB of memory.
 
@@ -60,7 +60,7 @@ git clone https://github.com/ChenFangfc/OhMyTesla && cd OhMyTesla
 ./omt up                  # first run writes .env with random secrets and prints your password
 ```
 
-Open `http://<this machine>:8800` (user `ohmytesla`), then [connect your car](#connect-your-car).
+Open `http://<this machine>:8800` (user `ohmytesla`), then [set it up](#set-up).
 
 <details>
 <summary>Everyday commands</summary>
@@ -75,13 +75,16 @@ Open `http://<this machine>:8800` (user `ohmytesla`), then [connect your car](#c
 
 </details>
 
-## Connect your car
+## Set up
 
-| You want | What to do | Time |
+The app walks you through this on first launch. **Settings → Setup guide** opens it again.
+
+| Step | What to do | Time |
 |---|---|---|
-| Status, drives, charging, Sentry alerts | **Sign in to Tesla**: [tesla_auth](https://github.com/adriankumpf/tesla_auth/releases/latest) (computer) or [Auth app for Tesla](https://apps.apple.com/us/app/auth-app-for-tesla/id1552058613) (iPhone) opens Tesla's own sign-in page; paste the two tokens it gives you into the app | 2 min |
-| Remote control (optional) | **Approve a key**: create an app at [developer.tesla.com](https://developer.tesla.com) (a card on file; one car stays within Tesla's free monthly credit), follow **Settings → Vehicle controls**, then approve the key in the Tesla app ([guide](docs/COMMANDS.md)) | about 10 min |
-| Sentry alerts in 1–3 seconds (optional) | **Add Fleet Telemetry**: a paid relay is easiest; self-hosting is free but needs a public IP, a domain and a certificate ([guide](docs/FLEET-TELEMETRY.md)) | about 10 min with a relay |
+| 1. Connect your car | Sign in to Tesla with [tesla_auth](https://github.com/adriankumpf/tesla_auth/releases/latest) (computer) or [Auth app for Tesla](https://apps.apple.com/us/app/auth-app-for-tesla/id1552058613) (iPhone), then paste the two tokens into the app | 2 min |
+| 2. Phone alerts | **iPhone:** install [Bark](https://apps.apple.com/app/id1403753865), copy the address it shows (`https://api.day.app/…`), paste it into the app and tap **Save and test**. **Android:** [ntfy](https://ntfy.sh), set up in **Settings → Notifications** | 2 min |
+| Optional: vehicle controls | Lock, climate, frunk and more. Create an app at [developer.tesla.com](https://developer.tesla.com) (a card on file; one car stays within Tesla's free monthly credit), then follow **Settings → Vehicle controls** ([guide](docs/COMMANDS.md)) | about 10 min |
+| Optional: Sentry alerts in 1–3 seconds | Add Fleet Telemetry. A paid relay is easiest; self-hosting is free but needs a public IP, a domain and a certificate ([guide](docs/FLEET-TELEMETRY.md)) | about 10 min with a relay |
 
 Your password goes only to Tesla; the tokens stay encrypted on your own device.
 
@@ -90,7 +93,7 @@ Your password goes only to Tesla; the tokens stay encrypted on your own device.
 Only Sentry and major events reach your phone, one line each:
 
 ```text
-🚨 Cybertruck — door opened while locked
+🚨 Cybertruck — Door Opened While Locked
 Home · 9:41 PM
 ```
 
@@ -100,7 +103,7 @@ Home · 9:41 PM
 | The parked car moving (towed or driven off) | Data resumed, logger health |
 | Low tire pressure, charging losing power | Sentry clips synced, routine checks |
 
-Channels: ntfy (recommended), Bark (breaks through Do Not Disturb on iOS), Telegram, email, Web Push. Set them up in **Settings → Notifications**, then **Security → Send test alert**. Typical delay is about 5 seconds while Sentry is on, and 1–3 seconds with [Fleet Telemetry](docs/FLEET-TELEMETRY.md).
+Channels: **Bark** on iPhone (recommended: it shows the OhmyTesla icon, and alarms ring even in silent mode), **ntfy** on Android, plus Telegram, email and Web Push. Set them up in **Settings → Notifications** and tap **Send test**. Typical delay is about 5 seconds while Sentry is on, and 1–3 seconds with [Fleet Telemetry](docs/FLEET-TELEMETRY.md).
 
 ## Security
 

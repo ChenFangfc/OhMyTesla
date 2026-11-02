@@ -26,7 +26,8 @@ Prerequisite: Docker Desktop must be running. If it isn't, tell me to start it f
    Then confirm it truly landed — the API return alone is not proof:
    `curl -s "https://ntfy.sh/<topic>/json?poll=1&since=5m"`
 9. Tell me the topic name and the portal password, and remind me to install the
-   ntfy app, tap +, and enter that topic.
+   ntfy app, tap +, and enter that topic. If I use an iPhone, also suggest switching
+   to Bark later (step 2 of the setup guide); its pushes show the OhmyTesla icon.
 10. Tell me to open http://localhost:8800 (the browser will ask for ohmytesla plus the
     password) and paste the Tesla tokens into the setup page. Get them with tesla_auth
     (github.com/adriankumpf/tesla_auth, on a computer) or Auth app for Tesla (iPhone) —

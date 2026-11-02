@@ -29,13 +29,16 @@
   /* ------------------------------------------------------------ channels */
   const CH_FIELDS = {
     ntfy: [["url", "text", "https://ntfy.sh"], ["topic", "text", "omt-…"], ["token", "password", ""]],
-    bark: [["server", "text", "https://api.day.app"], ["key", "password", ""], ["critical", "checkbox", ""]],
+    bark: [["key", "password", "https://api.day.app/…"], ["server", "text", "https://api.day.app"], ["critical", "checkbox", ""]],
     telegram: [["token", "password", "123456:ABC…"], ["chat_id", "text", ""]],
     email: [["host", "text", "smtp.gmail.com"], ["port", "number", "587"], ["user", "text", ""], ["password", "password", ""],
             ["sender", "text", ""], ["to", "text", "you@example.com"]],
     webhook: [["url", "password", "https://…"]],
     apprise: [["urls", "password", "pover://… , discord://…"]],
   };
+
+  // which phone each push app suits; shown next to its name
+  const CH_REC = { bark: "ch.rec.bark", ntfy: "ch.rec.ntfy" };
 
   async function renderChannels() {
     let d;
@@ -51,7 +54,7 @@
         : c.configured ? `<span class="st warn">${esc(t("ch.problem." + c.problem))}</span>`
         : `<span class="st">${esc(t("ch.not_set"))}</span>`;
       return `<div class="ch" data-ch="${c.name}">
-        <div class="ch-head"><span class="nm">${esc(t("ch." + c.name))}</span>${st}
+        <div class="ch-head"><span class="nm">${esc(t("ch." + c.name))}</span>${CH_REC[c.name] ? `<span class="chip info">${esc(t(CH_REC[c.name]))}</span>` : ""}${st}
           ${c.source === "env" ? `<span class="st">· ${esc(t("ch.from_env"))}</span>` : ""}<span class="sp"></span>
           ${c.ready ? `<button class="btn ghost" data-test>${esc(t("ch.test"))}</button>` : ""}
           <button class="btn ghost" data-edit>${esc(c.configured ? t("ch.edit") : t("ch.setup"))}</button></div>
@@ -80,7 +83,8 @@
     if (!box.hidden) { box.hidden = true; return; }
     box.hidden = false;
     const f = c.fields || {};
-    box.innerHTML = `<div class="form-grid">${CH_FIELDS[name].map(([k, type, ph]) => {
+    box.innerHTML = `${name === "bark" ? `<ol class="body-sm" style="margin:0 0 12px;padding-left:18px;line-height:1.8">
+        ${["ch.bark_s1", "ch.bark_s2", "ch.bark_s3"].map((k) => `<li>${esc(t(k))}</li>`).join("")}</ol>` : ""}<div class="form-grid">${CH_FIELDS[name].map(([k, type, ph]) => {
         const set = f[k + "_set"];
         if (type === "checkbox") return `<label>${esc(t("ch.f." + k))}</label><label class="switch"><input type="checkbox" data-k="${k}" ${f[k] !== false ? "checked" : ""}><span class="slider"></span></label>`;
         return `<label>${esc(t("ch.f." + k))}</label><input type="${type}" data-k="${k}" value="${esc(type === "password" ? "" : (f[k] ?? ""))}"

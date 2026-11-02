@@ -413,8 +413,11 @@ class SentryService:
         if self._fire is not None:
             rule = what.removeprefix("rule.")
             # Same shape as every other push, should the owner switch this rule to Push.
-            what = re.sub(r"^[^\w\s]+\s*", "", t(f"rule.{rule}", (await get_prefs())["locale"]))
-            await self._fire(car_id, LEVEL_INFO, f"👀 {name} — {what}", "", rule=rule, gate=rule)
+            loc = (await get_prefs())["locale"]
+            title = t(f"push.{rule}", loc, car=name)
+            if title == f"push.{rule}":
+                title = f"👀 {name} — " + re.sub(r"^[^\w\s]+\s*", "", t(f"rule.{rule}", loc))
+            await self._fire(car_id, LEVEL_INFO, title, "", rule=rule, gate=rule)
 
     async def _signal(self, car_id: str, car_name: str, source: str, state: str, reason: str,
                       reason_vars: dict | None = None) -> None:
