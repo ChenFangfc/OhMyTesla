@@ -12,6 +12,7 @@ How a decision is made now:
 1. **Settle, then decide.** A sentry-relevant change schedules an evaluation
    of the car's *complete* state ~2.5 s after its message burst goes quiet
    (TeslaMate publishes one poll's keys concurrently, in arbitrary order).
+   A fast-poll reading arrives whole, so it is decided at once (``flush``).
 2. **Owner first.** Any sign of the owner — someone in the seat, Sentry
    switched off, a gear selected, driving, a key unlock, a command sent from
    this hub — within the last two minutes explains the activity.
@@ -286,6 +287,17 @@ class SentryService:
         loop = asyncio.get_running_loop()
         p.timer = loop.call_later(delay, lambda: self._spawn(self._evaluate(car_id)))
 
+    def flush(self, car_id: str) -> None:
+        """Decide now: a fast-poll reading is one complete snapshot of the car,
+        so there is no rest of a burst to wait for (snapshot hook)."""
+        p = self._pending.get(car_id)
+        if p is None:
+            return
+        if p.timer:
+            p.timer.cancel()
+            p.timer = None
+        self._spawn(self._evaluate(car_id))
+
     async def fleet_sentry(self, car_id: str, state: str, car_name: str) -> None:
         """Authoritative Fleet Telemetry SentryMode edge: no settle needed."""
         self.note_fleet(car_id)
@@ -329,6 +341,9 @@ class SentryService:
         owner = self.owner_recent(car_id, car)
         locked = _true(car.get("locked"))
         source = "polled"
+        # One reading can carry both the lit Sentry screen and the unlock of the
+        # owner walking up with their key, in either order: the unlock explains it.
+        unlocked_now = any(k == "locked" and v == "false" for k, _o, v, _at in p.signals)
 
         for key, _old, new, _at in p.signals:
             what = _OPENINGS.get(key)
@@ -359,7 +374,7 @@ class SentryService:
                 self.note_owner(car_id, "sentry.owner.unlocked")
                 await self._record_info(car_id, name, "rule.sentry_unlocked")
             elif key == "center_display_state" and new == "7":
-                if owner or not armed or self.has_fleet(car_id) or not settings.sentry_polled_alerts:
+                if owner or unlocked_now or not armed or self.has_fleet(car_id) or not settings.sentry_polled_alerts:
                     continue
                 await self._signal(car_id, name, source, "aware", "sentry.reason.display")
             elif key in ("latitude", "longitude"):

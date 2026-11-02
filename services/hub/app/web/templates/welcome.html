@@ -15,14 +15,14 @@
   <div class="card mt">
     <h2 style="margin:0 0 4px;font-size:var(--t-18)"><span data-i18n="setup.step1">1. Get your tokens</span></h2>
     <p class="small muted" data-i18n="setup.step1_note">
-      Tesla no longer lets third-party apps sign in with an email and password.
-      A small helper opens Tesla's own login page and hands back two tokens.
-      Your password only ever goes to Tesla.
+      Tesla doesn't let third-party apps take your password. Either helper below
+      opens Tesla's own sign-in page and gives you two tokens; your password goes
+      only to Tesla.
     </p>
-    <pre style="background:var(--bg);border:1px solid var(--line);border-radius:var(--r-2);padding:10px 12px;overflow-x:auto;font-size:var(--t-13)"><code>~/Desktop/OhmyTesla/tools/tesla_auth</code></pre>
-    {# No space after the label in the markup: a Chinese full-width colon
-       carries its own, so the word space is added for Latin text only. #}
-    <p class="small muted"><span data-i18n="setup.step1_alt">Or download it here:</span><span class="dl-links"><a href="https://github.com/adriankumpf/tesla_auth/releases/latest" target="_blank" rel="noopener" class="nowrap">tesla_auth</a> · <a href="https://apps.apple.com/us/app/auth-app-for-tesla/id1552058613" target="_blank" rel="noopener" class="nowrap">Auth app for Tesla</a></span></p>
+    <ul class="small" style="margin:8px 0 0;padding-left:18px;line-height:1.9">
+      <li><a href="https://github.com/adriankumpf/tesla_auth/releases/latest" target="_blank" rel="noopener" class="link nowrap">tesla_auth</a> · <span class="muted" data-i18n="setup.for_computer">Mac, Windows or Linux</span></li>
+      <li><a href="https://apps.apple.com/us/app/auth-app-for-tesla/id1552058613" target="_blank" rel="noopener" class="link nowrap">Auth app for Tesla</a> · <span class="muted">iPhone</span></li>
+    </ul>
   </div>
 
   <div class="card mt">

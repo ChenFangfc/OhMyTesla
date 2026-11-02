@@ -64,6 +64,9 @@ _DISPLAY_STATE_RE = re.compile(
 
 TransitionHook = Callable[[str, str, str | None, str], Awaitable[None]]
 # (car_id, key, old_value, new_value)
+SnapshotHook = Callable[[str], None]
+# (car_id): one complete reading of the car has been handled, see end_snapshot()
+_SNAPSHOT = "\x00snapshot"     # a queue marker; no data source sends this key
 
 
 class LiveState:
@@ -71,6 +74,7 @@ class LiveState:
         self.cars: dict[str, dict[str, str]] = {}
         self.last_update: dict[str, float] = {}
         self._hooks: list[TransitionHook] = []
+        self._snapshot_hooks: list[SnapshotHook] = []
         self._subscribers: set[asyncio.Queue] = set()
         self._task: asyncio.Task | None = None
         self._outbox: asyncio.Queue[tuple[str, str, bool]] = asyncio.Queue(maxsize=200)
@@ -112,6 +116,19 @@ class LiveState:
 
     def add_transition_hook(self, hook: TransitionHook) -> None:
         self._hooks.append(hook)
+
+    def add_snapshot_hook(self, hook: SnapshotHook) -> None:
+        self._snapshot_hooks.append(hook)
+
+    def end_snapshot(self, car_id: str) -> None:
+        """One complete reading of this car has just been ingested (a fast-poll
+        response). Snapshot hooks run after every transition it caused has been
+        handled, so a listener waiting for the rest of a burst can decide now."""
+        q = self._queues.get(car_id)
+        if q is None or not self._snapshot_hooks:
+            return
+        with contextlib.suppress(asyncio.QueueFull):
+            q.put_nowait((_SNAPSHOT, None, None))
 
     def snapshot(self) -> dict:
         out = {}
@@ -644,6 +661,13 @@ class LiveState:
     async def _worker(self, car_id: str, q: asyncio.Queue) -> None:
         while True:
             key, old, value = await q.get()
+            if key == _SNAPSHOT:
+                for snap in self._snapshot_hooks:
+                    try:
+                        snap(car_id)
+                    except Exception:
+                        log.exception("snapshot hook failed for %s", car_id)
+                continue
             for hook in self._hooks:
                 try:
                     await hook(car_id, key, old, value)

@@ -14,6 +14,7 @@ import os
 import random
 import sys
 import tempfile
+import time
 
 for _p in ("/opt/ohmytesla", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")):
     if os.path.isdir(os.path.join(_p, "app")):
@@ -60,6 +61,7 @@ class Fresh:
         sen.car_label = label
         eng.car_label = label
         self.live.add_transition_hook(engine.handle)
+        self.live.add_snapshot_hook(self.tracker.flush)
         PUSHED.clear()
 
     async def baseline(self, car="1", **values):
@@ -305,6 +307,136 @@ async def main():
     finally:
         S.settings.sentry_escalate_seconds = real_escalate
         await store.set_setting("home_location", None)
+
+    # 19. A fast-poll reading arrives whole: decided at once. MQTT still waits for quiet.
+    real_settle, real_max = S.SETTLE_S, S.SETTLE_MAX_S
+    S.SETTLE_S, S.SETTLE_MAX_S = 5.0, 8.0
+    try:
+        f = Fresh()
+        await f.baseline(**ARMED)
+        t0 = time.monotonic()
+        await f.feed([("center_display_state", "7")])
+        f.live.end_snapshot("1")
+        for _ in range(50):
+            if PUSHED:
+                break
+            await asyncio.sleep(0.02)
+        took = time.monotonic() - t0
+        check("fast-poll reading → pushed at once, not after the 5 s quiet period",
+              [p[0] for p in PUSHED] == ["info"] and took < 1.0, f"{took:.2f}s {PUSHED}")
+
+        f = Fresh()
+        await f.baseline(**ARMED)
+        await f.feed([("center_display_state", "7")])
+        await asyncio.sleep(0.5)
+        check("an MQTT burst still waits for quiet before deciding", not PUSHED, str(PUSHED))
+        p = f.tracker._pending.pop("1", None)
+        if p and p.timer:
+            p.timer.cancel()
+    finally:
+        S.SETTLE_S, S.SETTLE_MAX_S = real_settle, real_max
+
+    # 20. One reading carries the lit screen and the owner's key unlock, in either
+    #     order: that's the owner walking up, not someone at the car.
+    for order in ([("center_display_state", "7"), ("locked", "false")],
+                  [("locked", "false"), ("center_display_state", "7")]):
+        f = Fresh()
+        await f.baseline(**ARMED)
+        await f.feed(order)
+        f.live.end_snapshot("1")
+        await f.settle()
+        aware = [p for p in PUSHED if p[1] == "sentry_aware"]
+        check(f"lit screen + key unlock in one reading ({order[0][0]} first) → no 👀 push", not aware, str(PUSHED))
+
+    import httpx
+    from app.alerts import fastpoll as FP
+
+    async def token():
+        return "tok"
+
+    def vehicle(lit=0, sentry=True):
+        return httpx.Response(200, json={"response": {
+            "vehicle_state": {"center_display_state": lit, "sentry_mode": sentry, "locked": True,
+                              "is_user_present": False},
+            "drive_state": {"latitude": 40.1, "longitude": -98.2}}})
+
+    # 21. Fast poll: one kept-alive client across checks; a dropped connection is
+    #     retried at once on a fresh one; the reading is decided as soon as it lands.
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.path)
+        if len(calls) == 3:
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response.", request=request)
+        return vehicle(lit=7 if len(calls) >= 4 else 0)
+
+    real_live, real_token = FP.live, FP.tokens.access_token
+    S.SETTLE_S, S.SETTLE_MAX_S = 5.0, 8.0
+    fp = FP.FastPoll()
+    try:
+        f = Fresh()
+        await f.baseline(**ARMED)
+        FP.live, FP.tokens.access_token = f.live, token
+        fp.transport = httpx.MockTransport(handler)
+        fp._eid["1"] = 42
+        await fp._poll("1", 5)
+        first = fp._cli
+        await fp._poll("1", 5)
+        kept = fp._cli is first
+        delay = await fp._poll("1", 5)
+        check("fast poll keeps one client across checks", kept and first is not None)
+        check("a dropped kept-alive connection is retried at once on a fresh one",
+              delay == 5 and fp._cli is not first and fp.stats["1"]["errors"] == 0 and len(calls) == 4,
+              f"delay={delay} stats={fp.stats.get('1')} calls={len(calls)}")
+        for _ in range(25):
+            if PUSHED:
+                break
+            await asyncio.sleep(0.02)
+        check("the lit screen in a fast-poll reading → 👀 push at once", [p[0] for p in PUSHED] == ["info"], str(PUSHED))
+    finally:
+        await fp.stop()
+        FP.live, FP.tokens.access_token = real_live, real_token
+        S.SETTLE_S, S.SETTLE_MAX_S = real_settle, real_max
+
+    # 22. The loop: checks while Sentry is on, stops (and lets the connection go) the
+    #     moment it goes off, and checks again at once when it comes back on.
+    hits = []
+    fp = FP.FastPoll()
+    try:
+        f = Fresh()
+        await f.baseline(**ARMED)
+        FP.live, FP.tokens.access_token = f.live, token
+
+        def car_now(request):
+            hits.append(time.monotonic())
+            return vehicle(sentry=f.live.cars["1"].get("sentry_mode") == "true")
+
+        fp.transport = httpx.MockTransport(car_now)
+        fp.start_delay = 0
+        fp._eid["1"] = 42
+        fp._every, fp._every_at = 1, time.monotonic() + 1e6      # every second, never re-read
+        f.live.add_transition_hook(fp.on_change)
+        fp.start()
+        await asyncio.sleep(2.6)
+        n_on = len(hits)
+        f.live.ingest("1", "sentry_mode", "false")                # the owner switches Sentry off
+        await asyncio.sleep(0.3)
+        n_off, cli_off = len(hits), fp._cli
+        await asyncio.sleep(1.5)
+        check("fast poll: checks while Sentry is on, none once it's off, connection closed",
+              n_on >= 2 and len(hits) == n_off and cli_off is None, f"on={n_on} off={n_off}→{len(hits)} cli={cli_off}")
+        t_on = time.monotonic()
+        f.live.ingest("1", "sentry_mode", "true")
+        for _ in range(40):
+            if len(hits) > n_off:
+                break
+            await asyncio.sleep(0.05)
+        late = hits[n_off] - t_on if len(hits) > n_off else None
+        check("fast poll: Sentry back on → checked at once, not after the idle minute",
+              late is not None and late < 1.0, f"after {late}")
+    finally:
+        await fp.stop()
+        FP.live, FP.tokens.access_token = real_live, real_token
 
     # The default home name follows the owner's language; a name they chose doesn't.
     check("home label: 家 / Home follow the language, custom names stay",

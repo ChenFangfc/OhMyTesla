@@ -47,7 +47,7 @@
 
 1. [下载 DMG](https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/OhmyTesla-arm64.dmg)（Apple 芯片，macOS 13 以上），把 **OhmyTesla** 拖进「应用程序」。
 2. 首次打开：右键 → **打开**（macOS 15 以上：系统设置 → 隐私与安全性 → **仍要打开**）。应用暂未经过 Apple 公证。
-3. 家里已有服务器就选 **连接已有服务器**（关掉窗口后只占约 40 MB 内存），否则选 **在这台 Mac 上运行**。然后登录 Tesla 账号。
+3. 家里已有服务器就选 **连接已有服务器**（关掉窗口后只占约 40 MB 内存），否则选 **在这台 Mac 上运行**。然后[连上你的车](#连上你的车)。
 
 在 Mac 上运行不需要 Docker：整套服务空闲时只占约 0.2% 单核 CPU、约 300 MB 内存。
 
@@ -57,11 +57,10 @@
 
 ```bash
 git clone https://github.com/ChenFangfc/OhMyTesla && cd OhMyTesla
-cp .env.example .env      # 填 OHMYTESLA_PASSWORD，例如 openssl rand -base64 24
-./omt up                  # → http://<这台机器>:8800，用户名 ohmytesla
+./omt up                  # 第一次会生成 .env 和随机密钥，并打印登录密码
 ```
 
-用 `./tools/tesla_auth`（打开 Tesla 官方登录页）拿到两个令牌，粘贴到设置页即可连上你的车。
+打开 `http://<这台机器>:8800`（用户名 `ohmytesla`），然后[连上你的车](#连上你的车)。
 
 <details>
 <summary>常用命令</summary>
@@ -76,7 +75,15 @@ cp .env.example .env      # 填 OHMYTESLA_PASSWORD，例如 openssl rand -base64
 
 </details>
 
-**远程控制**（可选）：Tesla 只执行经你批准的应用签名的指令。在 **设置 → 车辆控制** 里一次性设置，约 10 分钟——[docs/COMMANDS.md](docs/COMMANDS.md)。
+## 连上你的车
+
+| 想要 | 怎么做 | 用时 |
+|---|---|---|
+| 车况、行程、充电、哨兵提醒 | **登录 Tesla 账号**：用 [tesla_auth](https://github.com/adriankumpf/tesla_auth/releases/latest)（电脑）或 [Auth app for Tesla](https://apps.apple.com/us/app/auth-app-for-tesla/id1552058613)（iPhone）打开 Tesla 官方登录页，把拿到的两个令牌贴进应用 | 2 分钟 |
+| 远程控制（可选） | **批准一把钥匙**：在 [developer.tesla.com](https://developer.tesla.com) 建个应用（要绑卡，一辆车的用量在每月免费额度内），按 **设置 → 车辆控制** 走完，最后在手机 Tesla App 里批准（[说明](docs/COMMANDS.md)） | 约 10 分钟 |
+| 1–3 秒的哨兵提醒（可选） | **接入 Fleet Telemetry**：付费中转最省事；自建免费，但要公网 IP、域名和证书（[说明](docs/FLEET-TELEMETRY.md)） | 中转约 10 分钟 |
+
+密码只交给 Tesla；令牌加密保存在你自己的设备上。
 
 ## 手机提醒
 
@@ -93,7 +100,7 @@ cp .env.example .env      # 填 OHMYTESLA_PASSWORD，例如 openssl rand -base64
 | 停着的车被移动（拖走或开走） | 数据恢复、采集器状态 |
 | 胎压低、充电功率异常下降 | 哨兵录像已同步、例行检查 |
 
-渠道：ntfy（推荐）、Bark（iOS 可穿透勿扰）、Telegram、邮件、Web Push。在 **设置 → 通知** 里配置，再到 **安全 → 发送测试提醒** 试一下。哨兵开启时通常约 10 秒到达，接入 [Fleet Telemetry](docs/FLEET-TELEMETRY.md) 后 1–2 秒。
+渠道：ntfy（推荐）、Bark（iOS 可穿透勿扰）、Telegram、邮件、Web Push。在 **设置 → 通知** 里配置，再到 **安全 → 发送测试提醒** 试一下。哨兵开启时通常 5 秒左右到达，接入 [Fleet Telemetry](docs/FLEET-TELEMETRY.md) 后 1–3 秒。
 
 ## 安全
 
@@ -108,7 +115,7 @@ cp .env.example .env      # 填 OHMYTESLA_PASSWORD，例如 openssl rand -base64
 | [快速上手](docs/QUICKSTART.md) | 完整流程与排错 |
 | [远程控制](docs/COMMANDS.md) | 签名指令设置 |
 | [teslausb](docs/TESLAUSB.md) | 车上 U 盘自动同步录像 *（英文）* |
-| [Fleet Telemetry](docs/FLEET-TELEMETRY.md) | 1–2 秒到达的提醒 |
+| [Fleet Telemetry](docs/FLEET-TELEMETRY.md) | 1–3 秒到达的提醒 |
 | [AI 直查（MCP）](docs/MCP.zh-CN.md) · [让 AI 替你装](docs/AI-SETUP.zh-CN.md) | 给 Claude Code、Cursor 等使用 |
 | [Mac 应用](packaging/macos/README.md) · [架构](docs/ARCHITECTURE.md) | 实现细节 *（Mac 应用文档为英文）* |
 | [宣传片源码](promo/README.md) | 用代码生成的 30 秒短片 |

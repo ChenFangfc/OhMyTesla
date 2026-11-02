@@ -63,6 +63,19 @@ auth() { printf '%s\n' "${CURL_AUTH[@]+"${CURL_AUTH[@]}"}"; }
 preflight() {
   command -v docker >/dev/null || die "Docker isn't installed. Get Docker Desktop from docker.com."
   docker info >/dev/null 2>&1 || die "Docker isn't running. Open Docker Desktop and wait for the whale icon to settle."
+  # 第一次装：照模板生成 .env，填上随机的加密密钥和数据库口令（门户和 Grafana
+  # 密码由下面补）。只在 .env 还不存在时做，已有的 .env 一个字都不碰：换掉密钥
+  # 会让已加密的 Tesla 令牌解不开，换掉口令会连不上已经初始化的数据库。
+  if [ ! -f .env ] && [ -f .env.example ]; then
+    local key dbpw
+    key=$(openssl rand -base64 32)
+    dbpw=$(openssl rand -base64 18 | tr -d '/+=')
+    awk -v key="$key" -v db="$dbpw" '
+      /^TM_ENCRYPTION_KEY=/ {print "TM_ENCRYPTION_KEY=" key; next}
+      /^TM_DB_PASS=/        {print "TM_DB_PASS=" db; next}
+      {print}' .env.example > .env.tmp && mv .env.tmp .env
+    echo "${GREEN}Created .env${OFF} with a random encryption key and database password."
+  fi
   [ -f .env ] || die ".env is missing. Copy it from the template:  cp .env.example .env"
   # .env 里有加密密钥、数据库口令、门户密码。cp 出来是 0644。
   chmod 600 .env 2>/dev/null || true

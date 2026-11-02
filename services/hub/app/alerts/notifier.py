@@ -11,6 +11,10 @@ Richness per channel, because a sentry alarm is not a newsletter:
   that opens the event, and the clip thumbnail when there is one.
 * Bark (iOS) — ``level=critical`` rings through silent mode and Do Not
   Disturb; that is the only way to get that on iPhone without an App Store app.
+* Urgent alerts (``payload["urgent"]``: someone at the car right now) are
+  time-sensitive everywhere: ntfy priority at least 4 (the ntfy iOS app maps
+  4 to ``.timeSensitive``, which passes a Focus mode; 3 is ``.active``), Bark
+  ``timeSensitive``, Web Push ``Urgency: high``.
 * Telegram — photo + caption when a thumbnail exists.
 * Web Push (PWA) — see webpush.py.
 * Email and anything else Apprise understands — archival channels.
@@ -81,7 +85,8 @@ async def _read(path: str | None) -> tuple[str, bytes] | None:
 
 
 async def _ntfy(c: dict, title: str, body: str, level: str, url: str | None,
-                attach: str | None, map_url: str | None = None) -> bool:
+                attach: str | None, map_url: str | None = None, urgent: bool = False) -> bool:
+    prio = max(_PRIORITY.get(level, 3), 4 if urgent else 0)
     base = (c.get("url") or "https://ntfy.sh").rstrip("/")
     if "://" not in base:
         base = "https://" + base
@@ -94,14 +99,14 @@ async def _ntfy(c: dict, title: str, body: str, level: str, url: str | None,
             # Attachment publish: the file is the body; text goes in headers.
             h = dict(headers)
             h.update({"Title": _rfc2047(title), "Message": _rfc2047(body.replace("\n", "\\n")),
-                      "Priority": str(_PRIORITY.get(level, 3)), "Tags": _TAGS.get(level, ""),
+                      "Priority": str(prio), "Tags": _TAGS.get(level, ""),
                       "Filename": file[0]})
             if url:
                 h["Click"] = url
             r = await cli.put(f"{base}/{c['topic']}", content=file[1], headers=h)
         else:
             msg = {"topic": c["topic"], "title": title, "message": body,
-                   "priority": _PRIORITY.get(level, 3), "tags": [_TAGS.get(level, "")]}
+                   "priority": prio, "tags": [_TAGS.get(level, "")]}
             actions = []
             if url:
                 msg["click"] = url
@@ -116,12 +121,13 @@ async def _ntfy(c: dict, title: str, body: str, level: str, url: str | None,
     return r.status_code < 400
 
 
-async def _bark(c: dict, title: str, body: str, level: str, url: str | None) -> bool:
+async def _bark(c: dict, title: str, body: str, level: str, url: str | None,
+                urgent: bool = False) -> bool:
     server = (c.get("server") or "https://api.day.app").rstrip("/")
     payload = {"device_key": c["key"], "title": title, "body": body, "group": "OhmyTesla"}
     if level == "critical" and c.get("critical", True):
         payload.update({"level": "critical", "volume": 8, "sound": "alarm"})
-    elif level == "warning":
+    elif level == "warning" or urgent:
         payload["level"] = "timeSensitive"
     if url:
         payload["url"] = url
@@ -186,9 +192,10 @@ async def _send_one(name: str, c: dict, title: str, body: str, level: str, paylo
                     url: str | None, attach: str | None) -> bool:
     try:
         if name == "ntfy":
-            return await _ntfy(c, title, body, level, url, attach, payload.get("map_url"))
+            return await _ntfy(c, title, body, level, url, attach, payload.get("map_url"),
+                               urgent=bool(payload.get("urgent")))
         if name == "bark":
-            return await _bark(c, title, body, level, url)
+            return await _bark(c, title, body, level, url, urgent=bool(payload.get("urgent")))
         if name == "telegram":
             return await _telegram(c, title, body, attach)
         if name == "webhook":
@@ -239,7 +246,7 @@ async def send(title: str, body: str, payload: dict | None = None, attach: str |
         if await webpush.count():
             names.append("webpush")
             tasks.append(webpush.send(title, body, url=url or "/security", level=level,
-                                      tag=payload.get("tag")))
+                                      tag=payload.get("tag"), urgent=bool(payload.get("urgent"))))
     if not tasks:
         log.warning("no notification channel configured; alert dropped: %s", title)
         return False, []
@@ -264,7 +271,7 @@ async def _retry(failed: list[str], title: str, body: str, level: str, payload: 
                 from . import webpush
 
                 ok = await webpush.send(title, body, url=link or "/security", level=level,
-                                        tag=payload.get("tag"))
+                                        tag=payload.get("tag"), urgent=bool(payload.get("urgent")))
             else:
                 ok = await _send_one(n, active[n], title, body, level, payload, link, attach)
             if not ok:

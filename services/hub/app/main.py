@@ -75,6 +75,9 @@ async def lifespan(app: FastAPI):
     # 自动化和告警共用同一条 transition 管道。顺序无所谓：两者互不依赖，
     # 而且都在自己内部处理"回放期不执行"。
     live.add_transition_hook(automation.handle)
+    # A fast-poll reading arrives whole: Sentry decides on it at once instead of
+    # waiting out the quiet period meant for TeslaMate's MQTT bursts.
+    live.add_snapshot_hook(sentry_tracker.flush)
     # 先从数据库补出最后已知状态，再挂 MQTT。顺序不能反：反过来的话
     # 补进去的旧值会盖住刚收到的实时值。
     await live.seed_from_db()
@@ -87,6 +90,8 @@ async def lifespan(app: FastAPI):
     fleet_bridge.start()
     from .alerts.fastpoll import poller as sentry_fast_poll
 
+    # Woken by Sentry or a car's state changing, so it never ticks while idle.
+    live.add_transition_hook(sentry_fast_poll.on_change)
     sentry_fast_poll.start()
     jobs.start()
     watcher.start()

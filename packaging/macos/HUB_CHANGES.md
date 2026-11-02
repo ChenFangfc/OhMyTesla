@@ -18,6 +18,16 @@ and immediately after **Settings** changes it (`poller.invalidate()`). The loop 
 wakes every second, so Sentry turning on is noticed at once, but an idle pass no longer
 touches SQLite. The note that asked for it follows.
 
+### Sentry fast poll sleeps instead of ticking, on one connection
+
+`app/alerts/fastpoll.py` no longer wakes every second: it sleeps until the next car is
+due, or — with nothing to poll — until a transition hook reports Sentry or a car's
+state changing (60 s at most). While Sentry is on it keeps one HTTPS connection alive
+instead of building a client per check: a new `httpx.AsyncClient` re-read the CA
+bundle and redid the TLS handshake, ≈13 ms of CPU per check against ≈0.5 ms warm
+(measured on an M-series Mac), so a check every 5 s costs ≈0.01 % of a core where one
+every 10 s used to cost ≈0.13 %.
+
 ## Open
 
 ### 1. Sentry fast poll: don't read SQLite every second (done, above)

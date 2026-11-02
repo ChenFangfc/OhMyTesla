@@ -123,7 +123,15 @@ _TTL = {"critical": 6 * 3600, "warning": 3600, "info": 1800}
 _URGENCY = {"critical": "high", "warning": "high", "info": "normal"}
 
 
-def _send_sync(sub: dict, payload: str, priv_pem: str, level: str = "info") -> tuple[bool, int]:
+def urgency(level: str, urgent: bool = False) -> str:
+    """Someone at the car right now is always "high": a phone holds "normal" back
+    when it saves power, and Apple's push service has been seen rejecting it
+    outright (WebKit bug 247128)."""
+    return "high" if urgent else _URGENCY.get(level, "normal")
+
+
+def _send_sync(sub: dict, payload: str, priv_pem: str, level: str = "info",
+               urgent: bool = False) -> tuple[bool, int]:
     from py_vapid import Vapid01
     from pywebpush import WebPushException, webpush
 
@@ -137,7 +145,7 @@ def _send_sync(sub: dict, payload: str, priv_pem: str, level: str = "info") -> t
             vapid_private_key=vapid,
             vapid_claims={"sub": "mailto:ohmytesla@localhost"},
             ttl=_TTL.get(level, 1800),
-            headers={"Urgency": _URGENCY.get(level, "normal")},
+            headers={"Urgency": urgency(level, urgent)},
             timeout=15,
         )
         return True, 200
@@ -151,7 +159,7 @@ def _send_sync(sub: dict, payload: str, priv_pem: str, level: str = "info") -> t
 
 
 async def send(title: str, body: str, url: str = "/", level: str = "info",
-               tag: str | None = None) -> bool:
+               tag: str | None = None, urgent: bool = False) -> bool:
     subs = await store.get_setting("push_subs", []) or []
     if not subs:
         return False
@@ -164,7 +172,7 @@ async def send(title: str, body: str, url: str = "/", level: str = "info",
     )
 
     results = await asyncio.gather(
-        *[asyncio.to_thread(_send_sync, s, payload, kp["private_pem"], level) for s in subs],
+        *[asyncio.to_thread(_send_sync, s, payload, kp["private_pem"], level, urgent) for s in subs],
         return_exceptions=True,
     )
     ok_any = False

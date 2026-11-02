@@ -5,7 +5,7 @@
   "controls.asleep": "车辆休眠中，显示最后已知状态。",
   "controls.updated": "更新于 {ago}",
   "controls.unknown": "未知",
-  "controls.setup_body": "现在可以查看所有状态；完成一次性的车辆指令设置后，按钮即可使用。",
+  "controls.setup_body": "现在可以查看所有状态；在 设置 → 车辆控制 完成一次性设置后，按钮即可使用。",
   "controls.security": "安全",
   "controls.doors": "车门",
   "controls.lock": "上锁",
