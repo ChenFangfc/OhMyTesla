@@ -27,8 +27,8 @@
    `curl -s "https://ntfy.sh/<主题名>/json?poll=1&since=5m"`
 9. 把主题名和门户密码告诉我，并提示我：手机装 ntfy App → 点 + → 填这个主题名
 10. 告诉我打开 http://localhost:8800（浏览器会弹认证框：用户名 ohmytesla + 上面的密码），
-    按引导页粘贴 Tesla token。token 用 `./tools/tesla_auth` 获取 ——
-    特斯拉不接受第三方用账号密码登录。
+    按引导页粘贴 Tesla token。token 用 tesla_auth（github.com/adriankumpf/tesla_auth，
+    电脑）或 iPhone 上的 Auth app for Tesla 获取 —— 特斯拉不接受第三方用账号密码登录。
 11. 用 `./omt status` 确认五个容器都在跑
 
 可选的邮件存档：问我要 SMTP 信息。Gmail 必须用应用专用密码

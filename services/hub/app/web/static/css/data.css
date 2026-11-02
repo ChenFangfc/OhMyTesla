@@ -26,7 +26,7 @@
   --dh-bad: var(--amber, var(--warning-orange));
   --dh-skel: color-mix(in srgb, var(--text-primary) 7%, transparent);
   --dh-top: 0px;               /* data.js: bottom edge of the shell's fixed chrome */
-  --dh-nav-h: 48px;
+  --dh-nav-h: 60px;
   --dh-ease-move: var(--ease-in-out, cubic-bezier(0.77, 0, 0.175, 1));
   --dh-ease-out: var(--ease, cubic-bezier(0.23, 1, 0.32, 1));
   font-variant-numeric: tabular-nums;
@@ -61,61 +61,70 @@
 }
 
 /* ------------------------------------------------------------ chapter index
-   A sticky index of the six chapters and ONE period control for the hub.
-   Peers swap instantly; only the 2px indicator moves. */
+   Three levels, three different objects: the shell's tabs pick a section; this
+   segmented control (a track, a raised thumb, an icon per chapter) picks a
+   chapter of 数据; the small period buttons filter what the chapter shows.
+   Peers swap instantly. The current chapter paints its own thumb, so it is
+   there on the first frame and never slides in. */
+
+/* On dark the thumb steps up to the control-border grey: the next surface
+   is too close to the track to read at a glance. */
+.dh { --dh-track: var(--surface-2); --dh-thumb: var(--surface); }
+:root[data-theme="dark"] .dh { --dh-thumb: var(--line-2); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme]) .dh { --dh-thumb: var(--line-2); } }
 
 .dh-nav {
   position: sticky; top: var(--dh-top); z-index: 20;
   background: var(--dh-ground);
-  border-bottom: 1px solid var(--dh-rule);
 }
 .dh-nav-in {
   display: flex; align-items: center; gap: 16px;
   height: var(--dh-nav-h);
 }
-/* The first label lines up with the page edge; the link keeps its padding
-   as touch area. */
 .dh-chs {
-  position: relative; display: flex; align-items: stretch; gap: 4px;
-  height: 100%; min-width: 0; flex: 1; margin-left: -12px;
+  display: inline-flex; align-items: stretch; gap: 2px;
+  height: 44px; padding: 4px; border-radius: 10px; background: var(--dh-track);
+  min-width: 0; flex: 0 1 auto;
   overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain;
 }
 .dh-chs::-webkit-scrollbar { display: none; }
 .dh-ch {
-  display: inline-flex; align-items: center; flex: none;
-  padding: 0 12px; font-size: 14px; color: var(--dh-ink-2);
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: none;
+  padding: 0 14px; border-radius: 6px;
+  font-size: 14px; font-weight: 500; color: var(--dh-ink-2);
   white-space: nowrap; text-decoration: none;
   transition: color 120ms var(--dh-ease-out);
   -webkit-tap-highlight-color: transparent;
 }
-.dh-ch[aria-current="page"] { color: var(--dh-ink); font-weight: 500; }
+.dh-ch .ico-slot { display: inline-flex; color: var(--dh-ink-3); transition: color 120ms var(--dh-ease-out); }
+.dh-ch[aria-current="page"], .dh-ch[aria-current="page"] .ico-slot { color: var(--dh-ink); }
+/* the raised thumb: one soft shadow in the ink's hue, no border */
+.dh-ch[aria-current="page"] { background: var(--dh-thumb); box-shadow: 0 1px 3px rgb(22 26 31 / 0.14); }
 @media (hover: hover) and (pointer: fine) {
-  .dh-ch:hover { color: var(--dh-ink); }
+  .dh-ch:hover, .dh-ch:hover .ico-slot { color: var(--dh-ink); }
 }
-.dh-ind {
-  position: absolute; left: 0; bottom: 0; height: 2px; width: 0;
-  background: var(--dh-ink); pointer-events: none;
-  transform-origin: left center;
-}
-.dh-ind.go { transition: transform 250ms var(--dh-ease-move), width 250ms var(--dh-ease-move); }
+.dh-ch:active { transform: scale(0.97); }
+.dh-ch:focus-visible { outline: 2px solid var(--acc); outline-offset: -2px; }
 
-.dh-per { display: inline-flex; gap: 2px; flex: none; }
+/* the period: a filter on the chapter, so quieter than the chapters */
+.dh-per { display: inline-flex; gap: 2px; flex: none; margin-left: auto; }
 .dh-per button, .dh-per-btn {
-  height: 30px; padding: 0 10px; border: 0; border-radius: 4px;
+  height: 32px; padding: 0 10px; border: 0; border-radius: 4px;
   background: transparent; color: var(--dh-ink-2);
   font: inherit; font-size: 13px; font-weight: 400; cursor: pointer;
   white-space: nowrap;
   transition: background-color 120ms var(--dh-ease-out), color 120ms var(--dh-ease-out);
   -webkit-tap-highlight-color: transparent; touch-action: manipulation;
 }
-.dh-per button[aria-pressed="true"] { background: var(--dh-hover); color: var(--dh-ink); }
+.dh-per button[aria-pressed="true"] { background: var(--dh-hover); color: var(--dh-ink); font-weight: 500; }
 @media (hover: hover) and (pointer: fine) {
   .dh-per button:hover { color: var(--dh-ink); }
 }
 .dh-per button:active, .dh-per-btn:active { transform: scale(0.97); }
+/* on a tablet or phone the period picker sits beside the chapter title (≤ 960px) */
 .dh-per-btn {
-  display: none; align-items: center; gap: 4px; height: 44px; padding: 0 4px 0 12px;
-  color: var(--dh-ink); font-weight: 500; flex: none;
+  display: none; align-items: center; gap: 4px; height: 36px; padding: 0 8px 0 12px;
+  border: 1px solid var(--dh-rule-2); color: var(--dh-ink); font-weight: 500; flex: none;
 }
 .dh-per-btn svg { color: var(--dh-ink-3); }
 
@@ -635,13 +644,26 @@ details.dh-more > summary .val + .chev { margin-left: 8px; }
   .tr-right .tr-list { margin-top: 32px; }
 }
 
-@media (max-width: 720px) {
-  .dh { --dh-nav-h: 44px; padding-bottom: 72px; }
-  .dh-nav { margin: 0 calc(-1 * var(--page-pad, 16px)); padding: 0 var(--page-pad, 16px); }
-  .dh-chs { margin-left: -10px; }
+/* Tablet and phone: the six chapters fill the row (equal where the labels
+   allow, wider where one needs it) and the period moves beside the title. */
+@media (max-width: 960px) {
+  .dh-chs { flex: 1; display: grid; grid-template-columns: repeat(6, 1fr); }
+  .dh-ch { padding: 0 8px; }
   .dh-per { display: none; }
-  .dh-per-btn { display: inline-flex; }
-  .dh-ch { padding: 0 10px; font-size: 15px; }
+  /* title and period on one row, the meta line under them */
+  .dh-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; }
+  .dh-head h1 { grid-column: 1; grid-row: 1; }
+  .dh-head .dh-meta { grid-column: 1 / -1; grid-row: 2; }
+  .dh-per-btn { display: inline-flex; grid-column: 2; grid-row: 1; }
+}
+
+@media (max-width: 720px) {
+  .dh { --dh-nav-h: 68px; padding-bottom: 72px; }
+  .dh-nav { margin: 0 calc(-1 * var(--page-pad, 16px)); padding: 0 var(--page-pad, 16px); }
+  /* icon over label, like the tab bar below but sized for a thumb */
+  .dh-chs { height: 56px; }
+  .dh-ch { flex-direction: column; gap: 3px; padding: 0 2px; font-size: 12px; }
+  .dh-ch .ico-slot svg { width: 18px; height: 18px; }
   .dh-lede { font-size: 16px; }
   .dh-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dh-kpi { padding: 14px 0 14px 16px; border-left: 1px solid var(--dh-rule); border-top: 1px solid var(--dh-rule); }
@@ -669,6 +691,12 @@ details.dh-more > summary .val + .chev { margin-left: 8px; }
   .dh-flow .row { grid-template-columns: 56px minmax(0, 1fr); }
   .dh-flow .v { grid-column: 2; text-align: left; }
   .dh-legend .dh-legend-note { flex-basis: 100%; margin-left: 0; }
+}
+
+/* The narrowest phones: the track borrows 8px of each gutter, so six English
+   labels keep their spacing at 12px. */
+@media (max-width: 380px) {
+  .dh-nav { padding: 0 8px; }
 }
 
 /* Software versions along time: one hue, alternating lightness, the version

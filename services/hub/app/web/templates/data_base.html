@@ -10,6 +10,8 @@
   <header class="dh-head">
     <h1>{% block h1 %}{% endblock %}</h1>
     <div class="dh-meta" id="dh-meta"></div>
+    {% set cur = days or '90' %}
+    <button type="button" class="dh-per-btn" aria-haspopup="dialog" data-i18n-title="data.period.label" title="{{ t('data.period.label') }}"><span class="lbl">{{ t('data.period.short_' ~ cur) }}</span><span class="ico-slot" data-icon="chevdown" data-size="16"></span></button>
   </header>
   <div class="dh-notes" id="dh-notes"></div>
   <div id="dh-main">

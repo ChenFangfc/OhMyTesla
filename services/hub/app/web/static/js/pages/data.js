@@ -2,8 +2,8 @@
  *
  *  · ONE period for the whole hub (?days=7|30|90|365|all), kept in the URL,
  *    remembered per viewer, carried by every chapter link.
- *  · The chapter index: peers swap instantly, only the 2px indicator moves,
- *    and it slides from the chapter you came from.
+ *  · The chapter index: a segmented control. Peers swap instantly and the
+ *    current chapter paints its own thumb, so nothing slides or flashes.
  *  · Blocks load on their own and fail on their own: skeleton at final size,
  *    errors inside the block with Retry, honest empty states.
  *  · Formatting in the hub's time zone and the owner's units (U), numbers
@@ -19,8 +19,6 @@
   const PERIODS = ["7", "30", "90", "365", "all"];
   const K_PERIOD = "omt.data.period";
   const K_SEEN = "omt.data.seen";
-  const K_IND = "omt.data.ind";
-  const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
   const ls = {
     get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
     set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } },
@@ -28,7 +26,6 @@
   const ss = {
     get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
     set(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* blocked */ } },
-    del(k) { try { sessionStorage.removeItem(k); } catch (e) { /* blocked */ } },
   };
 
   const DH = {
@@ -85,49 +82,13 @@
 
   /* ------------------------------------------------------- chapter index */
 
-  function indTarget() {
-    const cur = root.querySelector('.dh-ch[aria-current="page"] > span');
-    return cur ? { x: cur.offsetLeft, w: cur.offsetWidth } : null;
-  }
-  function placeInd(animateFrom) {
-    const ind = root.querySelector(".dh-ind");
-    const to = indTarget();
-    if (!ind || !to) return;
-    ind.classList.remove("go");
-    if (animateFrom && !reduced()) {
-      ind.style.width = animateFrom.w + "px";
-      ind.style.transform = `translateX(${animateFrom.x}px)`;
-      void ind.offsetWidth;
-      ind.classList.add("go");
-    }
-    ind.style.width = to.w + "px";
-    ind.style.transform = `translateX(${to.x}px)`;
-  }
+  // the track only scrolls when the text is very large; keep the current chapter in view
   function initNav() {
     const chs = root.querySelector(".dh-chs");
-    if (!chs) return;
-    let from = null;
-    try { from = JSON.parse(ss.get(K_IND) || "null"); } catch (e) { from = null; }
-    ss.del(K_IND);
-    if (from && typeof from.sl === "number") chs.scrollLeft = from.sl;
-    placeInd(from && from.ch !== DH.chapter ? from : null);
-    // keep the current chapter visible on a narrow screen
-    const cur = root.querySelector('.dh-ch[aria-current="page"]');
-    if (cur) {
-      const l = cur.offsetLeft, r = l + cur.offsetWidth;
-      if (l < chs.scrollLeft || r > chs.scrollLeft + chs.clientWidth) {
-        chs.scrollTo({ left: Math.max(0, l - 16), behavior: reduced() || !from ? "auto" : "smooth" });
-      }
-    }
-    chs.addEventListener("click", (e) => {
-      const a = e.target.closest("a.dh-ch");
-      if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button) return;
-      const to = indTarget();
-      if (to) ss.set(K_IND, JSON.stringify({ ...to, sl: chs.scrollLeft, ch: DH.chapter }));
-    });
-    window.addEventListener("resize", () => placeInd(null), { passive: true });
-    // labels change width when the language does
-    window.addEventListener("omt:locale", () => requestAnimationFrame(() => placeInd(null)));
+    const cur = chs && chs.querySelector('.dh-ch[aria-current="page"]');
+    if (!cur) return;
+    const l = cur.offsetLeft, r = l + cur.offsetWidth;
+    if (l < chs.scrollLeft || r > chs.scrollLeft + chs.clientWidth) chs.scrollLeft = Math.max(0, l - 16);
   }
 
   function initPeriod() {

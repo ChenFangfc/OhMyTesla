@@ -59,6 +59,10 @@ _PUSH_BY_DEFAULT = frozenset({
     "sentry_aware", "sentry_panic", "possible_theft", "data_stale", "tpms_warning",
     "charging_interrupted",
 })
+# Someone at the car right now: these reach the phone time-sensitive on every
+# channel (ntfy ≥ 4, Bark timeSensitive, Web Push Urgency high), so a Focus
+# mode doesn't hold them back. Their level still decides the wording and colour.
+_URGENT_RULES = frozenset({"sentry_activity", "possible_theft"})
 
 
 RULES: dict[str, Rule] = {
@@ -446,7 +450,8 @@ class AlertEngine:
         line = body.strip() if body else await self.where_when(car_id, up["locale"])
         delivered, channels = False, []
         if push:
-            payload = {"rule": rule, "level": level, "car_id": car_id, "car_name": car_name, "tag": tag}
+            payload = {"rule": rule, "level": level, "car_id": car_id, "car_name": car_name, "tag": tag,
+                       "urgent": rule in _URGENT_RULES}
             lat, lon = car.get("latitude"), car.get("longitude")
             if lat and lon:
                 payload["map_url"] = (f"https://uri.amap.com/marker?position={lon},{lat}" if up.get("market") == "CN"

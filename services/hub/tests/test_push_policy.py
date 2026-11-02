@@ -8,6 +8,7 @@ Run:  python3 tests/test_push_policy.py
 """
 
 import asyncio
+import json
 import os
 import sys
 import tempfile
@@ -26,10 +27,12 @@ from app.alerts.store import store  # noqa: E402
 from app.livestate import live  # noqa: E402
 
 SENT: list[tuple[str, str]] = []
+URGENT: dict[str, bool] = {}        # title -> sent time-sensitive?
 
 
 async def fake_send(title, body, payload=None, attach=None, *, level=None, url=None, only=None):
     SENT.append((title, body))
+    URGENT[title] = bool((payload or {}).get("urgent"))
     return True, ["ntfy"]
 
 
@@ -100,6 +103,38 @@ async def main():
         check("sentry title: '🚨 Cybertruck — door opened while locked'",
               SENT[0][0] == "🚨 Cybertruck — door opened while locked", SENT[0][0])
         check("sentry body is one short line", "\n" not in SENT[0][1] and len(SENT[0][1]) <= 40, repr(SENT[0][1]))
+    check("someone at the car is sent time-sensitive; a tire warning isn't",
+          URGENT.get("🚨 Cybertruck — door opened while locked") is True
+          and URGENT.get("⚠️ Cybertruck — low tire pressure · front left") is False, str(URGENT))
+
+    # what time-sensitive means on each channel; the level still sets the wording
+    import httpx
+
+    seen = []
+
+    def handler(request):
+        seen.append(json.loads(request.content or b"{}"))
+        return httpx.Response(200, json={"code": 200})
+
+    real_client = httpx.AsyncClient
+    httpx.AsyncClient = lambda *a, **kw: real_client(*a, transport=httpx.MockTransport(handler), **kw)
+    try:
+        ntfy = {"url": "https://ntfy.sh", "topic": "t"}
+        await notifier._ntfy(ntfy, "👀 x", "y", "info", None, None, urgent=True)
+        await notifier._ntfy(ntfy, "x", "y", "info", None, None)
+        await notifier._ntfy(ntfy, "🚨 x", "y", "critical", None, None, urgent=True)
+        await notifier._bark({"key": "k"}, "👀 x", "y", "info", None, urgent=True)
+        await notifier._bark({"key": "k"}, "x", "y", "info", None)
+    finally:
+        httpx.AsyncClient = real_client
+    check("ntfy: someone at the car → priority 4 (time-sensitive on iPhone); alarm 5; routine 3",
+          [s.get("priority") for s in seen[:3]] == [4, 3, 5], str(seen[:3]))
+    check("Bark: someone at the car → timeSensitive; routine → default",
+          [s.get("level") for s in seen[3:5]] == ["timeSensitive", None], str(seen[3:5]))
+    from app.alerts import webpush
+
+    check("Web Push: someone at the car → Urgency high; routine info stays normal",
+          (webpush.urgency("info", True), webpush.urgency("info")) == ("high", "normal"))
 
     # the owner can still turn one into a push, or off
     await eng.set_mode("low_battery", "push")

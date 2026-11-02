@@ -47,7 +47,7 @@ Also: dashcam clips read straight off the USB drive and matched to drives and Se
 
 1. [Download the DMG](https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/OhmyTesla-arm64.dmg) (Apple silicon, macOS 13+) and drag **OhmyTesla** to Applications.
 2. First launch: right-click → **Open** (macOS 15+: System Settings → Privacy & Security → **Open Anyway**). The app isn't notarized yet.
-3. Pick **Connect to my server** if one already runs at home (the app then needs about 40 MB with its window closed), or **Run on this Mac**. Then sign in to Tesla.
+3. Pick **Connect to my server** if one already runs at home (the app then needs about 40 MB with its window closed), or **Run on this Mac**. Then [connect your car](#connect-your-car).
 
 Running on the Mac needs no Docker: the whole stack idles at about 0.2% of one CPU core and 300 MB of memory.
 
@@ -57,11 +57,10 @@ On any Linux or Mac machine with Docker:
 
 ```bash
 git clone https://github.com/ChenFangfc/OhMyTesla && cd OhMyTesla
-cp .env.example .env      # set OHMYTESLA_PASSWORD, e.g. openssl rand -base64 24
-./omt up                  # → http://<this machine>:8800, user ohmytesla
+./omt up                  # first run writes .env with random secrets and prints your password
 ```
 
-Connect your car with `./tools/tesla_auth` (Tesla's own login page) and paste the two tokens into the setup page.
+Open `http://<this machine>:8800` (user `ohmytesla`), then [connect your car](#connect-your-car).
 
 <details>
 <summary>Everyday commands</summary>
@@ -76,7 +75,15 @@ Connect your car with `./tools/tesla_auth` (Tesla's own login page) and paste th
 
 </details>
 
-**Vehicle commands** (optional): Tesla only accepts signed commands from apps you approve. Set it up once in **Settings → Vehicle controls**, about 10 minutes — [docs/COMMANDS.md](docs/COMMANDS.md).
+## Connect your car
+
+| You want | What to do | Time |
+|---|---|---|
+| Status, drives, charging, Sentry alerts | **Sign in to Tesla**: [tesla_auth](https://github.com/adriankumpf/tesla_auth/releases/latest) (computer) or [Auth app for Tesla](https://apps.apple.com/us/app/auth-app-for-tesla/id1552058613) (iPhone) opens Tesla's own sign-in page; paste the two tokens it gives you into the app | 2 min |
+| Remote control (optional) | **Approve a key**: create an app at [developer.tesla.com](https://developer.tesla.com) (a card on file; one car stays within Tesla's free monthly credit), follow **Settings → Vehicle controls**, then approve the key in the Tesla app ([guide](docs/COMMANDS.md)) | about 10 min |
+| Sentry alerts in 1–3 seconds (optional) | **Add Fleet Telemetry**: a paid relay is easiest; self-hosting is free but needs a public IP, a domain and a certificate ([guide](docs/FLEET-TELEMETRY.md)) | about 10 min with a relay |
+
+Your password goes only to Tesla; the tokens stay encrypted on your own device.
 
 ## Phone alerts
 
@@ -93,7 +100,7 @@ Home · 9:41 PM
 | The parked car moving (towed or driven off) | Data resumed, logger health |
 | Low tire pressure, charging losing power | Sentry clips synced, routine checks |
 
-Channels: ntfy (recommended), Bark (breaks through Do Not Disturb on iOS), Telegram, email, Web Push. Set them up in **Settings → Notifications**, then **Security → Send test alert**. Typical delay is about 10 seconds while Sentry is on, and 1–2 seconds with [Fleet Telemetry](docs/FLEET-TELEMETRY.md).
+Channels: ntfy (recommended), Bark (breaks through Do Not Disturb on iOS), Telegram, email, Web Push. Set them up in **Settings → Notifications**, then **Security → Send test alert**. Typical delay is about 5 seconds while Sentry is on, and 1–3 seconds with [Fleet Telemetry](docs/FLEET-TELEMETRY.md).
 
 ## Security
 
@@ -108,7 +115,7 @@ Channels: ntfy (recommended), Bark (breaks through Do Not Disturb on iOS), Teleg
 | [Quickstart](docs/QUICKSTART.md) | full walkthrough and troubleshooting *(Chinese)* |
 | [Vehicle commands](docs/COMMANDS.md) | signed-command setup *(Chinese)* |
 | [teslausb](docs/TESLAUSB.md) | the car's USB drive syncs footage by itself |
-| [Fleet Telemetry](docs/FLEET-TELEMETRY.md) | 1–2 second alerts *(Chinese)* |
+| [Fleet Telemetry](docs/FLEET-TELEMETRY.md) | 1–3 second alerts *(Chinese)* |
 | [AI access (MCP)](docs/MCP.md) · [Let an AI install it](docs/AI-SETUP.md) | for Claude Code, Cursor and friends |
 | [Mac app](packaging/macos/README.md) · [Architecture](docs/ARCHITECTURE.md) | how it's built *(architecture in Chinese)* |
 | [Film source](promo/README.md) | the 30-second film, as code |

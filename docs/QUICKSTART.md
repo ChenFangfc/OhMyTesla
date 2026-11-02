@@ -5,21 +5,16 @@
 ### 1. 启动
 
 ```bash
-cd ~/Desktop/OhmyTesla
+git clone https://github.com/ChenFangfc/OhMyTesla && cd OhMyTesla
 ./omt up
 ```
 
-脚本会先检查 Docker 有没有开、`.env` 有没有配好，然后等到应用真的能访问了才返回，
-最后把地址打印出来。`.env` 已经生成好，密钥和数据库密码是随机的，不用改。
+第一次运行会照 `.env.example` 生成 `.env`，填上随机的加密密钥、数据库密码和门户密码，
+并把门户密码打印出来（用户名固定 `ohmytesla`）。脚本会先检查 Docker 有没有开，
+等应用真的能访问了才返回，最后打印地址。
 
-> **先把门户密码设上。** `.env` 里的 `OHMYTESLA_PASSWORD` 默认是空的，空的时候门户
-> 直接拒绝服务（503）—— 这个界面能解锁车门、关哨兵、看全部位置历史。生成一个填进去：
->
-> ```bash
-> openssl rand -base64 32 | tr -d '/+=' | cut -c1-28
-> ```
->
-> 填好后 `./omt restart`。之后打开 8800 浏览器会弹认证框，用户名固定 `ohmytesla`。
+> 门户密码不能为空：这个界面能解锁车门、关哨兵、看全部位置历史。忘了就
+> `./omt portal-password` 重新生成，再 `./omt restart`。
 
 其它命令：
 
@@ -39,18 +34,15 @@ cd ~/Desktop/OhmyTesla
 打开 **http://localhost:8800**（设了密码就先过认证框：用户名 `ohmytesla`），
 没连过账号的话会自动跳到引导页。
 
-特斯拉不允许第三方直接用账号密码登录，需要用工具走一遍官方授权页拿到 token：
+特斯拉不允许第三方直接用账号密码登录，需要用小工具走一遍官方登录页拿到两个令牌，任选其一：
 
-```bash
-~/Desktop/OhmyTesla/tools/tesla_auth
-```
+- **电脑**：[tesla_auth](https://github.com/adriankumpf/tesla_auth/releases/latest)（Mac、Windows、Linux），解压后打开；
+- **iPhone**：App Store 的 [Auth app for Tesla](https://apps.apple.com/us/app/auth-app-for-tesla/id1552058613)。
 
-工具会弹出**特斯拉官方登录页**（你的账号密码只提交给特斯拉，工具和本项目都拿不到），
-登录后它给你两串 token，粘到引导页的两个框里，点 Connect。
+工具会打开**特斯拉官方登录页**（账号密码只提交给特斯拉，工具和本项目都拿不到），
+登录后给你两个令牌，粘到引导页的两个框里，点「连接」。
 
 > macOS 提示"无法验证开发者"时：右键点应用 → 打开，或到 系统设置 → 隐私与安全性 里放行。
->
-> 也可以用 App Store 的 [Auth app for Tesla](https://apps.apple.com/us/app/auth-app-for-tesla/id1552058613)。
 
 token 会加密存进数据库（AES-256-GCM），之后**再也不用管**——会自动续期。
 
@@ -76,7 +68,7 @@ token 会加密存进数据库（AES-256-GCM），之后**再也不用管**—�
 
 **哨兵告警别只配邮件。** 邮件到手机的延迟取决于你的邮件 App 多久拉一次，
 可能是几分钟——有人在动你的车时，一封迟到的邮件没有意义。
-邮件适合当written record，实时提醒交给 ntfy 或 Telegram。
+邮件适合存档，实时提醒交给 ntfy 或 Telegram。
 
 配好一个渠道后，在 **Security 页点「Send test alert」**，
 消息会立刻发到你配的所有渠道。

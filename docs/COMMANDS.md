@@ -13,16 +13,15 @@
 
 OhmyTesla 内置了签名（[tesla-fleet-api](https://github.com/Teslemetry/python-tesla-fleet-api)），
 不需要另外部署 vehicle-command 代理、也不用管 TLS 证书。只需要一次性准备好下面这些，
-**全部在网页「设置 → 车辆指令」里一步步完成**：
+**全部在网页「设置 → 车辆控制」里一步步完成**，顺序和页面上一致：
 
 | 步骤 | 做什么 | 备注 |
 |---|---|---|
-| 1 开发者应用 | 在 [developer.tesla.com](https://developer.tesla.com) 建一个应用，把 Client ID / Secret 填进来 | 免费；回调地址填设置页显示的那个 |
-| 2 钥匙对 | 点「生成」—— 私钥只存在这台机器上 | 私钥用和 TeslaMate 相同的密钥加密保存 |
-| 3 公钥上网 | 公钥必须能从公网以 `https://<你的域名>/.well-known/appspecific/com.tesla.3p.public-key.pem` 访问到 | hub 自己就提供这个地址；没有公网域名的话，放到 GitHub Pages 之类的静态托管也行（设置页能下载这个文件） |
-| 4 注册域名 | 点「注册」，hub 用应用凭据向特斯拉登记这个域名 | 一个应用只做一次 |
-| 5 登录授权 | 点「用 Tesla 账号登录」，在特斯拉官网同意授权 | 回调回不来时，把浏览器地址栏整段粘贴回来也行 |
-| 6 配对钥匙 | 手机打开设置页给出的链接（或扫码），在 Tesla App 里批准 | 每辆车配一次；之后在设置页点「检查」 |
+| 1 生成钥匙 | 点「生成钥匙」—— 私钥只存在这台机器上 | 用和 TeslaMate 相同的密钥加密保存 |
+| 2 开发者应用 | 在 [developer.tesla.com](https://developer.tesla.com) 建一个 Fleet API 应用，把 Client ID / Secret 填进来 | 注册免费，但要绑卡、账单上限设大于 $0（每月赠送的额度够一辆私家车）；来源和回调地址照设置页显示的填 |
+| 3 公钥与域名 | 公钥要能从公网以 `https://<你的域名>/.well-known/appspecific/com.tesla.3p.public-key.pem` 访问到，然后点「向 Tesla 注册」 | 没有公网域名就放到 GitHub Pages（设置页能下载这个文件）；一个应用只注册一次 |
+| 4 登录授权 | 点「用 Tesla 登录」，在特斯拉官网同意授权 | 回调回不来时，把跳转后的完整地址粘贴回来 |
+| 5 批准钥匙 | 手机打开设置页给出的链接（或扫码），在 Tesla App 里批准 | 每辆车一次；之后点「检查批准状态」 |
 
 做完之后每条指令都会显示用的是哪条通道：
 
@@ -48,9 +47,9 @@ OhmyTesla 内置了签名（[tesla-fleet-api](https://github.com/Teslemetry/pyth
 
 | 提示 | 原因与处理 |
 |---|---|
-| 需要先完成车辆指令设置 | 新车没走完上面 6 步 |
-| 这辆车还没配对钥匙 | 第 6 步：在 Tesla App 里批准虚拟钥匙，再点「检查」 |
+| 车辆控制未设置 | 新车没走完上面 5 步 |
+| 这辆车还没配对钥匙 | 第 5 步：在 Tesla App 里批准钥匙，再点「检查批准状态」 |
 | 公钥检查失败 | 用手机流量打开那个 `.pem` 地址，必须是 https、不能跳转到登录页 |
 | 车在休眠 | 点「唤醒」，通常 10～30 秒；直接发指令也会自动唤醒一次 |
 | 指令超时，可能已经执行 | 先看车的状态再决定要不要重试 |
-| Token 失效 | 设置页重新「用 Tesla 账号登录」，不影响 TeslaMate 的数据采集 |
+| Token 失效 | 设置页重新「用 Tesla 登录」，不影响 TeslaMate 的数据采集 |

@@ -5,7 +5,7 @@
   "controls.asleep": "Asleep. Showing the last known state.",
   "controls.updated": "Updated {ago}",
   "controls.unknown": "Unknown",
-  "controls.setup_body": "Everything here is visible now; buttons start working after the one-time vehicle-command setup.",
+  "controls.setup_body": "Everything here is visible now; buttons start working after the one-time setup in Settings → Vehicle controls.",
   "controls.security": "Security",
   "controls.doors": "Doors",
   "controls.lock": "Lock",

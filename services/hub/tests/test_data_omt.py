@@ -108,6 +108,27 @@ def main() -> int:
     p = subprocess.run(["bash", "./omt", "up"], cwd=d, capture_output=True, text=True, env=env, check=False)
     chk("没有 .env：./omt up 说清楚 .env 缺了", p.returncode == 1 and ".env is missing" in p.stderr,
         (p.returncode, p.stderr[-200:]))
+    # First install: with the template beside it, `up` writes .env itself, random
+    # secrets in place of the placeholders, and prints the portal password.
+    d3 = omt_copy(None)
+    shutil.copy(os.path.join(ROOT, ".env.example"), d3)
+    with open(os.path.join(shim_dir, "curl"), "w") as f:
+        f.write("#!/bin/bash\nexit 0\n")      # /healthz answers at once
+    os.chmod(os.path.join(shim_dir, "curl"), 0o755)
+    p = subprocess.run(["bash", "./omt", "up"], cwd=d3, capture_output=True, text=True, env=env, check=False)
+    made = open(os.path.join(d3, ".env"), encoding="utf-8").read() if os.path.exists(os.path.join(d3, ".env")) else ""
+    vals = dict(ln.split("=", 1) for ln in made.splitlines() if "=" in ln and not ln.startswith("#"))
+    chk("first install: ./omt up writes .env with random secrets and a portal password",
+        p.returncode == 0 and len(vals.get("TM_ENCRYPTION_KEY", "")) >= 40 and "change-me" not in made
+        and len(vals.get("TM_DB_PASS", "")) >= 16 and vals.get("OHMYTESLA_PASSWORD")
+        and vals["OHMYTESLA_PASSWORD"] in p.stdout and oct(os.stat(os.path.join(d3, ".env")).st_mode)[-3:] == "600",
+        (p.returncode, p.stderr[-200:], sorted(vals)[:8]))
+    with open(os.path.join(d3, ".env"), "a", encoding="utf-8") as f:
+        f.write("# kept\n")
+    before = open(os.path.join(d3, ".env"), encoding="utf-8").read()
+    subprocess.run(["bash", "./omt", "up"], cwd=d3, capture_output=True, text=True, env=env, check=False)
+    chk("an existing .env is never rewritten", open(os.path.join(d3, ".env"), encoding="utf-8").read() == before)
+
     d2 = omt_copy("TM_ENCRYPTION_KEY=abc\nTM_DB_PASS=x\n")
     p = subprocess.run(["bash", "./omt", "help"], cwd=d2, capture_output=True, text=True, check=False)
     chk("缺 *_PORT 行：./omt help 正常", p.returncode == 0 and "start everything" in p.stdout, p.returncode)

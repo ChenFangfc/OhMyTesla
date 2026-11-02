@@ -94,9 +94,12 @@ Hub 自己的状态（告警历史、规则开关、合成任务、电价方案�
   应用、密钥、OAuth、虚拟钥匙配对）+ `tesla/commands.py`（tesla-fleet-api 进程内签名；2020 年及以前的
   S/X 走 TeslaMate token 的老接口）。不再需要 vehicle-command 代理。
 - **哨兵 v2**（`alerts/sentry.py`）：状态稳定后再判断、车主信号窗口、家/外地点策略、拖车检测；
-  `alerts/fastpoll.py` 在哨兵开启时每 10 秒只读检查一次（不唤醒、不刷新 TeslaMate 的 token）。
+  `alerts/fastpoll.py` 在哨兵开启时每 5 秒只读检查一次（不唤醒、不刷新 TeslaMate 的 token；
+  复用同一条 HTTPS 连接，哨兵关了就断开；没车可查时不空转）。一次检查的结果是一份完整快照，
+  读到就立即判断，不再等 MQTT 那 2.5 秒。
 - **推送策略**（`alerts/engine.py`）：每条规则 push / app / off，只有哨兵和重大事件默认推送；
   推送一行标题 + 一行「地点 · 时间」。渠道在 `alerts/channels.py`，界面里配，密钥加密存。
+  哨兵类推送在所有渠道都是「时效性」：ntfy 优先级 ≥ 4、Bark timeSensitive、Web Push Urgency high。
 - **界面**：`static/css/app.css` + `static/js/core.js` 的新外壳；首页 3D 车（`vehicle3d.js`，three.js），
   地图统一 MapLibre + OpenFreeMap（`map.js`，国内 GCJ-02 在渲染时偏移）。
 - **数据**：`insights/analytics_api.py` 等 20 个与 TeslaMate 面板对齐的接口；费用统一一个来源（`insights/costs.py`）。

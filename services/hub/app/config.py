@@ -134,8 +134,10 @@ class Settings(BaseSettings):
     sentry_polled_alerts: bool = True
     # Fast sentry check: while a car is awake with Sentry armed, read its
     # vehicle_state this often (seconds) instead of waiting for TeslaMate's
-    # 60 s poll. 0 = off. Overridable in Settings.
-    sentry_fast_poll_seconds: int = 10
+    # 60 s poll. 0 = off. Overridable in Settings. 5 s is the rate TeslaMate
+    # itself polls a charging car at (2.5 s while driving); Tesla documents 60
+    # data requests a minute per vehicle.
+    sentry_fast_poll_seconds: int = 5
     # 保留期（天）：告警历史 / 哨兵会话 / 合成任务超过这个天数就清掉。
     # 0 = 永久保留。这三张表原本只增不删，而它们和电价、token 共用同一个
     # SQLite 文件，写入还是串行的 —— 跑上几年会拖慢每一次写。
