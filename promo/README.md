@@ -1,29 +1,34 @@
 # The film
 
-A 32-second launch film, written as code. Each frame is a pure function of time
+A 36-second launch film, written as code. Each frame is a pure function of time
 (`FILM.seek(t)` in `src/film.js`), and a headless Chromium plus ffmpeg turn
 the frames into an MP4. There is no editing timeline and no stock footage:
 the screens are the real UI running on synthetic data, and the truck is the
 app's own 3D model, lit live in WebGL (`src/car3d.js`).
 
 Picture and score (`scripts/music.py`) share one grid: 120 BPM, a bar is 2 s.
+It shows what only OhmyTesla does, not what every Tesla app does.
 
 | Time | Scene | Words (en) |
 |---|---|---|
-| 0:00 | three words on the beat | Your Tesla. Your data. Your machine. |
-| 0:04 | the drop: the light bar comes on, the studio lights find the truck | Everything your Tesla knows. On your own machine. |
-| 0:08 | two pushes land on a phone | Sentry triggers. You know in seconds. ≈5 s |
-| 0:12 | driving, charging, battery as panels in depth | Every drive. Every charge. 935 · 294 · 97% |
-| 0:16 | the footprint, tilted like a table | Everywhere you've been. |
-| 0:19 | the camera moves in on a confirm sheet; a tap | Controls that ask first. |
-| 0:22 | the Mac menu bar | A native Mac app. |
-| 0:25 | stop-time, one word a second | Self-hosted. Open source. Free. |
-| 0:28 | the truck in profile, the mark, the address | Download for Mac · Runs anywhere with Docker |
+| 0:00 | three words on the beat | Your Tesla. Your Data. Your Machine. |
+| 0:04 | the drop: the light bar comes on, the studio lights find the truck | Everything your Tesla knows, on your own machine. |
+| 0:08 | the camera keeps turning; the car's live state pops out on the truck | Your Car, Live. |
+| 0:11 | two pushes land on a phone | Sentry Triggers. You Know in Seconds. ≈5 s |
+| 0:15 | driving, charging, battery as panels in depth | Every Drive. Every Charge. 935 · 294 · 97% |
+| 0:19 | the footprint, tilted like a table | Everywhere You've Been. |
+| 0:22 | an AI assistant answers from your own data, over MCP | Ask Your Car Anything. |
+| 0:26 | the Mac menu bar | A Native Mac App. |
+| 0:28 | stop-time, one word a second | Self-Hosted. Open Source. Free. |
+| 0:32 | the truck in profile, the mark, the address | Download for Mac · Runs anywhere with Docker |
+
+Titles that pop out are in Title Case; the lines under them are sentences.
 
 Every claim is true of the product: pushes follow the push policy, ≈5 s is the
 README's typical Sentry delay, the CPU figure is the Mac app's measured idle
-total (see `packaging/macos/README.md`), and the numbers are the demo's
-synthetic year, the same as in the screens.
+total (see `packaging/macos/README.md`), the AI answer is the demo's own last
+30 days (`get_charging_stats`), and every other number is the demo's synthetic
+data, the same as in the screens.
 
 `src/vendor` and `src/assets/cybertruck.glb` are links to the app's own three.js
 and model (CC BY 4.0, credited on the end card). Never point the film at an

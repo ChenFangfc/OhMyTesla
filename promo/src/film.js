@@ -1,4 +1,4 @@
-/* film.js — OhmyTesla in 32 seconds, as code: a launch film on a dark stage.
+/* film.js — OhmyTesla in 36 seconds, as code: a launch film on a dark stage.
  *
  * The rule: a frame is a pure function of time. FILM.seek(t) sets everything
  * on screen from t alone — no CSS transitions, no timers, no randomness — so
@@ -7,13 +7,14 @@
  *
  *   0.0  open        three words on the beat: your Tesla, your data, your machine
  *   4.0  reveal      the light bar comes on, then the studio lights find the truck
- *   8.0  Sentry      two pushes land on a phone; about 5 s from trigger to phone
- *  12.0  data        driving, charging, battery as panels in depth; the year in numbers
- *  16.0  footprint   the lifetime map, tilted like a table
- *  19.0  controls    the camera moves in on a confirm sheet; a tap
- *  22.0  Mac         the menu-bar panel drops; what it costs to run
- *  25.0  principles  self-hosted, open source, free: one a second
- *  28.0  end card    the truck in profile, the mark, the address
+ *   8.0  live        the camera keeps turning; the car's state pops out on the truck
+ *  11.0  Sentry      two pushes land on a phone; about 5 s from trigger to phone
+ *  15.0  data        driving, charging, battery as panels in depth; the year in numbers
+ *  19.0  footprint   the lifetime map, tilted like a table
+ *  22.0  AI          an assistant answers from your own data, over MCP
+ *  26.0  Mac         the menu-bar panel drops; what it costs to run
+ *  28.0  principles  self-hosted, open source, free: one a second
+ *  32.0  end card    the truck in profile, the mark, the address
  *
  * Screens are real pages of a hub running on synthetic data with the bundled
  * (CC BY 4.0) model, captured by scripts/capture.py into shots/<lang>/; the
@@ -26,7 +27,7 @@
   const LANG = q.get("lang") === "zh" ? "zh" : "en";
   const RENDER = q.has("render");
   const S = window.STR[LANG];
-  const DURATION = 32;
+  const DURATION = 36;
   const FPS = 30;
   document.documentElement.lang = LANG === "zh" ? "zh-CN" : "en";
   if (RENDER) document.documentElement.classList.add("render");
@@ -167,46 +168,86 @@
     };
   });
 
-  // 2 · reveal: the truck (drawn by car3d.js under this scene)
-  const reveal = scene(3.95, 8.1, (el) => {
+  // Points on an orbit around `at`: azimuth from the front (+Z) toward the driver side (+X).
+  const orbit = (az, el, r, at) => {
+    const a = az * Math.PI / 180, e = el * Math.PI / 180;
+    return [at[0] + Math.sin(a) * Math.cos(e) * r, at[1] + Math.sin(e) * r, at[2] + Math.cos(a) * Math.cos(e) * r];
+  };
+  // where the callouts attach on the truck (driver side), and where their labels sit
+  const ANCHORS = [
+    { p: [1.0, 1.05, -2.15], dx: 90, dy: -190 },     // charge port: battery and range
+    { p: [1.02, 1.15, 0.35], dx: 40, dy: 210 },      // driver door: locked
+    { p: [1.12, 1.4, 1.05], dx: -150, dy: -200 },    // mirror camera: Sentry
+    { p: [1.0, 0.45, 1.9], dx: -60, dy: 190 },       // front tire: pressure
+  ];
+
+  // 2 · the truck: the reveal, then its live state (drawn by car3d.js under this scene)
+  const truck = scene(3.95, 11.1, (el) => {
     const glow = h("div", "glow", el);
     const lock = h("div", "lockup", el,
       `<div class="row"><img src="assets/icon.svg" alt=""><div class="word">Ohmy<span>Tesla</span></div></div>` +
       `<div class="tag">${esc(S.tag)}</div>`);
     lock.style.top = "110px";
     const [row, tag] = lock.children;
+    const co = h("div", "co", el);
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    co.appendChild(svg);
+    const cs = S.callouts.map((text, i) => {
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      svg.appendChild(line);
+      return { line, dot: h("div", "dot", co), lab: h("div", "lab", co, esc(text)), a: ANCHORS[i] };
+    });
+    const cap = caption(el, S.live, S.liveSub);
+    Object.assign(cap.box.style, { top: "110px", bottom: "auto" });   // the callouts own the lower half
+    const lit = (t) => (t < 4.0 ? 0 : t < 4.06 ? 1 : t < 4.1 ? 0.25 : 1);
     return {
       glow,
       view(t) {
-        // the light bar flickers on at the drop; the room follows
-        const on = t < 4.0 ? 0 : t < 4.06 ? 1 : t < 4.1 ? 0.25 : 1;
         const room = ease.out(seg(t, 4.2, 5.4));
-        const c = ease.inOutSine(seg(t, 4.0, 8.1));
-        const az = lerp(16, 50, c) * Math.PI / 180, el2 = lerp(5, 10, c) * Math.PI / 180, r = lerp(6.6, 9.4, c);
+        const c = ease.inOutSine(seg(t, 4.0, 11.1));
+        const at = [0, lerp(0.95, 1.0, c), lerp(0.9, -0.1, c)];
         return {
-          cam: [Math.sin(az) * Math.cos(el2) * r, 0.95 + Math.sin(el2) * r, Math.cos(az) * Math.cos(el2) * r],
-          at: [0, lerp(0.95, 1.05, c), lerp(0.9, 0.1, c)], fov: 30,
-          env: lerp(0.2, 1.7, c), envI: room, key: 0.55 * room, rim: room,
+          cam: orbit(lerp(16, 72, c), lerp(5, 11, c), lerp(6.6, 9.2, c), at), at, fov: 30,
+          env: lerp(0.2, 1.9, c), envI: room, top: room,
           sweep: [2.1, 1.5, lerp(3.2, -3.2, ease.inOutSine(seg(t, 4.4, 6.6)))], sweepI: room * (1 - seg(t, 6.2, 6.8)),
-          lights: on, exposure: 1,
+          lights: lit(t), exposure: 1, pts: ANCHORS.map((a) => a.p),
         };
       },
       seek(t, car) {
         if (car) {
-          const on = t < 4.0 ? 0 : t < 4.06 ? 1 : t < 4.1 ? 0.25 : 1;
           const room = ease.out(seg(t, 4.2, 5.4));
-          put(glow, { x: car.bar.x, y: car.bar.y, s: 1 + 0.15 * (1 - room), o: on * (1 - 0.55 * room) });
+          put(glow, { x: car.bar.x, y: car.bar.y, s: 1 + 0.15 * (1 - room), o: lit(t) * (1 - 0.6 * room) });
+          cs.forEach((c, i) => {
+            const p = car.pts[i];
+            const t0 = 8.3 + i * 0.4;
+            const d = ease.outExpo(seg(t, t0, t0 + 0.35));
+            const l = ease.outExpo(seg(t, t0 + 0.12, t0 + 0.6));
+            const out = 1 - ease.inOutSine(seg(t, 10.7, 11.05));
+            const lx = p.x + c.a.dx, ly = p.y + c.a.dy;
+            put(c.dot, { x: p.x, y: p.y, s: d, o: d * out });
+            c.line.setAttribute("x1", p.x.toFixed(1));
+            c.line.setAttribute("y1", p.y.toFixed(1));
+            c.line.setAttribute("x2", lerp(p.x, lx, l).toFixed(1));
+            c.line.setAttribute("y2", lerp(p.y, ly, l).toFixed(1));
+            c.line.style.opacity = (l > 0 ? out : 0).toFixed(3);
+            // the label hangs off the end of its line, on the side the line points to
+            const w = c.lab.offsetWidth, hh = c.lab.offsetHeight;
+            const bx = lx - (c.a.dx < 0 ? w : 0), by = ly - hh / 2;
+            put(c.lab, { x: bx, y: by + (1 - l) * 10, o: l * out });
+          });
         }
-        const a = ease.outExpo(seg(t, 5.6, 6.3));
-        put(row, { y: (1 - a) * 24, o: a });
-        const b = ease.out(seg(t, 6.0, 6.7));
-        put(tag, { y: (1 - b) * 14, o: b });
+        const a = ease.outExpo(seg(t, 5.6, 6.3)) * (1 - ease.inOutSine(seg(t, 7.5, 8.0)));
+        put(row, { y: (1 - Math.min(1, ease.outExpo(seg(t, 5.6, 6.3)))) * 24, o: a });
+        const b = ease.out(seg(t, 6.0, 6.7)) * (1 - ease.inOutSine(seg(t, 7.5, 8.0)));
+        put(tag, { y: (1 - Math.min(1, ease.out(seg(t, 6.0, 6.7)))) * 14, o: b });
+        playCaption(cap, t, 8.15);
+        cap.box.style.opacity = (1 - ease.inOutSine(seg(t, 10.7, 11.05))).toFixed(3);
       },
     };
   });
 
   // 3 · Sentry: two pushes land on a phone
-  scene(7.95, 12.1, (el) => {
+  scene(10.95, 15.1, (el) => {
     const persp = h("div", "persp", el);
     const phone = h("div", "phone", persp);
     h("div", "wall", phone);
@@ -224,30 +265,30 @@
     const stat = h("div", "stat", el, `<div><span class="n">${esc(S.stat)}</span></div><div class="l">${esc(S.statSub)}</div>`);
     Object.assign(stat.style, { left: "140px", top: "560px" });
     const [statN, statL] = stat.children;
+    statN.style.transformOrigin = "0 70%";
     return {
       seek(t) {
-        const p = ease.outExpo(seg(t, 8.0, 8.8));
-        const tilt = ease.inOutSine(seg(t, 8.0, 12.1));
-        const k = t - 9.6;
+        const p = ease.outExpo(seg(t, 11.0, 11.8));
+        const tilt = ease.inOutSine(seg(t, 11.0, 15.1));
+        const k = t - 12.6;
         const shake = k > 0 && k < 0.7 ? 7 * Math.sin(2 * Math.PI * 26 * k) * Math.exp(-k * 7) : 0;
         put(phone, { x: 1250 + shake, y: 110 + (1 - p) * 900, ry: lerp(-16, -8, tilt), rx: 3, o: 1 });
-        const a = ease.outExpo(seg(t, 8.6, 9.2));
-        put(n1, { y: 300 - (1 - a) * 50 + ease.inOut(seg(t, 9.6, 10.0)) * 136, s: 0.94 + 0.06 * a, o: a });
-        const b = ease.outExpo(seg(t, 9.6, 10.2));
+        const a = ease.outExpo(seg(t, 11.6, 12.2));
+        put(n1, { y: 300 - (1 - a) * 50 + ease.inOut(seg(t, 12.6, 13.0)) * 136, s: 0.94 + 0.06 * a, o: a });
+        const b = ease.outExpo(seg(t, 12.6, 13.2));
         put(n2, { y: 300 - (1 - b) * 50, s: 0.94 + 0.06 * b, o: b });
-        alarm.style.opacity = (seg(t, 9.6, 9.7) * (0.55 + 0.45 * Math.cos(2 * Math.PI * 2 * (t - 9.6))) * (1 - seg(t, 11.4, 12.0))).toFixed(3);
-        rise(head.ws, t, 8.15, LANG === "en" ? 0.06 : 0.45, 0.55);
-        const s = ease.outExpo(seg(t, 10.4, 10.9));
-        put(statN, { s: lerp(1.2, 1, s), o: s, blur: (1 - s) * 14, pre: "" });
-        statN.style.transformOrigin = "0 70%";
-        const l = ease.out(seg(t, 10.7, 11.2));
+        alarm.style.opacity = (seg(t, 12.6, 12.7) * (0.55 + 0.45 * Math.cos(2 * Math.PI * 2 * (t - 12.6))) * (1 - seg(t, 14.4, 15.0))).toFixed(3);
+        rise(head.ws, t, 11.15, LANG === "en" ? 0.06 : 0.45, 0.55);
+        const s2 = ease.outExpo(seg(t, 13.4, 13.9));
+        put(statN, { s: lerp(1.2, 1, s2), o: s2, blur: (1 - s2) * 14 });
+        const l = ease.out(seg(t, 13.7, 14.2));
         put(statL, { y: (1 - l) * 12, o: l });
       },
     };
   });
 
   // 4 · data: three screens in depth, the year in numbers
-  scene(11.95, 16.1, (el) => {
+  scene(14.95, 19.1, (el) => {
     const persp = h("div", "persp", el);
     const ws = ["driving", "charging", "battery"].map((n) => win(persp, shot(n), 1100));
     const head = words(el, S.data, LANG === "en" ? 76 : 72);
@@ -260,63 +301,72 @@
     const at = [[780, 120, 0], [930, 250, -280], [1080, 380, -560]];
     return {
       seek(t) {
-        const drift = ease.inOutSine(seg(t, 12.0, 16.1));
+        const drift = ease.inOutSine(seg(t, 15.0, 19.1));
         ws.forEach((w, i) => {
-          const p = ease.outExpo(seg(t, 12.0 + i * 0.25, 12.9 + i * 0.25));
+          const p = ease.outExpo(seg(t, 15.0 + i * 0.25, 15.9 + i * 0.25));
           put(w.e, { x: at[i][0] + (1 - p) * 420 - drift * 90, y: at[i][1] + (1 - p) * 60, z: at[i][2] - (1 - p) * 500,
                      ry: lerp(-30, -20, drift), rx: 5, o: p });
-          sheen(w, t, 12.9 + i * 0.25, 1.1);
+          sheen(w, t, 15.9 + i * 0.25, 1.1);
         });
-        rise(head.ws, t, 12.15, 0.06, 0.55);
+        rise(head.ws, t, 15.15, 0.06, 0.55);
         nums.forEach((m, i) => {
-          const a = ease.outExpo(seg(t, 12.6 + i * 0.3, 13.2 + i * 0.3));
+          const a = ease.outExpo(seg(t, 15.6 + i * 0.3, 16.2 + i * 0.3));
           put(m.box, { y: (1 - a) * 30, o: a });
-          count(m.n, t, 12.6 + i * 0.3, 1.1, m.to);
+          count(m.n, t, 15.6 + i * 0.3, 1.1, m.to);
         });
       },
     };
   });
 
   // 5 · footprint: the lifetime map, tilted like a table
-  scene(15.95, 19.1, (el) => {
+  scene(18.95, 22.1, (el) => {
     const persp = h("div", "persp", el);
     const w = win(persp, shot("footprint"), 1500);
     h("div", "shade", el);
     const c = caption(el, S.foot, S.footSub);
     return {
       seek(t) {
-        const p = ease.outExpo(seg(t, 16.0, 16.9));
-        const z = ease.inOutSine(seg(t, 16.0, 19.1));
+        const p = ease.outExpo(seg(t, 19.0, 19.9));
+        const z = ease.inOutSine(seg(t, 19.0, 22.1));
         put(w.e, { x: 210, y: 70 + (1 - p) * 120, rx: lerp(30, 14, z), s: lerp(0.9, 1.04, z), o: p });
-        sheen(w, t, 16.6, 1.2);
-        playCaption(c, t, 16.35);
+        sheen(w, t, 19.6, 1.2);
+        playCaption(c, t, 19.35);
       },
     };
   });
 
-  // 6 · controls: the camera moves in on the confirm sheet; a tap
-  scene(18.95, 22.1, (el) => {
-    const w = win(el, shot("controls"), 1560);
-    w.e.style.transformOrigin = "50% 47%";      // the sheet sits at the page's centre
-    const ripple = h("div", "ripple", w.box);
-    Object.assign(ripple.style, { left: "60.6%", top: "54.4%" });
-    h("div", "shade", el);
-    const c = caption(el, S.ctrl, S.ctrlSub);
+  // 6 · AI: an assistant answers from your own data
+  scene(21.95, 26.1, (el) => {
+    const head = words(el, [S.ai], LANG === "en" ? 80 : 78);
+    Object.assign(head.el.style, { left: "140px", top: "330px" });
+    const sub = h("div", "sub", el, esc(S.aiSub));
+    Object.assign(sub.style, { left: "142px", top: "450px", width: "620px", fontSize: "28px" });
+    const chat = h("div", "chat", el,
+      `<div class="hd"><img src="assets/icon.svg" alt=""><b>${esc(S.aiHead)}</b><span>${esc(S.aiLink)}</span><i></i></div>` +
+      `<div class="q">${esc(S.aiQ)}</div><div class="tool"><i></i>${esc(S.aiTool)}</div><div class="a"><span></span><b class="caret"></b></div>`);
+    const [, qb, tool, ans] = chat.children;
+    const [txt, caret] = ans.children;
+    const chars = [...S.aiA];
     return {
       seek(t) {
-        const p = ease.outExpo(seg(t, 19.0, 19.8));
-        const z = ease.inOut(seg(t, 19.3, 21.0));
-        put(w.e, { x: 180, y: 40 + (1 - p) * 80 - z * 60, s: 0.96 + 0.04 * p + z * 0.42, o: p });
-        const r = seg(t, 20.6, 21.2);
-        ripple.style.transform = `scale(${lerp(0.25, 1.15, ease.out(r)).toFixed(3)})`;
-        ripple.style.opacity = (r > 0 && r < 1 ? 1 - r : 0).toFixed(3);
-        playCaption(c, t, 19.3);
+        const p = ease.outExpo(seg(t, 22.0, 22.8));
+        put(chat, { x: 1010, y: 250 + (1 - p) * 80, s: 0.97 + 0.03 * p, o: p });
+        rise(head.ws, t, 22.15, 0.06, 0.55);
+        const s2 = ease.out(seg(t, 22.5, 23.1));
+        put(sub, { y: (1 - s2) * 12, o: s2 });
+        const qa = ease.outExpo(seg(t, 22.4, 22.9));
+        put(qb, { y: (1 - qa) * 16, s: 0.96 + 0.04 * qa, o: qa });
+        tool.style.opacity = ease.out(seg(t, 22.95, 23.25)).toFixed(3);
+        const typed = Math.round(chars.length * seg(t, 23.4, 25.0));
+        txt.textContent = chars.slice(0, typed).join("");
+        ans.style.opacity = (t >= 23.3 ? 1 : 0).toString();
+        caret.style.opacity = (t < 25.0 || Math.floor(t * 2) % 2 === 0 ? 1 : 0).toString();
       },
     };
   });
 
   // 7 · the Mac menu bar
-  scene(21.95, 25.1, (el) => {
+  scene(25.95, 28.1, (el) => {
     h("div", "desk", el);
     const bar = h("div", "mbar", el,
       `<span class="ic on"><svg viewBox="0 0 256 256"><path d="${CAR}"/></svg></span><span>${esc(S.menuClock)}</span>`);
@@ -330,12 +380,12 @@
     const cs = S.macChips.map((c) => h("div", "chip", chips, `<i></i>${esc(c)}`));
     return {
       seek(t) {
-        bar.style.opacity = ease.out(seg(t, 22.0, 22.3)).toFixed(3);
-        const p = ease.outExpo(seg(t, 22.4, 23.0));
+        bar.style.opacity = ease.out(seg(t, 26.0, 26.25)).toFixed(3);
+        const p = ease.outExpo(seg(t, 26.2, 26.8));
         put(panel, { x: 1400, y: 52 - (1 - p) * 16, s: 0.95 + 0.05 * p, o: p });
-        rise(head.ws, t, 22.2, 0.06, 0.55);
+        rise(head.ws, t, 26.1, 0.06, 0.5);
         cs.forEach((c, i) => {
-          const a = ease.outExpo(seg(t, 22.9 + i * 0.3, 23.5 + i * 0.3));
+          const a = ease.outExpo(seg(t, 26.5 + i * 0.25, 27.0 + i * 0.25));
           put(c, { x: (1 - a) * -40, o: a });
         });
       },
@@ -343,20 +393,22 @@
   });
 
   // 8 · principles: one a second
-  scene(24.95, 28.05, (el) => {
+  scene(27.95, 32.05, (el) => {
     const halo = h("div", "halo", el);
     const size = LANG === "en" ? 200 : 184;
     const w = S.words.map((x, i) => big(el, i === S.words.length - 1 ? `<span class="r">${esc(x)}</span>` : esc(x), size));
     return {
       seek(t) {
-        w.forEach((e, i) => slam(e, t, 25.0 + i, 26.0 + i + (i === w.length - 1 ? 0.05 : 0), { from: 1.22 }));
-        halo.style.opacity = (ease.out(seg(t, 27.0, 27.4)) * (1 - seg(t, 27.7, 28.05))).toFixed(3);
+        slam(w[0], t, 28.0, 29.0, { from: 1.22 });
+        slam(w[1], t, 29.0, 30.0, { from: 1.22 });
+        slam(w[2], t, 30.0, 31.75, { from: 1.22, out: 0.4 });
+        halo.style.opacity = (ease.out(seg(t, 30.0, 30.4)) * (1 - seg(t, 31.4, 31.9))).toFixed(3);
       },
     };
   });
 
   // 9 · end card: the truck in profile, the mark, the address
-  const end = scene(27.95, DURATION + 1, (el) => {
+  const end = scene(31.95, DURATION + 1, (el) => {
     const glow = h("div", "glow", el);
     const lock = h("div", "lockup", el,
       `<div class="row"><img src="assets/icon.svg" alt=""><div class="word">Ohmy<span>Tesla</span></div></div>`);
@@ -369,22 +421,22 @@
     return {
       glow,
       view(t) {
-        const c = ease.outQuint(seg(t, 28.0, 32.0));
+        const c = ease.outQuint(seg(t, 32.0, 36.0));
         return {
           cam: [lerp(11.4, 9.9, c), 1.25, lerp(0.9, 0.2, c)], at: [0, 1.35, 0], fov: 27,
-          env: lerp(1.9, 2.5, c), envI: 1, key: 0.5, rim: 1, sweep: [2.4, 1.9, lerp(-3, 3, c)], sweepI: 0.6,
+          env: lerp(1.9, 2.5, c), envI: 1, top: 1, sweep: [2.4, 1.9, lerp(-3, 3, c)], sweepI: 0.6,
           lights: 1, exposure: 1,
         };
       },
       seek(t, car) {
         if (car) put(glow, { x: car.bar.x, y: car.bar.y, s: 0.5, o: car.bar.front ? 0.35 : 0 });
-        const a = ease.outExpo(seg(t, 28.3, 29.0));
+        const a = ease.outExpo(seg(t, 32.3, 33.0));
         put(lock, { y: (1 - a) * 24, o: a });
-        const b = ease.out(seg(t, 28.8, 29.4));
+        const b = ease.out(seg(t, 32.8, 33.4));
         put(line, { y: (1 - b) * 12, o: b });
-        const d = ease.out(seg(t, 29.2, 29.8));
+        const d = ease.out(seg(t, 33.2, 33.8));
         put(url, { y: (1 - d) * 10, o: d });
-        credit.style.opacity = (0.95 * ease.out(seg(t, 29.6, 30.2))).toFixed(3);
+        credit.style.opacity = (0.95 * ease.out(seg(t, 33.6, 34.2))).toFixed(3);
       },
     };
   });
@@ -413,38 +465,38 @@
   const car3d = () => window.CAR3D;
   function seek(t) {
     t = clamp(t, 0, DURATION);
-    // the truck is on screen in the reveal and on the end card
-    const carOn = [reveal, end].find((s) => t >= s.a && t <= s.b);
+    // the truck is on screen from the reveal to its live state, and on the end card
+    const carOn = [truck, end].find((s) => t >= s.a && t <= s.b);
     const C = car3d();
     let res = null;
     if (C) {
       if (carOn) {
         res = C.render(carOn.view(t));
-        const o = carOn === end ? Math.min(ease.out(seg(t, end.a, end.a + 0.5)), 1 - seg(t, 31.4, 32.0))
-                                : fade(t, reveal.a, reveal.b, 0.05, 0.3);
+        const o = carOn === end ? Math.min(ease.out(seg(t, end.a, end.a + 0.5)), 1 - seg(t, DURATION - 0.6, DURATION))
+                                : fade(t, truck.a, truck.b, 0.05, 0.3);
         C.canvas.style.opacity = o.toFixed(3);
       } else {
         C.canvas.style.opacity = "0";
       }
     }
     for (const s of scenes) {
-      let o = s.b > DURATION ? Math.min(ease.out(seg(t, s.a, s.a + 0.3)), 1 - seg(t, 31.4, 32.0)) : fade(t, s.a, s.b);
+      let o = s.b > DURATION ? Math.min(ease.out(seg(t, s.a, s.a + 0.3)), 1 - seg(t, DURATION - 0.6, DURATION)) : fade(t, s.a, s.b);
       s.el.style.opacity = o.toFixed(3);
       s.el.style.visibility = o <= 0.001 ? "hidden" : "visible";
       if (o > 0.001) s.seek(t, s === carOn ? res : null);
     }
     // a flash on the two big hits: the light bar, the end card
     const f = Math.max(0.18 * Math.exp(-Math.max(0, t - 4.0) * 12) * (t >= 4.0 ? 1 : 0),
-                       0.14 * Math.exp(-Math.max(0, t - 28.0) * 10) * (t >= 28.0 ? 1 : 0));
+                       0.14 * Math.exp(-Math.max(0, t - 32.0) * 10) * (t >= 32.0 ? 1 : 0));
     flash.style.opacity = f.toFixed(3);
     const fi = Math.floor(t * FPS / 2);         // grain at 15 fps, like film; also kinder to the encoder
     grain.style.transform = `translate(${(-hash(fi) * 64).toFixed(1)}px, ${(-hash(fi + 7777) * 64).toFixed(1)}px)`;
   }
 
   // Ready when every image has decoded, the fonts are in and the truck has loaded.
-  const truck = new Promise((r) => (window.CAR3D ? r() : addEventListener("car3d", r, { once: true })))
+  const model = new Promise((r) => (window.CAR3D ? r() : addEventListener("car3d", r, { once: true })))
     .then(() => window.CAR3D.ready);
-  const ready = Promise.all([document.fonts.ready, truck,
+  const ready = Promise.all([document.fonts.ready, model,
     ...[...stage.querySelectorAll("img")].map((i) => i.decode().catch(() => null))]);
   window.FILM = { duration: DURATION, lang: LANG, seek, ready };
 

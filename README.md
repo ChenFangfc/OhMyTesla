@@ -14,9 +14,9 @@ Live status and controls, Sentry alerts on your phone, every drive and charge, a
 
 **[Download for Mac](https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/OhmyTesla-arm64.dmg) · [Run with Docker](#docker) · [Phone alerts](#phone-alerts) · [Docs](#docs)**
 
-<img src="docs/readme/film.en.webp" alt="OhmyTesla in 32 seconds: the Cybertruck's light bar comes on, a Sentry push lands on a phone, a year of drives and charges, the lifetime footprint, controls that ask first, and the Mac menu bar" width="100%">
+<img src="docs/readme/film.en.webp" alt="OhmyTesla in 36 seconds: the Cybertruck's light bar comes on, its live state pops out on the 3D truck, a Sentry push lands on a phone, a year of drives and charges, the lifetime footprint, an AI assistant answering from your own data, and the Mac menu bar" width="100%">
 
-<sub><a href="https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/ohmytesla-film.en.mp4"><b>▶ The film in full quality, with sound (0:32)</b></a></sub>
+<sub><a href="https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/ohmytesla-film.en.mp4"><b>▶ The film in full quality, with sound (0:36)</b></a></sub>
 
 <table>
 <tr>
