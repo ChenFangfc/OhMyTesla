@@ -15,6 +15,9 @@ Richness per channel, because a sentry alarm is not a newsletter:
   time-sensitive everywhere: ntfy priority at least 4 (the ntfy iOS app maps
   4 to ``.timeSensitive``, which passes a Focus mode; 3 is ``.active``), Bark
   ``timeSensitive``, Web Push ``Urgency: high``.
+* Icons: Bark (iOS 15+) and ntfy on Android show our mark. The ntfy iOS app
+  has no custom icons; it shows its own. Titles carry their own emoji, so ntfy
+  gets no emoji tag — it would put a second one in front.
 * Telegram — photo + caption when a thumbnail exists.
 * Web Push (PWA) — see webpush.py.
 * Email and anything else Apprise understands — archival channels.
@@ -29,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import unicodedata
 from base64 import b64encode
 from pathlib import Path
 from urllib.parse import quote, urlparse
@@ -43,6 +47,16 @@ _PRIORITY = {"critical": 5, "warning": 4, "info": 3}
 _TAGS = {"critical": "rotating_light", "warning": "warning", "info": "information_source"}
 _RETRY_DELAYS = (15, 60, 180)
 _TIMEOUT = httpx.Timeout(15.0)
+# The phone fetches the icon itself, so it must be public: the repository's copy.
+_ICON_URL = "https://raw.githubusercontent.com/ChenFangfc/OhMyTesla/main/services/hub/app/web/static/icon-512.png"
+
+
+def _tags(title: str, level: str) -> list[str]:
+    """ntfy turns emoji tags into a prefix on the title; a title that already
+    starts with its own emoji gets none."""
+    if title[:1] and unicodedata.category(title[0]) == "So":
+        return []
+    return [_TAGS.get(level, "")]
 
 
 async def configured_channels() -> list[str]:
@@ -99,14 +113,15 @@ async def _ntfy(c: dict, title: str, body: str, level: str, url: str | None,
             # Attachment publish: the file is the body; text goes in headers.
             h = dict(headers)
             h.update({"Title": _rfc2047(title), "Message": _rfc2047(body.replace("\n", "\\n")),
-                      "Priority": str(prio), "Tags": _TAGS.get(level, ""),
-                      "Filename": file[0]})
+                      "Priority": str(prio), "Icon": _ICON_URL, "Filename": file[0]})
+            if tags := _tags(title, level):
+                h["Tags"] = ",".join(tags)
             if url:
                 h["Click"] = url
             r = await cli.put(f"{base}/{c['topic']}", content=file[1], headers=h)
         else:
             msg = {"topic": c["topic"], "title": title, "message": body,
-                   "priority": prio, "tags": [_TAGS.get(level, "")]}
+                   "priority": prio, "tags": _tags(title, level), "icon": _ICON_URL}
             actions = []
             if url:
                 msg["click"] = url
@@ -124,7 +139,8 @@ async def _ntfy(c: dict, title: str, body: str, level: str, url: str | None,
 async def _bark(c: dict, title: str, body: str, level: str, url: str | None,
                 urgent: bool = False) -> bool:
     server = (c.get("server") or "https://api.day.app").rstrip("/")
-    payload = {"device_key": c["key"], "title": title, "body": body, "group": "OhmyTesla"}
+    payload = {"device_key": c["key"], "title": title, "body": body, "group": "OhmyTesla",
+               "icon": c.get("icon") or _ICON_URL}
     if level == "critical" and c.get("critical", True):
         payload.update({"level": "critical", "volume": 8, "sound": "alarm"})
     elif level == "warning" or urgent:

@@ -81,12 +81,12 @@ async def main():
     await eng._fire("tpms_warning", "1", extra="front left")
     check("low tire pressure pushes", len(SENT) == 1, str(SENT))
     title, body = SENT[0] if SENT else ("", "")
-    check("title names the event in one line", title == "⚠️ Cybertruck — low tire pressure · front left", title)
+    check("title names the event in one line", title == "⚠️ Cybertruck — Low tire pressure · front left", title)
     check("body is one short line (place · time)", "\n" not in body and len(body) <= 40 and "http" not in body, repr(body))
 
     SENT.clear()
     await eng._fire("charging_interrupted", "1")
-    check("charging losing power pushes", SENT and SENT[0][0] == "⚠️ Cybertruck — charging lost power", str(SENT))
+    check("charging losing power pushes", SENT and SENT[0][0] == "⚠️ Cybertruck — Charging lost power", str(SENT))
 
     SENT.clear()
     await eng.fire_custom("1", "critical", "🔇 Cybertruck — Sentry alerts paused", "No data for 45 min — check the server",
@@ -100,12 +100,12 @@ async def main():
     await t._signal("1", "Cybertruck", "state", "panic", "sentry.reason.forced_door")
     check("forced door → one push", len(SENT) == 1, str(SENT))
     if SENT:
-        check("sentry title: '🚨 Cybertruck — door opened while locked'",
-              SENT[0][0] == "🚨 Cybertruck — door opened while locked", SENT[0][0])
+        check("sentry title: '🚨 Cybertruck — Door opened while locked'",
+              SENT[0][0] == "🚨 Cybertruck — Door opened while locked", SENT[0][0])
         check("sentry body is one short line", "\n" not in SENT[0][1] and len(SENT[0][1]) <= 40, repr(SENT[0][1]))
     check("someone at the car is sent time-sensitive; a tire warning isn't",
-          URGENT.get("🚨 Cybertruck — door opened while locked") is True
-          and URGENT.get("⚠️ Cybertruck — low tire pressure · front left") is False, str(URGENT))
+          URGENT.get("🚨 Cybertruck — Door opened while locked") is True
+          and URGENT.get("⚠️ Cybertruck — Low tire pressure · front left") is False, str(URGENT))
 
     # what time-sensitive means on each channel; the level still sets the wording
     import httpx
@@ -131,6 +131,16 @@ async def main():
           [s.get("priority") for s in seen[:3]] == [4, 3, 5], str(seen[:3]))
     check("Bark: someone at the car → timeSensitive; routine → default",
           [s.get("level") for s in seen[3:5]] == ["timeSensitive", None], str(seen[3:5]))
+    check("ntfy: a title with its own emoji gets no emoji tag (the iPhone would show two); a bare one gets one",
+          [s.get("tags") for s in seen[:3]] == [[], ["information_source"], []], str([s.get("tags") for s in seen[:3]]))
+    check("our icon goes to ntfy (shown on Android) and Bark (iOS 15+)",
+          all(s.get("icon") == notifier._ICON_URL for s in seen[:5]), str([s.get("icon") for s in seen[:5]]))
+    en = json.loads(open(os.path.join(os.path.dirname(notifier.__file__), "..", "i18n", "locales", "en", "push.json"),
+                         encoding="utf-8").read())
+    events = [v.split(" — ", 1)[1] if " — " in v else v for k, v in en.items()
+              if k.startswith("sentry.short.") or (k.startswith("push.") and " — " in v)]
+    lower = [e for e in events if e[:1].islower()]
+    check("every English push event starts with a capital letter", not lower, str(lower))
     from app.alerts import webpush
 
     check("Web Push: someone at the car → Urgency high; routine info stays normal",
@@ -141,7 +151,7 @@ async def main():
     SENT.clear()
     eng._last_fired.clear()
     await eng._fire("low_battery", "1", extra="18%")
-    check("a rule switched to Push pushes", SENT and SENT[0][0] == "🪫 Cybertruck — battery at 18%", str(SENT))
+    check("a rule switched to Push pushes", SENT and SENT[0][0] == "🪫 Cybertruck — Battery at 18%", str(SENT))
     await eng.set_mode("tpms_warning", "off")
     SENT.clear()
     eng._last_fired.clear()

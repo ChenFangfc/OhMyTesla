@@ -17,8 +17,8 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
-      icon: "/static/icon.svg",
-      badge: "/static/icon.svg",
+      icon: "/static/icon-192.png",
+      badge: "/static/badge-72.png",
       tag,
       renotify: true,
       requireInteraction: critical,
