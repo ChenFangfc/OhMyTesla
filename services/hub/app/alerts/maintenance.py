@@ -141,6 +141,7 @@ class MaintenanceWatcher:
 
     async def _check(self) -> None:
         from ..i18n.prefs import get as get_prefs
+        from ..i18n.router import title_case
         from ..livestate import live
 
         if self._fire is None:
@@ -166,7 +167,7 @@ class MaintenanceWatcher:
                 continue
             name = it.get("name_zh" if loc == "zh" else "name_en") or it["id"]
             await self._fire(car_id, "info",
-                             "🔧 " + name,
+                             "🔧 " + title_case(name, loc),
                              name, rule="maintenance_due")
             notified.add(it["id"])
             changed = True

@@ -25,7 +25,8 @@
    期望返回 {"ok":true,"channels":["ntfy"]}
    再回读服务器确认真的送达（只看接口返回不算数）：
    `curl -s "https://ntfy.sh/<主题名>/json?poll=1&since=5m"`
-9. 把主题名和门户密码告诉我，并提示我：手机装 ntfy App → 点 + → 填这个主题名
+9. 把主题名和门户密码告诉我，并提示我：手机装 ntfy App → 点 + → 填这个主题名。
+   如果我用 iPhone，再提醒我之后按引导页第 2 步换成 Bark（推送显示 OhmyTesla 图标）
 10. 告诉我打开 http://localhost:8800（浏览器会弹认证框：用户名 ohmytesla + 上面的密码），
     按引导页粘贴 Tesla token。token 用 tesla_auth（github.com/adriankumpf/tesla_auth，
     电脑）或 iPhone 上的 Auth app for Tesla 获取 —— 特斯拉不接受第三方用账号密码登录。

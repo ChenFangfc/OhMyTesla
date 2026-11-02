@@ -92,6 +92,21 @@ def t(key: str, locale: str, **vars) -> str:
     return s
 
 
+# Apple's title style: articles, coordinating conjunctions and short prepositions
+# stay lowercase unless they come first.
+MINOR_WORDS = frozenset({"a", "an", "the", "and", "but", "or", "nor", "for", "so", "yet", "as", "at", "by",
+                         "from", "in", "into", "of", "on", "onto", "per", "to", "via", "with"})
+
+
+def title_case(text: str, locale: str) -> str:
+    """English push titles capitalise every word ("Front Left"); Chinese has no case."""
+    if locale == "zh":
+        return text
+    words = text.split(" ")
+    return " ".join(w if (i and w.lower() in MINOR_WORDS) else w[:1].upper() + w[1:]
+                    for i, w in enumerate(words))
+
+
 @router.get("/catalog/{locale}")
 async def get_catalog(locale: str):
     if locale not in ("zh", "en"):

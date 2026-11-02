@@ -116,7 +116,7 @@ async def main():
         c = CALLS[-1] if CALLS else {}
         chk("规则与开关都是 new_sentry_clip", c.get("rule") == "new_sentry_clip" and c.get("gate") == "new_sentry_clip")
         chk("标题一行：🎬 车名 — 事件", (c.get("title") or "").startswith("🎬 ")
-            and c.get("title", "").endswith(" — Sentry clip saved"), c.get("title"))
+            and c.get("title", "").endswith(" — Sentry Clip Saved"), c.get("title"))
         chk("正文只有一行（原因 · 地点 · 时间）", "\n" not in c.get("body", "\n")
             and "Threat detected" in c.get("body", "") and "Springfield" in c.get("body", ""), c.get("body"))
         chk("缩略图走 image=", (c.get("image") or "").endswith(f"SentryClips/{ev}/thumb.png"), c.get("image"))
@@ -182,7 +182,7 @@ async def main():
                 ["CLIP-front.mp4", "event.json", "thumb.png"], city=f"City{k}")
         await tick(w)
         c = CALLS[-1]
-        chk("合并成一条", len(CALLS) == 6 and c["title"].endswith(" — 5 Sentry clips saved"), c["title"])
+        chk("合并成一条", len(CALLS) == 6 and c["title"].endswith(" — 5 Sentry Clips Saved"), c["title"])
         chk("合并那条也是一行正文、最新的在前", "\n" not in c["body"] and "City0" in c["body"], c["body"])
 
         print("基线没变时不写库（L7）")

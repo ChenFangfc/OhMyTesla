@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import base64
 import secrets
+from urllib.parse import urlparse
 
 from ..config import settings
 from ..tesla import vault
@@ -19,10 +20,11 @@ from .store import store
 
 _KEY = "channels"
 
-# channel -> (fields, secret fields)
+# channel -> (fields, secret fields), in the order Settings lists them:
+# Bark first (recommended on iPhone), then ntfy (recommended on Android).
 SCHEMA: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
-    "ntfy": (("url", "topic", "token"), ("token",)),
     "bark": (("server", "key", "critical"), ("key",)),
+    "ntfy": (("url", "topic", "token"), ("token",)),
     "telegram": (("token", "chat_id"), ("token",)),
     "email": (("host", "port", "user", "password", "sender", "to"), ("password",)),
     "webhook": (("url",), ("url",)),     # the URL usually *is* the key (DingTalk, WeCom, Slack…)
@@ -36,8 +38,8 @@ _PUBLIC_MAIL = ("gmail.com", "qq.com", "163.com", "outlook.com", "office365.com"
 def _from_env() -> dict[str, dict]:
     s = settings
     return {
-        "ntfy": {"url": s.ntfy_url or "https://ntfy.sh", "topic": s.ntfy_topic, "token": ""},
         "bark": {"server": "https://api.day.app", "key": "", "critical": True},
+        "ntfy": {"url": s.ntfy_url or "https://ntfy.sh", "topic": s.ntfy_topic, "token": ""},
         "telegram": {"token": s.telegram_bot_token, "chat_id": s.telegram_chat_id},
         "email": {"host": s.smtp_host, "port": s.smtp_port, "user": s.smtp_user,
                   "password": s.smtp_pass, "sender": s.smtp_from, "to": s.smtp_to},
@@ -129,9 +131,24 @@ async def describe() -> list[dict]:
     return out
 
 
+def bark_address(values: dict) -> dict:
+    """Bark shows an address, not a bare key: https://api.day.app/<key>/….
+    Take it as pasted: the first path segment is the key, the origin the server."""
+    raw = str(values.get("key") or "").strip()
+    if "://" not in raw:
+        return values
+    u = urlparse(raw)
+    parts = [p for p in u.path.split("/") if p]
+    if not parts or not u.netloc:
+        return values
+    return {**values, "key": parts[0], "server": f"{u.scheme}://{u.netloc}"}
+
+
 async def save(name: str, values: dict) -> None:
     if name not in SCHEMA:
         raise ValueError("unknown channel")
+    if name == "bark":
+        values = bark_address(values)
     fields, secret = SCHEMA[name]
     cur = await _stored()
     old = cur.get(name) or {}
