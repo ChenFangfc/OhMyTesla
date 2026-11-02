@@ -100,9 +100,9 @@
     const s = lerp(from, 1, p) * (1 + 0.06 * q2) + 0.012 * seg(t, t0, t1);
     put(e, { pre: "translateY(-50%)", s, o: Math.min(p * 1.6, 1) * (1 - q2), blur: (1 - p) * blur + q2 * 10 });
   }
-  // The accent on the last word (English) or on 设备 (Chinese).
+  // The accent: the last word in English (Tesla, Data, Machine), what follows 的 in Chinese (车, 数据, 设备).
   function accent(line) {
-    if (LANG === "zh") return esc(line).replace("设备", '<span class="r">设备</span>');
+    if (LANG === "zh") return esc(line).replace(/的([^的。]+)。$/, '的<span class="r">$1</span>。');
     const i = line.lastIndexOf(" ");
     return esc(line.slice(0, i + 1)) + `<span class="r">${esc(line.slice(i + 1))}</span>`;
   }
@@ -154,7 +154,7 @@
     const line = h("div", "line", el);
     const halo = h("div", "halo", el);
     const size = LANG === "en" ? 196 : 176;
-    const w = [big(el, esc(S.open[0]), size), big(el, esc(S.open[1]), size), big(el, accent(S.open[2]), size)];
+    const w = S.open.map((line) => big(el, accent(line), size));
     return {
       seek(t) {
         const g = ease.outExpo(seg(t, 0.15, 0.75));
