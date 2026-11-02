@@ -799,6 +799,8 @@
   "setup.connecting": "Connecting…",
   "setup.db_waiting": "Waiting for the database…",
   "setup.lede": "Three steps, about 5 minutes.",
+  "setup.mac_server": "Already run OhmyTesla on a server?",
+  "setup.mac_server_go": "Connect to it instead",
   "setup.need_tokens": "Paste both tokens first.",
   "setup.page_title": "Get started · OhmyTesla",
   "setup.privacy": "Tokens are stored encrypted on this machine and only ever sent to Tesla.",

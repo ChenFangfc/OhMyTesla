@@ -799,6 +799,8 @@
   "setup.connecting": "连接中…",
   "setup.db_waiting": "等待数据库初始化…",
   "setup.lede": "三步，大约 5 分钟。",
+  "setup.mac_server": "已经在服务器上运行 OhmyTesla 了？",
+  "setup.mac_server_go": "改为连接服务器",
   "setup.need_tokens": "先粘贴两个令牌。",
   "setup.page_title": "开始设置 · OhmyTesla",
   "setup.privacy": "令牌加密保存在本机，仅用于与 Tesla 通信。",

@@ -538,11 +538,8 @@ private struct MoreMenu: View {
             }
         }
         menu.addItem(.separator())
-        // Both lead back to the setup screen; leaving "Run on this Mac" stops its services.
-        add(model.mode == .embedded ? tr("改为连接服务器…", "Connect to a Server Instead…")
-                                    : tr("更换服务器…", "Change Server…")) {
-            model.resetMode()
-            AppDelegate.shared?.showMainWindow()
+        if let title = model.changeModeTitle {
+            add(title) { AppDelegate.shared?.changeMode() }
         }
         if model.mode == .embedded && model.supervisor.runMode == .agent {
             menu.addItem(.separator())

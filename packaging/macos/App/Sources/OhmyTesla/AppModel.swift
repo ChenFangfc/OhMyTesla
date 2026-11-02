@@ -270,6 +270,16 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// The way back to the setup screen, as the app menu, the panel and the startup
+    /// screen name it; nil before a mode is chosen.
+    var changeModeTitle: String? {
+        switch mode {
+        case .unset: return nil
+        case .embedded: return tr("改为连接服务器…", "Connect to a Server Instead…")
+        case .remote: return tr("更换服务器…", "Change Server…")
+        }
+    }
+
     var menuBarSymbol: String {
         switch mode {
         case .unset: return "bolt.car"

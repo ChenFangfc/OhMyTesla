@@ -56,7 +56,7 @@ Also: dashcam clips read straight off the USB drive and matched to drives and Se
 
 1. [Download the DMG](https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/OhmyTesla-arm64.dmg) (Apple silicon, macOS 13+) and drag **OhmyTesla** to Applications.
 2. First launch: right-click → **Open** (macOS 15+: System Settings → Privacy & Security → **Open Anyway**). The app isn't notarized yet.
-3. Pick **Connect to a server** if one already runs at home (the app then needs about 40 MB with its window closed), or **Run on this Mac**. Then [set it up](#set-up).
+3. Pick **Connect to a server** if one already runs at home (the app then needs about 40 MB with its window closed), or **Run on this Mac**. You can switch later from the **OhmyTesla** menu. Then [set it up](#set-up).
 
 Running on the Mac needs no Docker: the whole stack idles at about 0.2% of one CPU core and 300 MB of memory.
 

@@ -37,8 +37,8 @@ struct OnboardingView: View {
             Image(nsImage: NSApp.applicationIconImage).resizable().frame(width: 76, height: 76)
             VStack(spacing: 6) {
                 Text(tr("欢迎使用 OhmyTesla", "Welcome to OhmyTesla")).font(.system(size: 24, weight: .semibold))
-                Text(tr("选择 OhmyTesla 在哪里运行。之后可以在菜单栏中更改。",
-                        "Choose where OhmyTesla runs. You can change this later from the menu bar."))
+                Text(tr("选择 OhmyTesla 在哪里运行。之后可以在 OhmyTesla 菜单中更改。",
+                        "Choose where OhmyTesla runs. You can change this later from the OhmyTesla menu."))
                     .foregroundStyle(.secondary)
             }
             HStack(alignment: .top, spacing: 16) {
@@ -190,6 +190,9 @@ struct StartupView: View {
                     Button(tr("重启服务", "Restart Services")) { model.restartServices() }
                 }
                 Button(tr("打开日志", "Open Logs")) { model.openLogs() }
+                if let title = model.changeModeTitle {
+                    Button(title) { AppDelegate.shared?.changeMode() }
+                }
             }
         }
         .padding(32)
@@ -249,7 +252,7 @@ struct HubBrowser: View {
                     model.supervisor.openLoginItemsSettings()
                 }
             }
-            HubWebView(controller: web)
+            HubWebView(controller: web, appMode: model.mode)
         }
         .toolbar {
             ToolbarItemGroup(placement: .navigation) {

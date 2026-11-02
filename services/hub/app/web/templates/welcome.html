@@ -9,6 +9,7 @@
   <div class="page-head">
     <h1 data-i18n="setup.title">Set up OhmyTesla</h1>
     <p class="sub" data-i18n="setup.lede">Three steps, about 5 minutes.</p>
+    <p class="small muted gs-mac" id="gs-mac" hidden><span data-i18n="setup.mac_server">Already run OhmyTesla on a server?</span><a class="link" href="ohmytesla-app://change-mode" data-i18n="setup.mac_server_go">Connect to it instead</a></p>
   </div>
 
   <section class="card mt gs-step" id="gs-car">
@@ -90,6 +91,8 @@
   .gs-list { margin: 8px 0 0; padding-left: 18px; line-height: 1.55; }
   .gs-list li + li { margin-top: 6px; }
   .gs-redo { padding: 0; border: 0; background: none; font: inherit; cursor: pointer; }
+  .gs-mac { margin: 8px 0 0; }
+  .gs-mac a { margin-left: .3em; }   /* a gap that suits "？" as well as "?" */
   .gs-state:not(:empty) { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
 </style>
 {% endblock %}
@@ -98,6 +101,10 @@
 <script>
 const $id = (id) => document.getElementById(id);
 let redo = false;
+
+// Inside the macOS app with the hub on this Mac, offer the other way to run it;
+// the app itself handles the ohmytesla-app: link (HubWebView.swift).
+$id("gs-mac").hidden = window.ohmyteslaApp?.mode !== "embedded";
 
 function mark(step, n, done) {
   $id(step).classList.toggle("done", done);
