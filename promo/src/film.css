@@ -82,8 +82,34 @@ body { display: grid; place-items: center; }
   background-size: 300% 100%; }
 .shade { position: absolute; inset: 0; pointer-events: none;
   background: linear-gradient(180deg, rgba(5, 5, 6, 0) 45%, rgba(5, 5, 6, 0.86) 76%, rgba(5, 5, 6, 0.97) 100%); }
-.ripple { position: absolute; width: 140px; height: 140px; margin: -70px 0 0 -70px; border-radius: 50%;
-  border: 3px solid rgba(42, 96, 214, 0.95); background: rgba(42, 96, 214, 0.22); opacity: 0; }
+
+/* ── callouts on the truck ──────────────────────────────────────────── */
+.co { position: absolute; inset: 0; pointer-events: none; }
+.co .dot { position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px; border-radius: 50%; background: #fff;
+  box-shadow: 0 0 0 5px rgba(255, 255, 255, 0.16), 0 0 18px rgba(255, 255, 255, 0.75); }
+.co svg { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; overflow: visible; }
+.co line { stroke: rgba(255, 255, 255, 0.72); stroke-width: 1.5; }
+.co .lab { position: absolute; white-space: nowrap; padding: 11px 18px; border-radius: 12px;
+  background: rgba(16, 17, 20, 0.74); border: 1px solid rgba(255, 255, 255, 0.16);
+  font-size: 27px; font-weight: 600; letter-spacing: -0.01em; color: #fff; backdrop-filter: blur(12px); }
+
+/* ── the AI conversation ───────────────────────────────────────────── */
+.chat { position: absolute; width: 820px; border-radius: 24px; padding: 24px 28px 30px;
+  background: rgba(20, 21, 25, 0.94); border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: 0 70px 150px -30px rgba(0, 0, 0, 0.9); will-change: transform, opacity; }
+.chat .hd { display: flex; align-items: center; gap: 12px; padding-bottom: 18px; font-size: 19px; color: var(--ink-3);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+.chat .hd img { width: 30px; height: 30px; border-radius: 8px; }
+.chat .hd b { color: var(--ink-2); font-weight: 600; }
+.chat .hd i { width: 9px; height: 9px; border-radius: 50%; background: #3ccf7a; box-shadow: 0 0 10px #3ccf7a; margin-left: auto; }
+.chat .q { margin: 26px 0 0 auto; width: fit-content; max-width: 80%; padding: 16px 22px; border-radius: 20px 20px 6px 20px;
+  background: #2a60d6; color: #fff; font-size: 27px; line-height: 1.35; will-change: transform, opacity; }
+.chat .tool { margin-top: 24px; display: inline-flex; align-items: center; gap: 10px; padding: 9px 14px; border-radius: 10px;
+  background: rgba(255, 255, 255, 0.06); color: #9aa0a8; font: 18px/1 var(--mono); will-change: opacity; }
+.chat .tool i { width: 8px; height: 8px; border-radius: 50%; background: var(--red-hot); box-shadow: 0 0 8px var(--red-hot); }
+.chat .a { margin-top: 16px; max-width: 88%; padding: 18px 22px; border-radius: 20px 20px 20px 6px;
+  background: rgba(255, 255, 255, 0.08); color: #f3f4f6; font-size: 28px; line-height: 1.42; min-height: 1.42em; }
+.chat .caret { display: inline-block; width: 3px; height: 1.05em; margin-left: 3px; background: #fff; vertical-align: -0.17em; }
 
 /* ── a phone, for the push ─────────────────────────────────────────── */
 .phone { position: absolute; width: 420px; height: 860px; border-radius: 68px; background: #000;

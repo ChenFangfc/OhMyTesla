@@ -1,14 +1,16 @@
 """The film's score, synthesised and cut to the picture: 120 BPM, a bar is 2 s.
 
-    python3 promo/scripts/music.py            # → promo/out/soundtrack.wav (32 s, 48 kHz stereo)
+    python3 promo/scripts/music.py            # → promo/out/soundtrack.wav (36 s, 48 kHz stereo)
 
   0–4 s    a pulse and a sub under the three words; a hit on each word; a riser
   4 s      the drop, on the light bar: crash, sub, a bright stab; the groove starts
-  8–12 s   two notification pings land with the pushes on the phone
-  12–25 s  the groove under the product (a 16th arp joins for the data)
-  20.6 s   a tap on the confirm button
-  25–28 s  stop-time: a hit and a stab on each of the three words, a riser
-  28 s     the last hit for the end card, then the chord rings out
+  8–10 s   a soft blip as each callout pops out on the truck
+  11–13 s  two notification pings land with the pushes on the phone
+  15–22 s  a 16th arp joins the groove for the data and the map
+  23–25 s  quiet key ticks while the assistant's answer types out
+  28–31 s  stop-time: a hit and a stab on each of the three words, a riser
+  32 s     the last hit for the end card, then the chord rings out
+  A soft swoosh leads into each scene.
 
 D minor, one chord a bar: Dm – B♭ – F – C. Drums, bass and pads are made
 here from oscillators and noise; nothing is sampled. Loudness is set when the
@@ -21,7 +23,7 @@ from scipy.io import wavfile
 from scipy.signal import butter, fftconvolve, sosfilt
 
 SR = 48000
-DUR = 32.0
+DUR = 36.0
 BEAT = 0.5
 OUT = Path(__file__).resolve().parent.parent / "out" / "soundtrack.wav"
 RNG = np.random.default_rng(11)
@@ -30,10 +32,13 @@ N = int(DUR * SR)
 # Cues from src/film.js
 WORDS = (1.0, 2.0, 3.0)          # the three opening words
 DROP = 4.0                       # the light bar
-PINGS = (8.6, 9.6)               # the two pushes
-TAP = 20.6                       # the confirm button
-STOPS = (25.0, 26.0, 27.0)       # self-hosted, open source, free
-END = 28.0                       # the end card
+CALLOUTS = (8.3, 8.7, 9.1, 9.5)  # the car's state pops out on the truck
+PINGS = (11.6, 12.6)             # the two pushes
+TOOL = 22.95                     # the assistant calls the tool
+TYPING = (23.4, 25.0)            # the answer types out
+CUTS = (11.0, 15.0, 19.0, 22.0, 26.0)   # a swoosh into each scene
+STOPS = (28.0, 29.0, 30.0)       # self-hosted, open source, free
+END = 32.0                       # the end card
 GROOVE = (DROP, STOPS[0])        # where the drums play
 
 # one chord a bar, as MIDI notes (root, then the voicing)
@@ -199,9 +204,27 @@ def ping(notes, dur=1.4, gain=0.22):
     return x * gain
 
 
-def tap():
-    t = ts(0.08)
-    return (np.sin(2 * np.pi * 1900 * t) * np.exp(-t * 90) + hp(RNG.standard_normal(len(t)), 4000) * np.exp(-t * 300) * 0.5) * 0.35
+def tick():
+    t = ts(0.03)
+    return hp(RNG.standard_normal(len(t)), 3500) * np.exp(-t * 260) * 0.25
+
+
+def blip(m):
+    t = ts(0.35)
+    return np.sin(2 * np.pi * hz(m) * t) * np.exp(-t * 14) * np.minimum(1, t / 0.002) * 0.3
+
+
+def swoosh(dur=0.45):
+    t = ts(dur)
+    n = RNG.standard_normal(len(t))
+    out = np.zeros_like(t)
+    blocks = 12
+    for b in range(blocks):
+        a, z = b * len(t) // blocks, (b + 1) * len(t) // blocks
+        fc = 600 * 2 ** (2.5 * b / blocks)
+        out[a:z] = bp(n[a:z], fc / 1.6, fc * 1.6)
+    e = np.sin(np.pi * t / dur) ** 2
+    return out * e * 0.18
 
 
 def reverb(l, r, seconds=2.2, wet=0.3):
@@ -247,7 +270,7 @@ def arrange():
         if k % 2 == 1:
             drums.add(beat, clap(), gain=0.7)
         drums.add(beat + BEAT / 2, hat(open_=(k % 4 == 3)), gain=0.9, pan=0.3)
-        if beat >= 12.0:
+        if beat >= 15.0:
             drums.add(beat + BEAT / 4, hat(), gain=0.35, pan=-0.3)
             drums.add(beat + 3 * BEAT / 4, hat(), gain=0.35, pan=-0.3)
         beat += BEAT
@@ -266,16 +289,26 @@ def arrange():
         bar += 2.0
 
     # a 16th arp over the data and the map
-    for k in range(int((19.0 - 12.0) / 0.125)):
-        at = 12.0 + k * 0.125
+    for k in range(int((22.0 - 15.0) / 0.125)):
+        at = 15.0 + k * 0.125
         _, notes = chord_at(at)
         m = [notes[0] + 12, notes[2], notes[1] + 12, notes[3]][k % 4]
         music.add(at, pluck(m, 0.25), gain=0.9, pan=0.4 * np.sin(k * 0.9))
 
-    # the phone, the tap
+    # the callouts, the phone, the assistant
+    for i, at in enumerate(CALLOUTS):
+        fx.add(at, blip((86, 88, 90, 93)[i]), gain=0.7, pan=0.3 * (i - 1.5))
     fx.add(PINGS[0], ping([88, 95]), gain=0.9)
     fx.add(PINGS[1], ping([93, 100, 93]), gain=1.1)
-    fx.add(TAP, tap(), gain=1.0)
+    fx.add(TOOL, blip(91), gain=0.6)
+    k = 0
+    at = TYPING[0]
+    while at < TYPING[1]:
+        fx.add(at, tick(), gain=0.5 + 0.4 * ((k * 7) % 5) / 5, pan=0.2 * np.sin(k))
+        at += 0.055 + 0.02 * ((k * 3) % 4) / 4
+        k += 1
+    for c in CUTS:
+        fx.add(c - 0.42, swoosh(), gain=0.8)
 
     # stop-time: a hit and a stab per word, then a riser into the end card
     for i, s in enumerate(STOPS):

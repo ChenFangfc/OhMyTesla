@@ -1,31 +1,42 @@
-/* Every word on screen, in both languages. Claims stay true to the product:
+/* Every word on screen, in both languages. Titles that pop out are in Title
+ * Case; lines under them are sentences. Claims stay true to the product:
  * pushes follow the push policy (only Sentry and major events), "≈5 s" is the
  * README's typical delay while Sentry is on, the idle CPU figure is the Mac
- * app's measured stack total (packaging/macos/README.md), and the numbers in
- * the data scene are the demo's synthetic year, the same as in the screens. */
+ * app's measured stack total (packaging/macos/README.md), and every number is
+ * the demo's synthetic data, the same as in the screens: the overview's
+ * battery, range and tire pressure, the data scene's year, and the AI answer's
+ * last 30 days (charging-stats: 20 charges, 524 kWh, US$158.95, all at home). */
 window.STR = {
   en: {
-    open: ["Your Tesla.", "Your data.", "Your machine."],
-    tag: "Everything your Tesla knows. On your own machine.",
-    sentry: ["Sentry triggers.", "You know in seconds."],
+    open: ["Your Tesla.", "Your Data.", "Your Machine."],
+    tag: "Everything your Tesla knows, on your own machine.",
+    live: "Your Car, Live.",
+    liveSub: "A true-scale 3D truck shows what's locked, open and charging.",
+    callouts: ["72% · 225 mi", "Locked", "Sentry On", "Tires 47.9 psi"],
+    sentry: ["Sentry Triggers.", "You Know in Seconds."],
     stat: "≈5 s",
-    statSub: "from trigger to your phone",
+    statSub: "From trigger to your phone",
     pushApp: "OhmyTesla",
     pushNow: "now",
     push1: ["👀 Cybertruck — Someone Came Close", "Home · 9:41 PM"],
     push2: ["🚨 Cybertruck — Door Opened While Locked", "Home · 9:41 PM"],
     phoneTime: "9:41",
     phoneDate: "Friday, June 12",
-    data: ["Every drive.", "Every charge."],
-    stats: [[935, "", "drives"], [294, "", "charges"], [97, "%", "battery health"]],
-    foot: "Everywhere you've been.",
+    data: ["Every Drive.", "Every Charge."],
+    stats: [[935, "", "Drives"], [294, "", "Charges"], [97, "%", "Battery health"]],
+    foot: "Everywhere You've Been.",
     footSub: "Every road you've driven, on one map.",
-    ctrl: "Controls that ask first.",
-    ctrlSub: "One tap, then a clear yes or no.",
+    ai: "Ask Your Car Anything.",
+    aiSub: "Connect an AI assistant over MCP. It answers from your own data.",
+    aiHead: "AI assistant",
+    aiLink: "Connected to OhmyTesla",
+    aiQ: "How much did charging cost last month?",
+    aiTool: "get_charging_stats · last 30 days",
+    aiA: "US$158.95 for 20 charges, all at home: 524 kWh at about 27¢ per kWh.",
     menuClock: "Fri 9:41 PM",
-    mac: "A native Mac app.",
-    macChips: ["≈0.2% CPU at idle", "No Docker", "Lives in your menu bar"],
-    words: ["Self-hosted.", "Open source.", "Free."],
+    mac: "A Native Mac App.",
+    macChips: ["≈0.2% CPU at idle", "No Docker needed", "Or any server with Docker"],
+    words: ["Self-Hosted.", "Open Source.", "Free."],
     endLine: "Download for Mac · Runs anywhere with Docker",
     endUrl: "github.com/ChenFangfc/OhMyTesla",
     credit: "3D model “Tesla Cybertruck 2025” by Nieve5677, CC BY 4.0 · Not affiliated with Tesla, Inc.",
@@ -33,6 +44,9 @@ window.STR = {
   zh: {
     open: ["你的车。", "你的数据。", "你自己的设备。"],
     tag: "特斯拉知道的一切，都留在你自己的设备上。",
+    live: "车况，实时可见。",
+    liveSub: "等比例 3D 车模，锁没锁、开着什么、在不在充电，一看便知。",
+    callouts: ["72% · 225 mi", "已锁车", "哨兵已开启", "胎压 47.9 psi"],
     sentry: ["哨兵一触发，", "几秒就知道。"],
     stat: "≈5 秒",
     statSub: "从触发到手机",
@@ -46,11 +60,16 @@ window.STR = {
     stats: [[935, "", "段行程"], [294, "", "次充电"], [97, "%", "电池健康"]],
     foot: "一生足迹。",
     footSub: "开过的每一条路，都在一张地图上。",
-    ctrl: "危险操作，先确认。",
-    ctrlSub: "点一下，再明确确认一次。",
+    ai: "直接问你的车。",
+    aiSub: "通过 MCP 接入 AI 助手，用你自己的数据回答。",
+    aiHead: "AI 助手",
+    aiLink: "已连接 OhmyTesla",
+    aiQ: "上个月充电花了多少钱？",
+    aiTool: "get_charging_stats · 最近 30 天",
+    aiA: "20 次充电共 US$158.95，全部在家充：524 kWh，平均每度约 0.27 美元。",
     menuClock: "周五 21:41",
     mac: "原生 Mac 应用。",
-    macChips: ["空闲约 0.2% CPU", "不用 Docker", "常驻菜单栏"],
+    macChips: ["空闲约 0.2% CPU", "不用 Docker", "也能部署在任何服务器上"],
     words: ["自托管。", "开源。", "免费。"],
     endLine: "Mac 直接下载 · 任何设备都能用 Docker 部署",
     endUrl: "github.com/ChenFangfc/OhMyTesla",
