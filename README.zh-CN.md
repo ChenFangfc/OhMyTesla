@@ -16,7 +16,7 @@
 
 <img src="docs/readme/film.zh.webp" alt="36 秒看懂 OhmyTesla：Cybertruck 灯条亮起、实时车况在 3D 车上弹出、哨兵推送到手机、一年的行程与充电、一生足迹、AI 助手用你自己的数据回答、Mac 状态栏" width="100%">
 
-<sub><a href="https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/ohmytesla-film.zh.mp4"><b>▶ 观看高清完整版（有声，0:36）</b></a></sub>
+<sub><a href="https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/ohmytesla-film.zh.mp4"><b>▶ 观看 4K 完整版（有声，0:36）</b></a> · 3D 车模「Tesla Cybertruck 2025」作者 Nieve5677，CC BY 4.0</sub>
 
 <table>
 <tr>

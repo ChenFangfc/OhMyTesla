@@ -31,8 +31,10 @@ total (see `packaging/macos/README.md`), the AI answer is the demo's own last
 data, the same as in the screens.
 
 `src/vendor` and `src/assets/cybertruck.glb` are links to the app's own three.js
-and model (CC BY 4.0, credited on the end card). Never point the film at an
-owner's private model: these frames are published.
+and model. The model is CC BY 4.0: wherever the film is published, credit
+“Tesla Cybertruck 2025” by Nieve5677 next to it (the README does, and so do the
+release notes). Never point the film at an owner's private model: these frames
+are published.
 
 ## Preview
 

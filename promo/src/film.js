@@ -417,7 +417,6 @@
     line.style.top = "250px";
     const url = h("div", "url", el, esc(S.endUrl));
     url.style.top = "306px";
-    const credit = h("div", "credit", el, esc(S.credit));
     return {
       glow,
       view(t) {
@@ -436,7 +435,6 @@
         put(line, { y: (1 - b) * 12, o: b });
         const d = ease.out(seg(t, 33.2, 33.8));
         put(url, { y: (1 - d) * 10, o: d });
-        credit.style.opacity = (0.95 * ease.out(seg(t, 33.6, 34.2))).toFixed(3);
       },
     };
   });
