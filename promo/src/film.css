@@ -54,7 +54,7 @@ body { display: grid; place-items: center; }
 .lockup .row { display: flex; align-items: center; gap: 22px; }
 .lockup img { width: 84px; height: 84px; border-radius: 19px; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08); }
 .lockup .word { font-size: 84px; font-weight: 700; letter-spacing: -0.035em; }
-.lockup .word span { color: var(--ink-3); font-weight: 500; }
+.lockup .word span { color: var(--red-hot); font-weight: 600; }
 .lockup .tag { margin-top: 22px; font-size: 32px; color: var(--ink-2); letter-spacing: -0.005em; }
 
 .stat { position: absolute; font-weight: 700; letter-spacing: -0.04em; line-height: 1; }

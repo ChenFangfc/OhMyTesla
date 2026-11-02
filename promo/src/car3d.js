@@ -127,8 +127,9 @@ function finish(m) {
   if (n === "exterior_steel" || n === "bedcover") {
     m.color = new THREE.Color(0xc8cdd3); m.metalness = 1; m.roughness = 0.3; m.envMapIntensity = 1;
   } else if (n === "glass") {
-    m.transparent = true; m.opacity = 0.9; m.color = new THREE.Color(0x0a0c0f);
-    m.metalness = 0; m.roughness = 0.06; m.depthWrite = false;
+    // dark tinted glass: it reflects the studio, it does not show the cabin
+    m.transparent = false; m.opacity = 1; m.color = new THREE.Color(0x050608);
+    m.metalness = 0; m.roughness = 0.04; m.envMapIntensity = 1.3;
   } else if (n === "headlight") {
     m.emissive = new THREE.Color(0xf2f6ff); m.emissiveIntensity = 0; heads.push(m);
   } else if (n === "taillight") {
@@ -139,6 +140,52 @@ function finish(m) {
     m.color = new THREE.Color(0x2b2e33); m.roughness = 0.4; m.metalness = 0.85;
   }
 }
+
+/* The model groups faces by material, so small parts hide inside big meshes.
+   Split a mesh into connected parts (vertices merged by position) and call
+   `pick(box)` on each: "drop" removes the part, "red" moves it to a second
+   material. Positions are in the truck's own frame (wheels on y = 0). */
+const REFLECTOR = new THREE.MeshStandardMaterial({ color: 0x9a0f1d, metalness: 0, roughness: 0.25, envMapIntensity: 1.2 });
+function regroup(o, pick) {
+  const g = o.geometry, pos = g.attributes.position;
+  const index = g.index ? Array.from(g.index.array) : [...Array(pos.count).keys()];
+  const v = new THREE.Vector3(), ids = new Int32Array(pos.count), seen = new Map(), parent = [];
+  const find = (x) => { while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; } return x; };
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+    const k = `${v.x.toFixed(3)},${v.y.toFixed(3)},${v.z.toFixed(3)}`;
+    if (!seen.has(k)) { seen.set(k, parent.length); parent.push(parent.length); }
+    ids[i] = seen.get(k);
+  }
+  const tris = index.length / 3;
+  for (let t = 0; t < tris; t++) {
+    const a = find(ids[index[3 * t]]);
+    parent[find(ids[index[3 * t + 1]])] = a;
+    parent[find(ids[index[3 * t + 2]])] = a;
+  }
+  const boxes = new Map();
+  for (let t = 0; t < tris; t++) {
+    const r = find(ids[index[3 * t]]);
+    if (!boxes.has(r)) boxes.set(r, new THREE.Box3());
+    for (let j = 0; j < 3; j++) boxes.get(r).expandByPoint(v.fromBufferAttribute(pos, index[3 * t + j]).applyMatrix4(o.matrixWorld));
+  }
+  const verdict = new Map([...boxes].map(([r, b]) => [r, pick(b)]));
+  const keep = [], red = [];
+  for (let t = 0; t < tris; t++) {
+    const what = verdict.get(find(ids[index[3 * t]]));
+    if (what === "drop") continue;
+    (what === "red" ? red : keep).push(index[3 * t], index[3 * t + 1], index[3 * t + 2]);
+  }
+  g.setIndex([...keep, ...red]);
+  g.clearGroups();
+  g.addGroup(0, keep.length, 0);
+  if (red.length) {
+    g.addGroup(keep.length, red.length, 1);
+    o.material = [[].concat(o.material)[0], REFLECTOR];
+  }
+}
+const inside = (b, [x0, x1], [y0, y1], [z0, z1]) =>
+  b.min.x >= x0 && b.max.x <= x1 && b.min.y >= y0 && b.max.y <= y1 && b.min.z >= z0 && b.max.z <= z1;
 
 const ready = new Promise((resolve, reject) => {
   const loader = new GLTFLoader();
@@ -156,6 +203,16 @@ const ready = new Promise((resolve, reject) => {
     const box = new THREE.Box3().setFromObject(root);
     const c = box.getCenter(new THREE.Vector3());
     root.position.set(-c.x, -box.min.y, -c.z);
+    root.updateMatrixWorld(true);
+    root.traverse((o) => {
+      if (!o.isMesh) return;
+      const n = [].concat(o.material)[0].name;
+      // the front number-plate frame, its plate and two bolts: not part of the truck's design
+      if (n === "trim") regroup(o, (b) => (inside(b, [-0.3, 0.3], [0.49, 0.64], [2.72, 2.9]) ? "drop" : "keep"));
+      // the rear side reflectors, modelled in steel: red, and lit only by what they reflect
+      if (n === "exterior_steel") regroup(o, (b) => (inside(b, [-0.95, -0.78], [0.58, 0.72], [-2.56, -2.2]) ||
+                                                      inside(b, [0.78, 0.95], [0.58, 0.72], [-2.56, -2.2]) ? "red" : "keep"));
+    });
     scene.add(root);
     // the reflection: the same truck upside down under the floor
     const mirror = root.clone(true);
