@@ -158,7 +158,6 @@ body { display: grid; place-items: center; }
 .endline { position: absolute; left: 0; right: 0; text-align: center; font-size: 28px; color: var(--ink-2); }
 .url { position: absolute; left: 0; right: 0; text-align: center; font-size: 26px; color: var(--red-hot);
   font-family: var(--mono); letter-spacing: 0; }
-.credit { position: absolute; left: 0; right: 0; bottom: 38px; text-align: center; font-size: 15px; color: #6b7078; }
 
 /* Preview chrome (never in renders). */
 .hud { position: fixed; left: 12px; bottom: 10px; font: 12px/1 ui-monospace, Menlo, monospace; color: #888; }

@@ -16,7 +16,7 @@ Live status and controls, Sentry alerts on your phone, every drive and charge, a
 
 <img src="docs/readme/film.en.webp" alt="OhmyTesla in 36 seconds: the Cybertruck's light bar comes on, its live state pops out on the 3D truck, a Sentry push lands on a phone, a year of drives and charges, the lifetime footprint, an AI assistant answering from your own data, and the Mac menu bar" width="100%">
 
-<sub><a href="https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/ohmytesla-film.en.mp4"><b>▶ The film in full quality, with sound (0:36)</b></a></sub>
+<sub><a href="https://github.com/ChenFangfc/OhMyTesla/releases/latest/download/ohmytesla-film.en.mp4"><b>▶ The film in 4K, with sound (0:36)</b></a> · 3D model “Tesla Cybertruck 2025” by Nieve5677, CC BY 4.0</sub>
 
 <table>
 <tr>

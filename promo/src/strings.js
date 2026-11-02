@@ -39,7 +39,6 @@ window.STR = {
     words: ["Self-Hosted.", "Open Source.", "Free."],
     endLine: "Download for Mac · Runs anywhere with Docker",
     endUrl: "github.com/ChenFangfc/OhMyTesla",
-    credit: "3D model “Tesla Cybertruck 2025” by Nieve5677, CC BY 4.0 · Not affiliated with Tesla, Inc.",
   },
   zh: {
     open: ["你的车。", "你的数据。", "你自己的设备。"],
@@ -73,6 +72,5 @@ window.STR = {
     words: ["自托管。", "开源。", "免费。"],
     endLine: "Mac 直接下载 · 任何设备都能用 Docker 部署",
     endUrl: "github.com/ChenFangfc/OhMyTesla",
-    credit: "3D 模型「Tesla Cybertruck 2025」作者 Nieve5677，CC BY 4.0 · 与 Tesla, Inc. 无关联",
   },
 };

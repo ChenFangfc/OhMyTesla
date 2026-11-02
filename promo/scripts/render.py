@@ -4,8 +4,9 @@
     python3 promo/scripts/render.py --lang en            # → promo/out/ohmytesla-film.en.mp4
     python3 promo/scripts/render.py --lang zh --webp     # also a looping WebP for the README
 
-Frames are drawn at twice the pixels (3840×2160) and scaled down with lanczos to
-2560×1440, so small UI text stays sharp; the soundtrack is muxed in at −16 LUFS.
+Frames are drawn at three times the pixels (5760×3240, the truck included) and
+scaled down with lanczos to 4K (3840×2160), so edges and small UI text stay crisp;
+the soundtrack is muxed in at −16 LUFS.
 The truck is WebGL (src/car3d.js): on a Mac, Chromium draws it on the GPU through
 Metal; elsewhere it falls back to software rendering, which is slower but the same.
 Nothing is captured in real time, so a slow machine renders the same film.
@@ -52,7 +53,7 @@ async def render(lang: str, fps: int, out: Path, webp: Path | None, webp_width: 
             gpu = ["--use-angle=metal", "--enable-gpu", "--ignore-gpu-blocklist"] if sys.platform == "darwin" else []
             browser = await p.chromium.launch(args=gpu)
             page = await browser.new_page(viewport={"width": 1920, "height": 1080}, device_scale_factor=dsf)
-            await page.goto(f"http://127.0.0.1:{port}/film.html?render&lang={lang}", wait_until="load")
+            await page.goto(f"http://127.0.0.1:{port}/film.html?render&lang={lang}&pr={dsf}", wait_until="load")
             await page.evaluate("FILM.ready.then(() => true)")
             duration = await page.evaluate("FILM.duration")
             cdp = await page.context.new_cdp_session(page)
@@ -87,13 +88,13 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--lang", choices=("en", "zh"), default="en")
     ap.add_argument("--fps", type=int, default=30)
-    ap.add_argument("--crf", default="20")
+    ap.add_argument("--crf", default="18")
     ap.add_argument("--out", type=Path)
     ap.add_argument("--webp", action="store_true", help="also write a looping WebP for the README")
     ap.add_argument("--webp-width", type=int, default=1280)
     ap.add_argument("--webp-fps", type=int, default=12)
-    ap.add_argument("--dsf", type=int, default=2, help="pixels drawn per CSS pixel before scaling down")
-    ap.add_argument("--size", default="2560x1440", help="output video size")
+    ap.add_argument("--dsf", type=int, default=3, help="pixels drawn per CSS pixel before scaling down")
+    ap.add_argument("--size", default="3840x2160", help="output video size")
     ap.add_argument("--audio", type=Path, default=ROOT / "out" / "soundtrack.wav", help="soundtrack (none if missing)")
     a = ap.parse_args()
     out = a.out or ROOT / "out" / f"ohmytesla-film.{a.lang}.mp4"

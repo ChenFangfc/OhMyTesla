@@ -25,7 +25,7 @@ canvas.className = "car3d";
 document.getElementById("stage").prepend(canvas);
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
-renderer.setPixelRatio(Number(q.get("pr")) || 1.5);
+renderer.setPixelRatio(Number(q.get("pr")) || 1.5);          // render.py passes its pixel density: the truck at full output size
 renderer.setSize(W, H, false);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -85,7 +85,7 @@ const camera = new THREE.PerspectiveCamera(28, W / H, 0.1, 200);
 const top = new THREE.DirectionalLight(0xffffff, 0);
 top.position.set(1.2, 10, 2.5);
 top.castShadow = true;
-top.shadow.mapSize.set(2048, 2048);
+top.shadow.mapSize.set(4096, 4096);
 Object.assign(top.shadow.camera, { left: -5, right: 5, top: 5, bottom: -5, near: 1, far: 20 });
 top.shadow.bias = -0.0005;
 const sweep = new THREE.PointLight(0xffffff, 0, 2.2, 2);   // short reach: the body, never the cabin
