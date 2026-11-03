@@ -1,0 +1,46 @@
+<!doctype html>
+<!-- The DMG window's background. scripts/render_dmg_background.py renders it to
+     background.png (1×) and background@2x.png; dmgbuild joins them into one HiDPI image.
+
+     The window is 660 points wide. Finder may count its title bar in the height it
+     is given (settings.py: 440), so the picture runs to 480 and nothing that matters
+     sits below 400. Icons are centred at (170, 200) and (490, 200): the arrow spans
+     the gap between them, Finder writes the names under them (to about y = 290). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --ink: #161a1f; --ink-3: #595e66; --line: #dfe3e8; --red: #e31937; }
+  html, body { margin: 0; }
+  body {
+    width: 660px; height: 480px; overflow: hidden; position: relative;
+    background: linear-gradient(180deg, #fbfcfd 0%, #f1f3f5 70%, #eceef1 100%);
+    font-family: -apple-system, "SF Pro Text", "PingFang SC", sans-serif;
+    -webkit-font-smoothing: antialiased; text-align: center; color: var(--ink);
+  }
+  .head { position: absolute; top: 40px; left: 0; right: 0; }
+  .head h1 { margin: 0; font-size: 19px; font-weight: 600; letter-spacing: -0.01em; }
+  .head p { margin: 7px 0 0; font-size: 14px; color: var(--ink-3); font-family: "PingFang SC", -apple-system, sans-serif; }
+  svg.arrow { position: absolute; left: 250px; top: 188px; }
+  .note { position: absolute; top: 330px; left: 40px; right: 40px; padding-top: 14px; border-top: 1px solid var(--line);
+          font-size: 11.5px; line-height: 1.7; color: var(--ink-3); }
+  .note .zh { font-family: "PingFang SC", -apple-system, sans-serif; }
+</style>
+</head>
+<body>
+  <div class="head">
+    <h1>Drag OhmyTesla to Applications</h1>
+    <p>把 OhmyTesla 拖到「应用程序」，完成安装</p>
+  </div>
+  <!-- from x 250 to 410 at y 200: 16 points clear of each 128-point icon -->
+  <svg class="arrow" width="160" height="24" viewBox="0 0 160 24" fill="none" stroke="#e31937" stroke-width="2.5"
+       stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 12 H150" />
+    <path d="M141 4 L152 12 L141 20" />
+  </svg>
+  <div class="note">
+    <div>Blocked on first open? System Settings › Privacy &amp; Security › Open Anyway</div>
+    <div class="zh">第一次打开被拦下？到「系统设置 › 隐私与安全性」，点「仍要打开」</div>
+  </div>
+</body>
+</html>

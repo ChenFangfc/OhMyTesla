@@ -36,6 +36,12 @@ log "smoke test: $DMG"
 mkdir -p "$WORK/mnt"
 hdiutil attach -nobrowse -readonly -mountpoint "$WORK/mnt" "$DMG" >/dev/null
 [[ -L $WORK/mnt/Applications ]] && pass "DMG has the drag-to-Applications link" || fail "DMG lacks the Applications link"
+# the window make_dmg.sh lays out: Finder's view settings, the background, the volume icon
+if [[ -f $WORK/mnt/.DS_Store && -f $WORK/mnt/.background.tiff && -f $WORK/mnt/.VolumeIcon.icns ]]; then
+  pass "DMG window: layout, background and volume icon"
+else
+  fail "DMG window: missing .DS_Store, .background.tiff or .VolumeIcon.icns"
+fi
 ditto "$WORK/mnt/OhmyTesla.app" "$WORK/OhmyTesla.app"
 hdiutil detach "$WORK/mnt" -quiet
 A="$WORK/OhmyTesla.app"

@@ -1,0 +1,8 @@
+# Build time only: dmgbuild writes the DMG window (background, icon places, volume
+# icon) straight into the image, with no Finder scripting. Not part of the app.
+# Pinned by hash like everything in versions.sh; make_dmg.sh installs these with
+# --require-hashes into build/dmgbuild/. Hashes = PyPI's published sha256 (2026-11-02).
+# Licences: dmgbuild BSD-3-Clause, ds_store MIT, mac_alias MIT.
+dmgbuild==1.6.5 --hash=sha256:e19ab8c5e8238e6455d9ccb9175817be7fd62b9cdd1eef20f63dd88e0ec469ab
+ds_store==1.3.1 --hash=sha256:fbacbb0bd5193ab3e66e5a47fff63619f15e374ffbec8ae29744251a6c8f05b5
+mac_alias==2.2.2 --hash=sha256:504ab8ac546f35bbd75ad014d6ad977c426660aa721f2cd3acf3dc2f664141bd
