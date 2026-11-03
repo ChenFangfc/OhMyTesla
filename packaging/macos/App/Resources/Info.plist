@@ -47,12 +47,13 @@
 	<key>NSSupportsSuddenTermination</key>
 	<false/>
 	<!-- The embedded hub is plain HTTP on 127.0.0.1, and remote servers are
-	     usually self-hosted HTTP on the LAN or behind the user's own proxy. -->
+	     usually self-hosted HTTP: on the LAN, at a Tailscale address, or behind
+	     the user's own proxy. Arbitrary loads only: with NSAllowsLocalNetworking
+	     beside it, macOS ignores NSAllowsArbitraryLoads and only LAN addresses
+	     can be reached. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
 	<key>NSLocalNetworkUsageDescription</key>

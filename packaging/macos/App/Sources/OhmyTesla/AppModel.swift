@@ -160,8 +160,7 @@ final class AppModel: ObservableObject {
         }
         guard l != lang else { return }
         L10n.lang = l
-        lang = l
-        AppDelegate.shared?.languageChanged()
+        lang = l    // views and the menu bar (AppCommands) redraw in the new language
     }
 
     /// Ask the hub for its language once per connection.
