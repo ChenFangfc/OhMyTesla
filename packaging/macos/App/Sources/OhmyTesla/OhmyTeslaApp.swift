@@ -13,6 +13,7 @@ struct OhmyTeslaApp: App {
             MenuBarLabel().environmentObject(delegate.model)
         }
         .menuBarExtraStyle(.window)
+        .commands { AppCommands(model: delegate.model, web: delegate.web) }
     }
 }
 
@@ -24,18 +25,43 @@ struct MenuBarLabel: View {
     }
 }
 
+/// Our items in the menu bar, next to the standard ones (Edit gives ⌘C/⌘V/⌘A in the
+/// window and the web view). SwiftUI owns the main menu: one set with NSApp.mainMenu
+/// was rewritten each time the app came forward, which dropped Edit, so ⌘V did nothing.
+struct AppCommands: Commands {
+    @ObservedObject var model: AppModel
+    let web: WebController
+
+    var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            // Run on this Mac ⇄ a server; absent until a mode is chosen
+            if let title = model.changeModeTitle {
+                Divider()
+                Button(title) { AppDelegate.shared?.changeMode() }
+            }
+        }
+        CommandGroup(before: .toolbar) {
+            Button(tr("重新载入", "Reload")) { web.reload() }.keyboardShortcut("r")
+            Button(tr("后退", "Back")) { web.goBack() }.keyboardShortcut("[")
+            Button(tr("前进", "Forward")) { web.goForward() }.keyboardShortcut("]")
+            Button(tr("首页", "Home")) { web.goHome() }.keyboardShortcut("h", modifiers: [.command, .shift])
+            Divider()
+            Button(tr("在浏览器中打开", "Open in Browser")) { model.openInBrowser() }.keyboardShortcut("b")
+        }
+        CommandGroup(replacing: .help) {}
+    }
+}
+
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     static weak var shared: AppDelegate?
     let model = AppModel()
     let web = WebController()
     private var window: NSWindow?
-    private weak var changeModeItem: NSMenuItem?
-    private weak var changeModeSeparator: NSMenuItem?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         AppDelegate.shared = self
-        installMainMenu()
+        NSWindow.allowsAutomaticWindowTabbing = false    // one window: no tab items in View
         if AppPaths.runsFromDiskImage { askToInstall(); return }
         Notifier.shared.setUp()
         Notifier.shared.onOpen = { [weak self] path in self?.showMainWindow(path: path) }
@@ -97,7 +123,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             window = w
         }
         NSApp.setActivationPolicy(.regular)
-        installMainMenu()
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -123,86 +148,5 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             w.delegate = nil
             self.window = nil
         }
-    }
-
-    /// The hub's language setting changed: menus and the window follow.
-    func languageChanged() {
-        installMainMenu()
-    }
-
-    /// Standard menus so ⌘C/⌘V, ⌘R and friends work inside the web view.
-    private func installMainMenu() {
-        let main = NSMenu()
-        let appItem = NSMenuItem()
-        let appMenu = NSMenu()
-        appMenu.addItem(withTitle: tr("关于 OhmyTesla", "About OhmyTesla"),
-                        action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
-        appMenu.addItem(.separator())
-        // Run on this Mac ⇄ a server; named, or hidden, per mode in menuNeedsUpdate
-        let change = appMenu.addItem(withTitle: "", action: #selector(changeMode), keyEquivalent: "")
-        change.target = self
-        let changeSeparator = NSMenuItem.separator()
-        appMenu.addItem(changeSeparator)
-        changeModeItem = change
-        changeModeSeparator = changeSeparator
-        appMenu.delegate = self
-        menuNeedsUpdate(appMenu)
-        appMenu.addItem(withTitle: tr("隐藏 OhmyTesla", "Hide OhmyTesla"), action: #selector(NSApplication.hide(_:)),
-                        keyEquivalent: "h")
-        appMenu.addItem(withTitle: tr("关闭窗口", "Close Window"), action: #selector(NSWindow.performClose(_:)),
-                        keyEquivalent: "w")
-        appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: tr("退出 OhmyTesla", "Quit OhmyTesla"), action: #selector(NSApplication.terminate(_:)),
-                        keyEquivalent: "q")
-        appItem.submenu = appMenu
-        main.addItem(appItem)
-
-        let editItem = NSMenuItem()
-        let edit = NSMenu(title: tr("编辑", "Edit"))
-        edit.addItem(withTitle: tr("撤销", "Undo"), action: Selector(("undo:")), keyEquivalent: "z")
-        edit.addItem(withTitle: tr("重做", "Redo"), action: Selector(("redo:")), keyEquivalent: "Z")
-        edit.addItem(.separator())
-        edit.addItem(withTitle: tr("剪切", "Cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        edit.addItem(withTitle: tr("拷贝", "Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        edit.addItem(withTitle: tr("粘贴", "Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        edit.addItem(withTitle: tr("全选", "Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
-        editItem.submenu = edit
-        main.addItem(editItem)
-
-        let viewItem = NSMenuItem()
-        let view = NSMenu(title: tr("显示", "View"))
-        view.addItem(withTitle: tr("重新载入", "Reload"), action: #selector(reloadPage), keyEquivalent: "r").target = self
-        view.addItem(withTitle: tr("后退", "Back"), action: #selector(goBack), keyEquivalent: "[").target = self
-        view.addItem(withTitle: tr("前进", "Forward"), action: #selector(goForward), keyEquivalent: "]").target = self
-        view.addItem(withTitle: tr("首页", "Home"), action: #selector(goHome), keyEquivalent: "H").target = self
-        view.addItem(.separator())
-        view.addItem(withTitle: tr("在浏览器中打开", "Open in Browser"), action: #selector(openInBrowser),
-                     keyEquivalent: "b").target = self
-        viewItem.submenu = view
-        main.addItem(viewItem)
-
-        let windowItem = NSMenuItem()
-        let windowMenu = NSMenu(title: tr("窗口", "Window"))
-        windowMenu.addItem(withTitle: tr("最小化", "Minimize"), action: #selector(NSWindow.performMiniaturize(_:)),
-                           keyEquivalent: "m")
-        windowMenu.addItem(withTitle: tr("缩放", "Zoom"), action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
-        windowItem.submenu = windowMenu
-        main.addItem(windowItem)
-        NSApp.windowsMenu = windowMenu
-        NSApp.mainMenu = main
-    }
-
-    @objc private func reloadPage() { web.reload() }
-    @objc private func goBack() { web.goBack() }
-    @objc private func goForward() { web.goForward() }
-    @objc private func goHome() { web.goHome() }
-    @objc private func openInBrowser() { model.openInBrowser() }
-
-    /// The mode changes while the menu is installed, so its item is named on opening.
-    func menuNeedsUpdate(_ menu: NSMenu) {
-        let title = model.changeModeTitle
-        changeModeItem?.title = title ?? ""
-        changeModeItem?.isHidden = title == nil
-        changeModeSeparator?.isHidden = title == nil
     }
 }
